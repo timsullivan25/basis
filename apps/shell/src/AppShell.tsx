@@ -24,20 +24,19 @@ export function AppShell() {
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <SideNav
-        items={NAV_ITEMS}
-        value={active}
-        onChange={setActive}
-        header={<span style={{ fontWeight: 'var(--weight-semibold)', fontSize: 'var(--text-base)', color: 'var(--text-primary)' }}>Basis</span>}
-      />
+      <SideNav items={NAV_ITEMS} value={active} onChange={setActive} />
       <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
         <header
           style={{
-            display: 'flex', alignItems: 'center', gap: 'var(--space-6)', flex: '0 0 auto',
+            display: 'flex', alignItems: 'center', gap: 'var(--space-8)', flex: '0 0 auto',
             height: 'var(--topbar-h)', padding: '0 var(--space-8)',
             borderBottom: '1px solid var(--border-default)', background: 'var(--surface-chrome)',
           }}
         >
+          <span style={{ font: '700 13px/1 var(--font-sans)', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
+            Basis
+          </span>
+          <div style={{ width: 1, height: 18, background: 'var(--border-default)' }} />
           <Breadcrumb items={[{ label: screen.section }, { label: screen.title }]} />
           <div style={{ flex: '1 1 auto' }} />
         </header>
