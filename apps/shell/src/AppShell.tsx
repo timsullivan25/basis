@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { SideNav, type SideNavItem } from '@basis/design-system';
+import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 
 const NAV_ITEMS: SideNavItem[] = [
@@ -11,11 +11,11 @@ const NAV_ITEMS: SideNavItem[] = [
   { value: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
-const SCREENS: Record<string, { title: string; render: () => ReactNode }> = {
-  overview: { title: 'Overview', render: () => <PlaceholderScreen title="Overview" /> },
-  portfolio: { title: 'Portfolio', render: () => <PlaceholderScreen title="Portfolio" /> },
-  reports: { title: 'Reports', render: () => <PlaceholderScreen title="Reports" /> },
-  settings: { title: 'Settings', render: () => <PlaceholderScreen title="Settings" /> },
+const SCREENS: Record<string, { section: string; title: string; render: () => ReactNode }> = {
+  overview: { section: 'Workspace', title: 'Overview', render: () => <PlaceholderScreen title="Overview" /> },
+  portfolio: { section: 'Workspace', title: 'Portfolio', render: () => <PlaceholderScreen title="Portfolio" /> },
+  reports: { section: 'Workspace', title: 'Reports', render: () => <PlaceholderScreen title="Reports" /> },
+  settings: { section: 'Configuration', title: 'Settings', render: () => <PlaceholderScreen title="Settings" /> },
 };
 
 export function AppShell() {
@@ -33,12 +33,13 @@ export function AppShell() {
       <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
         <header
           style={{
-            display: 'flex', alignItems: 'center', flex: '0 0 auto',
+            display: 'flex', alignItems: 'center', gap: 'var(--space-6)', flex: '0 0 auto',
             height: 'var(--topbar-h)', padding: '0 var(--space-8)',
-            borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-chrome)',
+            borderBottom: '1px solid var(--border-default)', background: 'var(--surface-chrome)',
           }}
         >
-          <h1 style={{ fontSize: 'var(--text-lg)' }}>{screen.title}</h1>
+          <Breadcrumb items={[{ label: screen.section }, { label: screen.title }]} />
+          <div style={{ flex: '1 1 auto' }} />
         </header>
         <main style={{ flex: '1 1 auto', overflow: 'auto', padding: 'var(--gutter)' }}>
           {screen.render()}
