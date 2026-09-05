@@ -4,12 +4,15 @@ import { companyRepository, type Company } from '../data';
 import { AddCompanyDialog } from '../components/AddCompanyDialog';
 import { CompanyCard } from '../components/CompanyCard';
 
-export function PortfolioScreen() {
+interface PortfolioScreenProps {
+  onSelectCompany: (company: Company) => void;
+}
+
+export function PortfolioScreen({ onSelectCompany }: PortfolioScreenProps) {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
-  const [selected, setSelected] = useState<Company | null>(null);
 
   const refresh = useCallback(async () => {
     setCompanies(await companyRepository.list());
@@ -40,20 +43,6 @@ export function PortfolioScreen() {
     await refresh();
   }
 
-  if (selected) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-        <Button variant="ghost" size="sm" iconLeft="arrow-left" onClick={() => setSelected(null)}>
-          Back to portfolio
-        </Button>
-        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-          <strong style={{ color: 'var(--text-primary)' }}>{selected.name}</strong> — dashboard, modeling,
-          documents, and events workflows land here next.
-        </span>
-      </div>
-    );
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
@@ -79,7 +68,7 @@ export function PortfolioScreen() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 'var(--space-8)' }}>
           {filtered.map((company) => (
-            <CompanyCard key={company.id} company={company} onSelect={setSelected} />
+            <CompanyCard key={company.id} company={company} onSelect={onSelectCompany} />
           ))}
         </div>
       )}

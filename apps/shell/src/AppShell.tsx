@@ -1,5 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
+import type { Company } from './data';
+import { CompanyDetailScreen } from './screens/CompanyDetailScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
 
@@ -12,20 +14,45 @@ const NAV_ITEMS: SideNavItem[] = [
   { value: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
-const SCREENS: Record<string, { section: string; title: string; render: () => ReactNode }> = {
-  overview: { section: 'Workspace', title: 'Overview', render: () => <PlaceholderScreen title="Overview" /> },
-  portfolio: { section: 'Workspace', title: 'Portfolio', render: () => <PortfolioScreen /> },
-  reports: { section: 'Workspace', title: 'Reports', render: () => <PlaceholderScreen title="Reports" /> },
-  settings: { section: 'Configuration', title: 'Settings', render: () => <PlaceholderScreen title="Settings" /> },
+const SCREENS: Record<string, { section: string; title: string }> = {
+  overview: { section: 'Workspace', title: 'Overview' },
+  portfolio: { section: 'Workspace', title: 'Portfolio' },
+  reports: { section: 'Workspace', title: 'Reports' },
+  settings: { section: 'Configuration', title: 'Settings' },
 };
+
+const PORTFOLIO_CRUMB = 'portfolio-root';
 
 export function AppShell() {
   const [active, setActive] = useState('overview');
-  const screen = useMemo(() => SCREENS[active] ?? SCREENS.overview, [active]);
+  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const screen = SCREENS[active] ?? SCREENS.overview;
+
+  function handleNavChange(value: string) {
+    setActive(value);
+    setSelectedCompany(null);
+  }
+
+  const breadcrumbItems = [
+    { label: screen.section },
+    { value: PORTFOLIO_CRUMB, label: screen.title },
+    ...(active === 'portfolio' && selectedCompany ? [{ label: selectedCompany.name }] : []),
+  ];
+
+  function renderScreen() {
+    if (active === 'portfolio') {
+      return selectedCompany ? (
+        <CompanyDetailScreen company={selectedCompany} />
+      ) : (
+        <PortfolioScreen onSelectCompany={setSelectedCompany} />
+      );
+    }
+    return <PlaceholderScreen title={screen.title} />;
+  }
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <SideNav items={NAV_ITEMS} value={active} onChange={setActive} />
+      <SideNav items={NAV_ITEMS} value={active} onChange={handleNavChange} />
       <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0 }}>
         <header
           style={{
@@ -38,11 +65,14 @@ export function AppShell() {
             Basis
           </span>
           <div style={{ width: 1, height: 18, background: 'var(--border-default)' }} />
-          <Breadcrumb items={[{ label: screen.section }, { label: screen.title }]} />
+          <Breadcrumb
+            items={breadcrumbItems}
+            onNavigate={selectedCompany ? (value) => value === PORTFOLIO_CRUMB && setSelectedCompany(null) : undefined}
+          />
           <div style={{ flex: '1 1 auto' }} />
         </header>
         <main style={{ flex: '1 1 auto', overflow: 'auto', padding: 'var(--gutter)' }}>
-          {screen.render()}
+          {renderScreen()}
         </main>
       </div>
     </div>
