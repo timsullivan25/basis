@@ -4,6 +4,7 @@ import type { Company } from './data';
 import { CompanyDetailScreen } from './screens/CompanyDetailScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 
 const NAV_ITEMS: SideNavItem[] = [
   { section: 'Workspace' },
@@ -46,6 +47,9 @@ export function AppShell() {
       ) : (
         <PortfolioScreen onSelectCompany={setSelectedCompany} />
       );
+    }
+    if (active === 'settings') {
+      return <SettingsScreen />;
     }
     return <PlaceholderScreen title={screen.title} />;
   }
