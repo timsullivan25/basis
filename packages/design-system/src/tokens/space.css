@@ -1,0 +1,13 @@
+:root{
+/* 2px base, compact. --space-4 (8px) is the default gap inside controls. */
+--space-0:0;--space-1:2px;--space-2:4px;--space-3:6px;--space-4:8px;--space-5:10px;--space-6:12px;
+--space-7:14px;--space-8:16px;--space-9:20px;--space-10:24px;--space-11:32px;--space-12:40px;--space-13:48px;--space-14:64px;
+/* Radii — small and deliberate */
+--radius-xs:2px;--radius-sm:3px;--radius-md:5px;--radius-lg:8px;--radius-xl:12px;--radius-pill:999px;
+/* Control heights — the compactness contract */
+--control-xs:20px;--control-sm:24px;--control-md:28px;--control-lg:34px;--control-xl:40px;
+/* Layout */
+--sidebar-w:216px;--sidebar-w-collapsed:48px;--topbar-h:44px;--subbar-h:34px;
+--panel-w:320px;--gutter:16px;--page-max:1440px;--row-h:30px;--row-h-dense:26px;
+--border-w:1px;--border-w-thick:2px;--focus-ring-w:3px;
+}

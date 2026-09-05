@@ -1,0 +1,23 @@
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--surface-app);color:var(--text-body);font-family:var(--font-sans);font-size:var(--text-sm);line-height:var(--leading-normal);-webkit-font-smoothing:antialiased;text-wrap:pretty}
+h1,h2,h3,h4,h5,h6{margin:0;color:var(--text-primary);font-weight:var(--weight-semibold);letter-spacing:var(--tracking-heading);line-height:var(--leading-tight)}
+h1{font-size:var(--text-3xl);letter-spacing:var(--tracking-display)}
+h2{font-size:var(--text-2xl)}h3{font-size:var(--text-xl)}h4{font-size:var(--text-lg)}h5{font-size:var(--text-base)}h6{font-size:var(--text-sm)}
+p{margin:0 0 var(--space-6)}
+a{color:var(--text-link);text-decoration:none;border-bottom:1px solid transparent;transition:color var(--dur-fast) var(--ease-out),border-color var(--dur-fast) var(--ease-out)}
+a:hover{color:var(--text-link-hover);border-bottom-color:currentColor}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+code,kbd,samp,pre{font-family:var(--font-mono);font-size:.92em}
+table{border-collapse:separate;border-spacing:0}
+.num,.tnum{font-variant-numeric:var(--numeric-tabular);font-feature-settings:var(--font-feature-tabular)}
+.eyebrow{font-size:var(--text-2xs);font-weight:var(--weight-semibold);letter-spacing:var(--tracking-caps);text-transform:uppercase;color:var(--text-secondary)}
+.prose-serif{font-family:var(--font-serif);font-size:var(--text-md);line-height:var(--leading-relaxed);color:var(--text-body)}
+@keyframes basis-spin{to{transform:rotate(360deg)}}
+@keyframes basis-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes basis-pop-in{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes basis-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+::selection{background:var(--alpha-blue-20)}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:var(--ink-200);border:3px solid transparent;background-clip:content-box;border-radius:999px}
+*::-webkit-scrollbar-thumb:hover{background:var(--ink-300);background-clip:content-box}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important;transition-duration:.01ms !important}}

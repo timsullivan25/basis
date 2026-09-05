@@ -1,0 +1,25 @@
+:root{
+/* Ink — cool near-black neutral ramp */
+--ink-950:#0A0E14;--ink-900:#10161F;--ink-800:#1A2230;--ink-700:#2A3444;--ink-600:#3E4A5C;
+--ink-500:#5A6779;--ink-400:#7A8798;--ink-300:#A3AEBC;--ink-200:#C9D1DB;--ink-150:#DDE3EA;
+--ink-100:#EBEFF4;--ink-50:#F5F7FA;--ink-25:#FAFBFD;--white:#FFFFFF;
+/* Blue — primary brand */
+--blue-950:#03204F;--blue-900:#062A6E;--blue-800:#0A3A96;--blue-700:#0B4FD9;--blue-600:#2467E8;
+--blue-500:#3B7DF5;--blue-400:#6C9FF9;--blue-300:#8FB6FB;--blue-200:#C2D8FE;--blue-100:#E4EEFF;--blue-50:#F2F7FF;
+/* Sky — light blue, secondary brand */
+--sky-900:#08415A;--sky-800:#0A6288;--sky-700:#0F7FAE;--sky-600:#1D9BC7;--sky-500:#3EB0D8;
+--sky-400:#58C0E0;--sky-300:#8AD4EC;--sky-200:#BEE8F5;--sky-100:#E0F4FB;--sky-50:#F1FAFD;
+/* Green — positive / long */
+--green-800:#0A5C41;--green-700:#0C7350;--green-600:#0E8A5F;--green-500:#28A377;--green-300:#7FCFB0;--green-100:#DFF3EA;--green-50:#F1FAF6;
+/* Red — negative / short / destructive */
+--red-800:#8E1631;--red-700:#B31E41;--red-600:#D62B4E;--red-500:#E4526E;--red-300:#F09CAD;--red-100:#FCE4E9;--red-50:#FEF3F5;
+/* Amber — caution */
+--amber-800:#8A5308;--amber-700:#A66208;--amber-600:#C0790C;--amber-500:#DDA02A;--amber-300:#F0CE85;--amber-100:#FBEFD6;--amber-50:#FEF9EF;
+/* Violet — tertiary accent (charts, tags) */
+--violet-700:#5238B8;--violet-600:#6C4FD9;--violet-300:#B7A6F2;--violet-100:#ECE6FD;
+/* Alpha overlays */
+--alpha-ink-04:rgba(10,14,20,.04);--alpha-ink-06:rgba(10,14,20,.06);--alpha-ink-10:rgba(10,14,20,.10);
+--alpha-ink-16:rgba(10,14,20,.16);--alpha-ink-40:rgba(10,14,20,.40);--alpha-ink-64:rgba(10,14,20,.64);
+--alpha-white-08:rgba(255,255,255,.08);--alpha-white-12:rgba(255,255,255,.12);--alpha-white-64:rgba(255,255,255,.64);
+--alpha-blue-12:rgba(11,79,217,.12);--alpha-blue-20:rgba(11,79,217,.20);
+}
