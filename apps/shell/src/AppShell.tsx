@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
+import { PortfolioScreen } from './screens/PortfolioScreen';
 
 const NAV_ITEMS: SideNavItem[] = [
   { section: 'Workspace' },
@@ -13,7 +14,7 @@ const NAV_ITEMS: SideNavItem[] = [
 
 const SCREENS: Record<string, { section: string; title: string; render: () => ReactNode }> = {
   overview: { section: 'Workspace', title: 'Overview', render: () => <PlaceholderScreen title="Overview" /> },
-  portfolio: { section: 'Workspace', title: 'Portfolio', render: () => <PlaceholderScreen title="Portfolio" /> },
+  portfolio: { section: 'Workspace', title: 'Portfolio', render: () => <PortfolioScreen /> },
   reports: { section: 'Workspace', title: 'Reports', render: () => <PlaceholderScreen title="Reports" /> },
   settings: { section: 'Configuration', title: 'Settings', render: () => <PlaceholderScreen title="Settings" /> },
 };

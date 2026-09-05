@@ -19,5 +19,9 @@
   },
   "dependencies": {
     "lucide-react": "^1.41.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
   }
 }
