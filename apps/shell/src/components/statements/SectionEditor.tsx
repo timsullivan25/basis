@@ -56,13 +56,31 @@ export function SectionEditor({
       label: 'Line name',
       emphasis: true,
       render: (_: unknown, row: StatementLine) => {
-        const errors = validateFormula(row.formula, allLineNames);
+        const hasFormula = row.formula.trim().length > 0;
+        const errors = hasFormula ? validateFormula(row.formula, allLineNames) : [];
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
             {row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
-            {errors.length > 0 ? (
-              <span title={errors[0]}>
-                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+            {hasFormula ? (
+              errors.length > 0 ? (
+                <span title={errors[0]}>
+                  <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+                </span>
+              ) : (
+                <span title={`Formula: ${row.formula}`}>
+                  <Icon name="sigma" size={12} color="var(--text-tertiary)" />
+                </span>
+              )
+            ) : null}
+            {row.aliases.length > 0 ? (
+              <span
+                title={`Aliases: ${row.aliases.join(', ')}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--text-tertiary)' }}
+              >
+                <Icon name="tags" size={12} color="var(--text-tertiary)" />
+                <span style={{ fontSize: 'var(--text-3xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)' }}>
+                  {row.aliases.length}
+                </span>
               </span>
             ) : null}
           </span>
