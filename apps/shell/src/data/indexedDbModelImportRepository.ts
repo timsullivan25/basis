@@ -1,4 +1,4 @@
-import type { CreateModelImportInput, ModelImport, ModelImportRepository } from './types';
+import type { CreateModelImportInput, LineMapping, ModelImport, ModelImportRepository } from './types';
 import { openBasisDb } from './db';
 
 /** First ModelImportRepository adapter. Swap for an API-backed one later without touching callers. */
@@ -25,6 +25,15 @@ export class IndexedDbModelImportRepository implements ModelImportRepository {
     };
     await db.add('modelImports', modelImport);
     return modelImport;
+  }
+
+  async saveMapping(id: string, mapping: LineMapping[]): Promise<ModelImport> {
+    const db = await openBasisDb();
+    const existing = await db.get('modelImports', id);
+    if (!existing) throw new Error(`Model import not found: ${id}`);
+    const updated: ModelImport = { ...existing, mapping, mappedAt: new Date().toISOString() };
+    await db.put('modelImports', updated);
+    return updated;
   }
 
   async remove(id: string): Promise<void> {

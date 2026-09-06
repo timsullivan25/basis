@@ -13,7 +13,8 @@
     "@basis/design-system": "workspace:*",
     "idb": "8.0.3",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

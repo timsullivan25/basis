@@ -62,8 +62,11 @@ export interface ModelImport {
   fileName: string;
   fileSize: number;
   uploadedAt: string;
-  /** The raw uploaded workbook — read back when mapping/parsing is built next. */
+  /** The raw uploaded workbook, read back to parse/re-parse. */
   file: Blob;
+  /** Present once the user has completed and saved the mapping step. */
+  mapping?: LineMapping[];
+  mappedAt?: string;
 }
 
 export interface CreateModelImportInput {
@@ -75,5 +78,44 @@ export interface CreateModelImportInput {
 export interface ModelImportRepository {
   getForCompany(companyId: string): Promise<ModelImport | undefined>;
   create(input: CreateModelImportInput): Promise<ModelImport>;
+  saveMapping(id: string, mapping: LineMapping[]): Promise<ModelImport>;
   remove(id: string): Promise<void>;
+}
+
+export type PeriodType = 'FY' | 'Quarter' | 'Semi-Annual';
+
+export interface ParsedPeriod {
+  type: PeriodType;
+  /** ISO date string for the period end, as read from the source file. */
+  date: string;
+  /** Display label as given in the file, e.g. "FY 2026". */
+  name: string;
+}
+
+export interface ParsedSourceLine {
+  /** Stable within one parsed workbook (derived from row position at parse time). */
+  id: string;
+  section: string;
+  name: string;
+  /** Aligned index-for-index with ParsedWorkbook.periods; null where the cell was blank. */
+  values: (number | null)[];
+}
+
+export interface ParsedWorkbook {
+  periods: ParsedPeriod[];
+  lines: ParsedSourceLine[];
+}
+
+export type MatchMethod = 'exact' | 'alias' | 'fuzzy' | 'ai' | 'manual' | 'none';
+
+export interface LineMapping {
+  targetLineId: string;
+  /** Source line ids being summed into this target. Empty means unmapped. */
+  sourceLineIds: string[];
+  method: MatchMethod;
+  /** 0-1. Meaningless when method is 'none'. */
+  confidence: number;
+  note: string;
+  /** Manually confirmed despite low confidence — suppresses the review flag without changing the match. */
+  approved: boolean;
 }
