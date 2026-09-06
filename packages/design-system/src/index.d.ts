@@ -19,6 +19,7 @@ export * from './components/feedback/Tooltip';
 
 export * from './components/forms/Checkbox';
 export * from './components/forms/Field';
+export * from './components/forms/FileDropzone';
 export * from './components/forms/Input';
 export * from './components/forms/Radio';
 export * from './components/forms/SegmentedControl';

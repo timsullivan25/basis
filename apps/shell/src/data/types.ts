@@ -51,3 +51,29 @@ export interface StatementSchemaRepository {
   get(): Promise<StatementSchema>;
   save(schema: StatementSchema): Promise<void>;
 }
+
+/** "extract-ai" is a placeholder for now — not selectable until AI extraction exists. */
+export type ModelTemplateType = 'basis-template' | 'extract-ai';
+
+export interface ModelImport {
+  id: string;
+  companyId: string;
+  templateType: ModelTemplateType;
+  fileName: string;
+  fileSize: number;
+  uploadedAt: string;
+  /** The raw uploaded workbook — read back when mapping/parsing is built next. */
+  file: Blob;
+}
+
+export interface CreateModelImportInput {
+  companyId: string;
+  templateType: ModelTemplateType;
+  file: File;
+}
+
+export interface ModelImportRepository {
+  getForCompany(companyId: string): Promise<ModelImport | undefined>;
+  create(input: CreateModelImportInput): Promise<ModelImport>;
+  remove(id: string): Promise<void>;
+}

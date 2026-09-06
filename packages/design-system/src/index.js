@@ -19,6 +19,7 @@ export { Tooltip } from './components/feedback/Tooltip.jsx';
 
 export { Checkbox } from './components/forms/Checkbox.jsx';
 export { Field } from './components/forms/Field.jsx';
+export { FileDropzone } from './components/forms/FileDropzone.jsx';
 export { Input } from './components/forms/Input.jsx';
 export { Radio } from './components/forms/Radio.jsx';
 export { SegmentedControl } from './components/forms/SegmentedControl.jsx';
