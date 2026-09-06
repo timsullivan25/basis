@@ -99,11 +99,12 @@ export function DataTable({
                   ) : null}
                   {columns.map((c) => {
                     const cellId = k + ':' + c.key;
-                    const editing = c.renderEdit && activeCell === cellId;
+                    const editable = Boolean(c.renderEdit) && (c.canEdit ? c.canEdit(r) : true);
+                    const editing = editable && activeCell === cellId;
                     return (
                       <td
                         key={c.key}
-                        onClick={c.renderEdit ? (e) => { e.stopPropagation(); setActiveCell(cellId); } : undefined}
+                        onClick={editable ? (e) => { e.stopPropagation(); setActiveCell(cellId); } : undefined}
                         style={{
                           height: h, padding: '0 var(--space-6)', textAlign: align(c),
                           borderBottom: '1px solid var(--border-subtle)',
@@ -112,7 +113,7 @@ export function DataTable({
                           fontWeight: c.emphasis ? 'var(--weight-medium)' : 'var(--weight-regular)',
                           color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
                           whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
-                          cursor: c.renderEdit && !editing ? 'text' : undefined,
+                          cursor: editable && !editing ? 'text' : undefined,
                           ...rowOverrides,
                         }}
                       >

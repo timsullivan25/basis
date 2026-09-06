@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
-import { Button, Toast } from '@basis/design-system';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, Button, Toast } from '@basis/design-system';
 import { statementSchemaRepository, type StatementLine, type StatementSection } from '../data';
 import { SectionEditor } from '../components/statements/SectionEditor';
+import { validateFormula } from '../components/statements/formulaUtils';
 
 function emptyLine(): StatementLine {
   return {
     id: crypto.randomUUID(),
     name: '',
+    required: true,
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -25,6 +27,7 @@ function moveWithinArray<T>(items: T[], index: number, direction: 'up' | 'down')
 
 export function StatementDefinitionsScreen() {
   const [sections, setSections] = useState<StatementSection[]>([]);
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -35,6 +38,7 @@ export function StatementDefinitionsScreen() {
       const schema = await statementSchemaRepository.get();
       if (!cancelled) {
         setSections(schema.sections);
+        setSavedSnapshot(JSON.stringify(schema.sections));
         setLoading(false);
       }
     })();
@@ -112,17 +116,31 @@ export function StatementDefinitionsScreen() {
     setSaving(true);
     try {
       await statementSchemaRepository.save({ sections });
+      setSavedSnapshot(JSON.stringify(sections));
       setToast('Statement definitions saved');
     } finally {
       setSaving(false);
     }
   }
 
+  const isDirty = savedSnapshot !== null && JSON.stringify(sections) !== savedSnapshot;
+
+  const allLineNames = useMemo(
+    () => sections.flatMap((s) => s.lines.map((line) => line.name)).filter(Boolean),
+    [sections],
+  );
+
+  const errorLineCount = useMemo(
+    () =>
+      sections
+        .flatMap((s) => s.lines)
+        .filter((line) => validateFormula(line.formula, allLineNames).length > 0).length,
+    [sections, allLineNames],
+  );
+
   if (loading) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
-
-  const allLineNames = sections.flatMap((s) => s.lines.map((line) => line.name)).filter(Boolean);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
@@ -134,10 +152,16 @@ export function StatementDefinitionsScreen() {
           </span>
         </div>
         <div style={{ flex: '1 1 auto' }} />
-        <Button variant="primary" iconLeft="save" onClick={handleSave} loading={saving}>
+        <Button variant="primary" iconLeft="save" onClick={handleSave} loading={saving} disabled={!isDirty}>
           Save
         </Button>
       </div>
+
+      {errorLineCount > 0 ? (
+        <Alert tone="negative" compact>
+          {errorLineCount} line{errorLineCount > 1 ? 's have' : ' has'} formula errors that need to be reviewed.
+        </Alert>
+      ) : null}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
         {sections.map((section, index) => (

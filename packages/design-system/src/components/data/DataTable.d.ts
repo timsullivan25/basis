@@ -18,6 +18,8 @@ export interface DataTableColumn {
   render?: (value: any, row: any) => React.ReactNode;
   /** If provided, clicking the cell swaps to this editor until the user clicks elsewhere or presses Escape. */
   renderEdit?: (value: any, row: any) => React.ReactNode;
+  /** Gate editability per row (e.g. a derived value shouldn't be clickable). Defaults to true whenever renderEdit is set. */
+  canEdit?: (row: any) => boolean;
 }
 
 /**

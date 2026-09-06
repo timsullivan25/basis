@@ -20,6 +20,12 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
   absolute: { label: 'Absolute', tone: 'caution' },
 };
 
+/** Required/Optional is a manual choice, but a formula overrides it — the line is derived, not sourced. */
+export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
+  if (line.formula.trim()) return { label: 'Calculated', tone: 'positive' };
+  return line.required ? { label: 'Required', tone: 'caution' } : { label: 'Optional', tone: 'neutral' };
+}
+
 /** How a line renders in the actual statement preview, driven by its row format. */
 export function getLineRowStyle(line: StatementLine): CSSProperties {
   if (line.rowFormat === 'total') {

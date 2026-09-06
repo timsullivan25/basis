@@ -24,6 +24,8 @@ export interface StatementLine {
   /** Stable once created — never regenerated on rename/reorder/move, since formulas and aliases reference it. */
   id: string;
   name: string;
+  /** Ignored (treated as "Calculated") whenever formula is non-empty. */
+  required: boolean;
   rowFormat: LineRowFormat;
   numberFormat: LineNumberFormat;
   sign: LineSign;

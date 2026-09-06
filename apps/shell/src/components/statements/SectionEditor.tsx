@@ -1,12 +1,17 @@
 import { useState } from 'react';
-import { Badge, Button, DataTable, IconButton, Input, Select, Tag } from '@basis/design-system';
+import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Tag } from '@basis/design-system';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine, StatementSection } from '../../data';
 import { FormulaInput } from './FormulaInput';
-import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle } from './statementFormatting';
+import { validateFormula } from './formulaUtils';
+import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
 
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const SIGN_OPTIONS = Object.entries(SIGN_META).map(([value, meta]) => ({ value, label: meta.label }));
+const REQUIRED_OPTIONS = [
+  { value: 'required', label: 'Required' },
+  { value: 'optional', label: 'Optional' },
+];
 
 interface SectionEditorProps {
   section: StatementSection;
@@ -50,7 +55,19 @@ export function SectionEditor({
       key: 'name',
       label: 'Line name',
       emphasis: true,
-      render: (_: unknown, row: StatementLine) => row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>,
+      render: (_: unknown, row: StatementLine) => {
+        const errors = validateFormula(row.formula, allLineNames);
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            {row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
+            {errors.length > 0 ? (
+              <span title={errors[0]}>
+                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+              </span>
+            ) : null}
+          </span>
+        );
+      },
       renderEdit: (_: unknown, row: StatementLine) => (
         <Input
           size="sm"
@@ -58,6 +75,29 @@ export function SectionEditor({
           value={row.name}
           onChange={(e) => onUpdateLine(row.id, { name: e.target.value })}
           placeholder="Line name"
+        />
+      ),
+    },
+    {
+      key: 'required',
+      label: 'Required',
+      width: 120,
+      canEdit: (row: StatementLine) => !row.formula.trim(),
+      render: (_: unknown, row: StatementLine) => {
+        const meta = getRequiredMeta(row);
+        return (
+          <Badge tone={meta.tone} size="sm">
+            {meta.label}
+          </Badge>
+        );
+      },
+      renderEdit: (_: unknown, row: StatementLine) => (
+        <Select
+          size="sm"
+          autoFocus
+          options={REQUIRED_OPTIONS}
+          value={row.required ? 'required' : 'optional'}
+          onChange={(e) => onUpdateLine(row.id, { required: e.target.value === 'required' })}
         />
       ),
     },
@@ -136,13 +176,7 @@ export function SectionEditor({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', minHeight: 40, padding: '0 var(--space-8)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <Input
-          size="sm"
-          value={section.name}
-          onChange={(e) => onRename(e.target.value)}
-          placeholder="Section name"
-          style={{ width: 240 }}
-        />
+        <SectionName name={section.name} onRename={onRename} />
         <div style={{ flex: '1 1 auto' }} />
         <IconButton icon="arrow-up" label="Move section up" size="sm" variant="ghost" onClick={onMoveUp} disabled={isFirst} />
         <IconButton icon="arrow-down" label="Move section down" size="sm" variant="ghost" onClick={onMoveDown} disabled={isLast} />
@@ -180,6 +214,43 @@ export function SectionEditor({
         </Button>
       </div>
     </div>
+  );
+}
+
+function SectionName({ name, onRename }: { name: string; onRename: (name: string) => void }) {
+  const [editing, setEditing] = useState(false);
+
+  if (editing) {
+    return (
+      <Input
+        size="sm"
+        autoFocus
+        value={name}
+        onChange={(e) => onRename(e.target.value)}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur();
+        }}
+        placeholder="Section name"
+        style={{ width: 240 }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      style={{
+        padding: '0 var(--space-2)', margin: '0 calc(-1 * var(--space-2))', border: 'none', borderRadius: 'var(--radius-sm)',
+        background: 'transparent', cursor: 'pointer', textAlign: 'left',
+        fontFamily: 'var(--font-sans)', fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)',
+        letterSpacing: 'var(--tracking-heading)', color: name ? 'var(--text-primary)' : 'var(--text-tertiary)',
+        transition: 'var(--transition-control)',
+      }}
+    >
+      {name || 'Untitled section'}
+    </button>
   );
 }
 
