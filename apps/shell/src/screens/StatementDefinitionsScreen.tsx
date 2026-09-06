@@ -23,7 +23,7 @@ function moveWithinArray<T>(items: T[], index: number, direction: 'up' | 'down')
   return next;
 }
 
-export function SettingsScreen() {
+export function StatementDefinitionsScreen() {
   const [sections, setSections] = useState<StatementSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

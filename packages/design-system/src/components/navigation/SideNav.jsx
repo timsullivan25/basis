@@ -24,6 +24,8 @@ export function SideNav({ items = [], value, onChange, header, footer, collapsed
           }
           const on = value === item.value;
           const hv = hover === item.value;
+          const childActive = item.children && item.children.some((c) => c.value === value);
+          const showChildren = !collapsed && item.children && (on || childActive);
           return (
             <div key={item.value}>
               <button
@@ -45,14 +47,29 @@ export function SideNav({ items = [], value, onChange, header, footer, collapsed
                 {!collapsed ? <span style={{ flex: '1 1 auto', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span> : null}
                 {!collapsed && item.badge ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-3xs)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-tertiary)' }}>{item.badge}</span> : null}
               </button>
-              {!collapsed && on && item.children ? (
+              {showChildren ? (
                 <div style={{ display: 'flex', flexDirection: 'column', margin: 'var(--space-1) 0 var(--space-3) calc(var(--space-5) + 15px + var(--space-5) / 2)', paddingLeft: 'var(--space-5)', borderLeft: '1px solid var(--border-default)' }}>
-                  {item.children.map((c) => (
-                    <button key={c.value} type="button" onClick={() => onChange && onChange(c.value)}
-                      style={{ display: 'flex', alignItems: 'center', height: 'var(--control-sm)', padding: '0 var(--space-4)', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', textAlign: 'left' }}>
-                      {c.label}
-                    </button>
-                  ))}
+                  {item.children.map((c) => {
+                    const childOn = value === c.value;
+                    const childHv = hover === c.value;
+                    return (
+                      <button
+                        key={c.value} type="button" onClick={() => onChange && onChange(c.value)}
+                        onMouseEnter={() => setHover(c.value)} onMouseLeave={() => setHover(null)}
+                        style={{
+                          display: 'flex', alignItems: 'center', height: 'var(--control-sm)', padding: '0 var(--space-4)',
+                          background: childOn ? 'var(--surface-selected)' : childHv ? 'var(--surface-hover)' : 'transparent',
+                          border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                          fontFamily: 'var(--font-sans)', fontSize: 'var(--text-xs)',
+                          fontWeight: childOn ? 'var(--weight-semibold)' : 'var(--weight-regular)',
+                          color: childOn ? 'var(--text-brand)' : 'var(--text-secondary)',
+                          textAlign: 'left', transition: 'var(--transition-control)',
+                        }}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>
