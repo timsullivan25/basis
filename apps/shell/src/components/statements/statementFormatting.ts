@@ -1,0 +1,39 @@
+import type { CSSProperties } from 'react';
+import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine } from '../../data';
+
+type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
+
+export const ROW_FORMAT_META: Record<LineRowFormat, { label: string; tone: BadgeTone }> = {
+  normal: { label: 'Normal', tone: 'neutral' },
+  total: { label: 'Total', tone: 'brand' },
+  metric: { label: 'Metric', tone: 'info' },
+};
+
+export const NUMBER_FORMAT_META: Record<LineNumberFormat, { label: string; tone: BadgeTone }> = {
+  number: { label: 'Number', tone: 'neutral' },
+  percentage: { label: 'Percentage', tone: 'info' },
+  multiple: { label: 'Multiple', tone: 'caution' },
+};
+
+export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
+  natural: { label: 'Natural', tone: 'neutral' },
+  absolute: { label: 'Absolute', tone: 'caution' },
+};
+
+/** How a line renders in the actual statement preview, driven by its row format. */
+export function getLineRowStyle(line: StatementLine): CSSProperties {
+  if (line.rowFormat === 'total') {
+    return {
+      fontWeight: 'var(--weight-semibold)',
+      background: 'var(--surface-sunken)',
+      borderTop: '1px solid var(--border-default)',
+    };
+  }
+  if (line.rowFormat === 'metric') {
+    return {
+      fontStyle: 'italic',
+      color: 'var(--text-secondary)',
+    };
+  }
+  return {};
+}

@@ -1,29 +1,19 @@
 import { useState } from 'react';
-import { Button, DataTable, IconButton, Input, Select, Tag } from '@basis/design-system';
+import { Badge, Button, DataTable, IconButton, Input, Select, Tag } from '@basis/design-system';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine, StatementSection } from '../../data';
+import { FormulaInput } from './FormulaInput';
+import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle } from './statementFormatting';
 
-const ROW_FORMAT_OPTIONS = [
-  { value: 'normal', label: 'Normal' },
-  { value: 'total', label: 'Total' },
-  { value: 'metric', label: 'Metric' },
-];
-
-const NUMBER_FORMAT_OPTIONS = [
-  { value: 'number', label: 'Number' },
-  { value: 'percentage', label: 'Percentage' },
-  { value: 'multiple', label: 'Multiple' },
-];
-
-const SIGN_OPTIONS = [
-  { value: 'natural', label: 'Natural' },
-  { value: 'absolute', label: 'Absolute' },
-];
+const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
+const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
+const SIGN_OPTIONS = Object.entries(SIGN_META).map(([value, meta]) => ({ value, label: meta.label }));
 
 interface SectionEditorProps {
   section: StatementSection;
   isFirst: boolean;
   isLast: boolean;
   otherSections: { id: string; name: string }[];
+  allLineNames: string[];
   onRename: (name: string) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -36,7 +26,7 @@ interface SectionEditorProps {
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, otherSections,
+  section, isFirst, isLast, otherSections, allLineNames,
   onRename, onMoveUp, onMoveDown, onDelete,
   onAddLine, onUpdateLine, onDeleteLine, onMoveLine, onMoveLineToSection,
 }: SectionEditorProps) {
@@ -60,15 +50,15 @@ export function SectionEditor({
       key: 'name',
       label: 'Line name',
       emphasis: true,
-      render: (_: unknown, row: StatementLine) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <Input
-            size="sm"
-            value={row.name}
-            onChange={(e) => onUpdateLine(row.id, { name: e.target.value })}
-            placeholder="Line name"
-          />
-        </div>
+      render: (_: unknown, row: StatementLine) => row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>,
+      renderEdit: (_: unknown, row: StatementLine) => (
+        <Input
+          size="sm"
+          autoFocus
+          value={row.name}
+          onChange={(e) => onUpdateLine(row.id, { name: e.target.value })}
+          placeholder="Line name"
+        />
       ),
     },
     {
@@ -76,14 +66,18 @@ export function SectionEditor({
       label: 'Row format',
       width: 130,
       render: (_: unknown, row: StatementLine) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <Select
-            size="sm"
-            options={ROW_FORMAT_OPTIONS}
-            value={row.rowFormat}
-            onChange={(e) => onUpdateLine(row.id, { rowFormat: e.target.value as LineRowFormat })}
-          />
-        </div>
+        <Badge tone={ROW_FORMAT_META[row.rowFormat].tone} size="sm">
+          {ROW_FORMAT_META[row.rowFormat].label}
+        </Badge>
+      ),
+      renderEdit: (_: unknown, row: StatementLine) => (
+        <Select
+          size="sm"
+          autoFocus
+          options={ROW_FORMAT_OPTIONS}
+          value={row.rowFormat}
+          onChange={(e) => onUpdateLine(row.id, { rowFormat: e.target.value as LineRowFormat })}
+        />
       ),
     },
     {
@@ -91,14 +85,18 @@ export function SectionEditor({
       label: 'Number format',
       width: 140,
       render: (_: unknown, row: StatementLine) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <Select
-            size="sm"
-            options={NUMBER_FORMAT_OPTIONS}
-            value={row.numberFormat}
-            onChange={(e) => onUpdateLine(row.id, { numberFormat: e.target.value as LineNumberFormat })}
-          />
-        </div>
+        <Badge tone={NUMBER_FORMAT_META[row.numberFormat].tone} size="sm">
+          {NUMBER_FORMAT_META[row.numberFormat].label}
+        </Badge>
+      ),
+      renderEdit: (_: unknown, row: StatementLine) => (
+        <Select
+          size="sm"
+          autoFocus
+          options={NUMBER_FORMAT_OPTIONS}
+          value={row.numberFormat}
+          onChange={(e) => onUpdateLine(row.id, { numberFormat: e.target.value as LineNumberFormat })}
+        />
       ),
     },
     {
@@ -106,14 +104,18 @@ export function SectionEditor({
       label: 'Sign',
       width: 110,
       render: (_: unknown, row: StatementLine) => (
-        <div onClick={(e) => e.stopPropagation()} title="Natural keeps the sign as imported; absolute always stores positive">
-          <Select
-            size="sm"
-            options={SIGN_OPTIONS}
-            value={row.sign}
-            onChange={(e) => onUpdateLine(row.id, { sign: e.target.value as LineSign })}
-          />
-        </div>
+        <Badge tone={SIGN_META[row.sign].tone} size="sm">
+          {SIGN_META[row.sign].label}
+        </Badge>
+      ),
+      renderEdit: (_: unknown, row: StatementLine) => (
+        <Select
+          size="sm"
+          autoFocus
+          options={SIGN_OPTIONS}
+          value={row.sign}
+          onChange={(e) => onUpdateLine(row.id, { sign: e.target.value as LineSign })}
+        />
       ),
     },
     {
@@ -153,12 +155,14 @@ export function SectionEditor({
           rows={section.lines}
           rowKey="id"
           dense
+          rowStyle={getLineRowStyle}
           expandedKey={expandedLineId}
           onRowClick={(row) => setExpandedLineId(expandedLineId === row.id ? null : row.id)}
           renderDetail={(row: StatementLine) => (
             <LineDetail
               line={row}
               otherSections={otherSections}
+              allLineNames={allLineNames}
               onUpdateLine={onUpdateLine}
               onMoveLineToSection={onMoveLineToSection}
             />
@@ -182,11 +186,12 @@ export function SectionEditor({
 interface LineDetailProps {
   line: StatementLine;
   otherSections: { id: string; name: string }[];
+  allLineNames: string[];
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
 }
 
-function LineDetail({ line, otherSections, onUpdateLine, onMoveLineToSection }: LineDetailProps) {
+function LineDetail({ line, otherSections, allLineNames, onUpdateLine, onMoveLineToSection }: LineDetailProps) {
   const [aliasDraft, setAliasDraft] = useState('');
 
   function addAlias() {
@@ -206,12 +211,10 @@ function LineDetail({ line, otherSections, onUpdateLine, onMoveLineToSection }: 
         <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
           Formula
         </span>
-        <Input
-          size="sm"
+        <FormulaInput
           value={line.formula}
-          onChange={(e) => onUpdateLine(line.id, { formula: e.target.value })}
-          placeholder="e.g. revenue - cogs"
-          mono
+          onChange={(formula) => onUpdateLine(line.id, { formula })}
+          knownNames={allLineNames}
         />
       </div>
 

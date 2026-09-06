@@ -2,18 +2,31 @@ import React from 'react';
 import { Icon } from '../primitives/Icon.jsx';
 import { Checkbox } from '../forms/Checkbox.jsx';
 
-/** Dense sortable table with optional group rows and expandable detail. */
+/** Dense sortable table with optional group rows, expandable detail, and click-to-edit cells. */
 export function DataTable({
   columns = [], rows = [], rowKey = 'id', dense = false, striped = false,
   sort, onSortChange, selectable = false, selected = [], onSelectedChange,
-  expandedKey, onRowClick, renderDetail, stickyHeader = true, maxHeight, style, ...rest
+  expandedKey, onRowClick, renderDetail, rowStyle, stickyHeader = true, maxHeight, style, ...rest
 }) {
   const h = dense ? 'var(--row-h-dense)' : 'var(--row-h)';
   const [hoverRow, setHoverRow] = React.useState(null);
+  const [activeCell, setActiveCell] = React.useState(null);
   const allSel = selectable && rows.length > 0 && selected.length === rows.length;
   const toggleAll = () => onSelectedChange && onSelectedChange(allSel ? [] : rows.map((r) => r[rowKey]));
   const toggleRow = (k) => onSelectedChange && onSelectedChange(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
   const align = (c) => c.align || (c.numeric ? 'right' : 'left');
+
+  React.useEffect(() => {
+    if (!activeCell) return undefined;
+    const clear = () => setActiveCell(null);
+    const onKeyDown = (e) => { if (e.key === 'Escape') clear(); };
+    document.addEventListener('click', clear);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('click', clear);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [activeCell]);
 
   return (
     <div style={{ overflow: 'auto', maxHeight, ...style }} {...rest}>
@@ -68,6 +81,7 @@ export function DataTable({
               );
             }
             const hovered = hoverRow === k;
+            const rowOverrides = rowStyle ? rowStyle(r) : null;
             return (
               <React.Fragment key={k}>
                 <tr
@@ -83,22 +97,29 @@ export function DataTable({
                       <Checkbox checked={selected.includes(k)} onChange={() => toggleRow(k)} />
                     </td>
                   ) : null}
-                  {columns.map((c) => (
-                    <td
-                      key={c.key}
-                      style={{
-                        height: h, padding: '0 var(--space-6)', textAlign: align(c),
-                        borderBottom: '1px solid var(--border-subtle)',
-                        fontFamily: c.numeric ? 'var(--font-mono)' : 'var(--font-sans)',
-                        fontVariantNumeric: c.numeric ? 'var(--numeric-tabular)' : undefined,
-                        fontWeight: c.emphasis ? 'var(--weight-medium)' : 'var(--weight-regular)',
-                        color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
-                        whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {c.render ? c.render(r[c.key], r) : r[c.key]}
-                    </td>
-                  ))}
+                  {columns.map((c) => {
+                    const cellId = k + ':' + c.key;
+                    const editing = c.renderEdit && activeCell === cellId;
+                    return (
+                      <td
+                        key={c.key}
+                        onClick={c.renderEdit ? (e) => { e.stopPropagation(); setActiveCell(cellId); } : undefined}
+                        style={{
+                          height: h, padding: '0 var(--space-6)', textAlign: align(c),
+                          borderBottom: '1px solid var(--border-subtle)',
+                          fontFamily: c.numeric ? 'var(--font-mono)' : 'var(--font-sans)',
+                          fontVariantNumeric: c.numeric ? 'var(--numeric-tabular)' : undefined,
+                          fontWeight: c.emphasis ? 'var(--weight-medium)' : 'var(--weight-regular)',
+                          color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
+                          whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
+                          cursor: c.renderEdit && !editing ? 'text' : undefined,
+                          ...rowOverrides,
+                        }}
+                      >
+                        {editing ? c.renderEdit(r[c.key], r) : (c.render ? c.render(r[c.key], r) : r[c.key])}
+                      </td>
+                    );
+                  })}
                 </tr>
                 {expanded && renderDetail ? (
                   <tr>

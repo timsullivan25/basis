@@ -18,4 +18,4 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
   onClear?: () => void;
   style?: React.CSSProperties;
 }
-export function Input(props: InputProps): JSX.Element;
+export const Input: React.ForwardRefExoticComponent<InputProps & React.RefAttributes<HTMLInputElement>>;

@@ -122,6 +122,8 @@ export function StatementDefinitionsScreen() {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
 
+  const allLineNames = sections.flatMap((s) => s.lines.map((line) => line.name)).filter(Boolean);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
@@ -145,6 +147,7 @@ export function StatementDefinitionsScreen() {
             isFirst={index === 0}
             isLast={index === sections.length - 1}
             otherSections={sections.filter((s) => s.id !== section.id).map((s) => ({ id: s.id, name: s.name }))}
+            allLineNames={allLineNames}
             onRename={(name) => renameSection(section.id, name)}
             onMoveUp={() => moveSection(section.id, 'up')}
             onMoveDown={() => moveSection(section.id, 'down')}

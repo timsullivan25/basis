@@ -16,6 +16,8 @@ export interface DataTableColumn {
   /** Tooltip on the header + info glyph; explain the methodology here. */
   description?: string;
   render?: (value: any, row: any) => React.ReactNode;
+  /** If provided, clicking the cell swaps to this editor until the user clicks elsewhere or presses Escape. */
+  renderEdit?: (value: any, row: any) => React.ReactNode;
 }
 
 /**
@@ -42,6 +44,8 @@ export interface DataTableProps extends React.HTMLAttributes<HTMLDivElement> {
   onRowClick?: (row: any) => void;
   /** Renders the inline detail panel for the expanded row. */
   renderDetail?: (row: any) => React.ReactNode;
+  /** Per-row style override (e.g. background/border/font for a "total" or "metric" row), merged onto every cell. */
+  rowStyle?: (row: any) => React.CSSProperties;
   stickyHeader?: boolean;
   maxHeight?: number | string;
 }

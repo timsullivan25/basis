@@ -8,7 +8,7 @@ const FIELD_SIZES = {
 };
 
 /** Single-line text/number input with optional icons, prefix and unit suffix. */
-export function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, style, onClear, value, ...rest }) {
+export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, style, onClear, value, ...rest }, ref) {
   const [focus, setFocus] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const s = FIELD_SIZES[size] || FIELD_SIZES.md;
@@ -28,6 +28,7 @@ export function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invali
       {iconLeft ? <Icon name={iconLeft} size={s.icon} color="var(--text-tertiary)" /> : null}
       {prefix ? <span style={{ fontSize: s.fs, color: 'var(--text-tertiary)', flex: '0 0 auto' }}>{prefix}</span> : null}
       <input
+        ref={ref}
         value={value} disabled={disabled}
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
         style={{
@@ -46,4 +47,4 @@ export function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invali
       {iconRight ? <Icon name={iconRight} size={s.icon} color="var(--text-tertiary)" /> : null}
     </div>
   );
-}
+});
