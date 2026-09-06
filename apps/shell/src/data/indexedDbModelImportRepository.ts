@@ -22,6 +22,7 @@ export class IndexedDbModelImportRepository implements ModelImportRepository {
       fileSize: input.file.size,
       uploadedAt: new Date().toISOString(),
       file: input.file,
+      ...(input.mapping ? { mapping: input.mapping, mappedAt: new Date().toISOString() } : {}),
     };
     await db.add('modelImports', modelImport);
     return modelImport;

@@ -5,6 +5,7 @@ import {
   type Company,
   type LineMapping,
   type ModelImport,
+  type ModelTemplateType,
   type ParsedWorkbook,
   type StatementLine,
   type StatementSchema,
@@ -34,13 +35,20 @@ function computeTargetValue(mapping: LineMapping | undefined, workbook: ParsedWo
 
 interface ModelMappingScreenProps {
   company: Company;
-  modelImport: ModelImport;
   statementSchema: StatementSchema;
+  /** Editing an already-saved model — Save updates its mapping in place. */
+  modelImport?: ModelImport;
+  /** A freshly-picked, not-yet-saved file — Save creates the model and its mapping together. */
+  draft?: { templateType: ModelTemplateType; file: File };
   onCancel: () => void;
   onSaved: (updated: ModelImport) => void;
 }
 
-export function ModelMappingScreen({ company, modelImport, statementSchema, onCancel, onSaved }: ModelMappingScreenProps) {
+export function ModelMappingScreen({ company, statementSchema, modelImport, draft, onCancel, onSaved }: ModelMappingScreenProps) {
+  const file = modelImport?.file ?? draft?.file;
+  const fileName = modelImport?.fileName ?? draft?.file.name ?? '';
+  if (!file) throw new Error('ModelMappingScreen requires either modelImport or draft.');
+
   const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [mapping, setMapping] = useState<Record<string, LineMapping>>({});
@@ -57,10 +65,10 @@ export function ModelMappingScreen({ company, modelImport, statementSchema, onCa
     let cancelled = false;
     (async () => {
       try {
-        const parsed = await parseBasisTemplate(modelImport.file);
+        const parsed = await parseBasisTemplate(file);
         if (cancelled) return;
         setWorkbook(parsed);
-        if (modelImport.mapping) {
+        if (modelImport?.mapping) {
           setMapping(Object.fromEntries(modelImport.mapping.map((m) => [m.targetLineId, m])));
         } else {
           setMapping(matchStatementLines(statementSchema.sections, parsed.lines));
@@ -73,7 +81,7 @@ export function ModelMappingScreen({ company, modelImport, statementSchema, onCa
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelImport.id]);
+  }, [modelImport?.id, draft?.file]);
 
   const allLines = useMemo(
     () => statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))),
@@ -105,7 +113,14 @@ export function ModelMappingScreen({ company, modelImport, statementSchema, onCa
     if (blockers.length > 0) return;
     setSaving(true);
     try {
-      const updated = await modelImportRepository.saveMapping(modelImport.id, Object.values(mapping));
+      const updated = modelImport
+        ? await modelImportRepository.saveMapping(modelImport.id, Object.values(mapping))
+        : await modelImportRepository.create({
+            companyId: company.id,
+            templateType: draft!.templateType,
+            file: draft!.file,
+            mapping: Object.values(mapping),
+          });
       setSavedToast(true);
       onSaved(updated);
     } finally {
@@ -127,7 +142,7 @@ export function ModelMappingScreen({ company, modelImport, statementSchema, onCa
   }
 
   if (!workbook) {
-    return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Parsing {modelImport.fileName}…</span>;
+    return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Parsing {fileName}…</span>;
   }
   const wb = workbook;
 
@@ -328,7 +343,7 @@ export function ModelMappingScreen({ company, modelImport, statementSchema, onCa
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
           <Icon name="file-spreadsheet" size={16} color="var(--text-brand)" />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{modelImport.fileName}</span>
+            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{fileName}</span>
             <span style={{ fontSize: 'var(--text-3xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
               {workbook.periods.length} periods · {workbook.lines.length} lines
             </span>

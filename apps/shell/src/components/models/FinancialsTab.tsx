@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Icon } from '@basis/design-system';
+import { Button, Card, Dialog, Icon, IconButton } from '@basis/design-system';
 import {
   modelImportRepository,
   statementSchemaRepository,
@@ -24,7 +24,10 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
   const [model, setModel] = useState<ModelImport | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [mapping, setMapping] = useState(false);
+  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File } | null>(null);
+  const [editingMapping, setEditingMapping] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,25 +46,49 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
     };
   }, [company.id]);
 
-  async function handleSubmit(input: { templateType: ModelTemplateType; file: File }) {
-    const created = await modelImportRepository.create({ companyId: company.id, ...input });
-    setModel(created);
+  async function handleDelete() {
+    if (!model) return;
+    setDeleting(true);
+    try {
+      await modelImportRepository.remove(model.id);
+      setModel(null);
+    } finally {
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
   }
 
   if (model === undefined || !schema) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
 
-  if (mapping && model) {
+  // New upload: nothing is saved until mapping is completed and "Save mapping" is clicked.
+  if (draft) {
     return (
       <ModelMappingScreen
         company={company}
-        modelImport={model}
         statementSchema={schema}
-        onCancel={() => setMapping(false)}
+        draft={draft}
+        onCancel={() => setDraft(null)}
+        onSaved={(created) => {
+          setModel(created);
+          setDraft(null);
+        }}
+      />
+    );
+  }
+
+  // Re-mapping an already-saved model: Save just updates its mapping in place.
+  if (editingMapping && model) {
+    return (
+      <ModelMappingScreen
+        company={company}
+        statementSchema={schema}
+        modelImport={model}
+        onCancel={() => setEditingMapping(false)}
         onSaved={(updated) => {
           setModel(updated);
-          setMapping(false);
+          setEditingMapping(false);
         }}
       />
     );
@@ -70,7 +97,18 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
       {model ? (
-        <Card title="Model" icon="file-spreadsheet" actions={<Button size="sm" iconLeft="git-merge" onClick={() => setMapping(true)}>{model.mapping ? 'Edit mapping' : 'Map line items'}</Button>}>
+        <Card
+          title="Model"
+          icon="file-spreadsheet"
+          actions={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+              <Button size="sm" iconLeft="git-merge" onClick={() => setEditingMapping(true)}>
+                {model.mapping ? 'Edit mapping' : 'Map line items'}
+              </Button>
+              <IconButton icon="trash-2" label="Delete model" size="sm" variant="ghost" onClick={() => setDeleteConfirmOpen(true)} />
+            </div>
+          }
+        >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{model.fileName}</span>
             <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>
@@ -102,8 +140,31 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
         open={dialogOpen}
         companyName={company.name}
         onClose={() => setDialogOpen(false)}
-        onSubmit={handleSubmit}
+        onContinue={(input) => {
+          setDialogOpen(false);
+          setDraft(input);
+        }}
       />
+
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        icon="alert-triangle"
+        title="Delete this model?"
+        subtitle={model?.fileName}
+        footer={
+          <>
+            <Button onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" loading={deleting} onClick={handleDelete}>
+              Delete model
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          The uploaded file and its mapping will be permanently removed. This cannot be undone.
+        </p>
+      </Dialog>
     </div>
   );
 }

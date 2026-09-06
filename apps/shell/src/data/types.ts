@@ -73,6 +73,8 @@ export interface CreateModelImportInput {
   companyId: string;
   templateType: ModelTemplateType;
   file: File;
+  /** Provided when upload and mapping are completed as one step — see ModelMappingScreen. */
+  mapping?: LineMapping[];
 }
 
 export interface ModelImportRepository {

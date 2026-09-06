@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button, Dialog, Field, FileDropzone, Icon, IconButton, Select } from '@basis/design-system';
 import type { ModelTemplateType } from '../../data';
+import { parseBasisTemplate, TemplateParseError } from '../../lib/parseBasisTemplate';
 
 const TEMPLATE_OPTIONS = [
   { value: 'basis-template', label: 'Basis Template' },
@@ -17,19 +18,21 @@ interface CreateModelDialogProps {
   open: boolean;
   companyName: string;
   onClose: () => void;
-  onSubmit: (input: { templateType: ModelTemplateType; file: File }) => Promise<void>;
+  /** Nothing is saved here — this just hands off a validated file to the mapping screen. */
+  onContinue: (input: { templateType: ModelTemplateType; file: File }) => void;
 }
 
-export function CreateModelDialog({ open, companyName, onClose, onSubmit }: CreateModelDialogProps) {
+export function CreateModelDialog({ open, companyName, onClose, onContinue }: CreateModelDialogProps) {
   const [templateType, setTemplateType] = useState<ModelTemplateType>('basis-template');
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [validating, setValidating] = useState(false);
 
   function reset() {
     setTemplateType('basis-template');
     setFile(null);
     setFileError(null);
+    setValidating(false);
   }
 
   function handleClose() {
@@ -42,23 +45,25 @@ export function CreateModelDialog({ open, companyName, onClose, onSubmit }: Crea
     if (!picked) return;
     if (!picked.name.toLowerCase().endsWith('.xlsx')) {
       setFileError('Only .xlsx files are supported.');
+      setFile(null);
       return;
     }
-    setFileError(null);
     setFile(picked);
+    setFileError(null);
+    setValidating(true);
+    parseBasisTemplate(picked)
+      .then(() => setFileError(null))
+      .catch((err) => setFileError(err instanceof TemplateParseError ? err.message : 'Could not read this file.'))
+      .finally(() => setValidating(false));
   }
 
-  async function handleSubmit() {
-    if (!file) return;
-    setSubmitting(true);
-    try {
-      await onSubmit({ templateType, file });
-      reset();
-      onClose();
-    } finally {
-      setSubmitting(false);
-    }
+  function handleContinue() {
+    if (!file || fileError || validating) return;
+    onContinue({ templateType, file });
+    reset();
   }
+
+  const canContinue = Boolean(file) && !fileError && !validating;
 
   return (
     <Dialog
@@ -72,8 +77,8 @@ export function CreateModelDialog({ open, companyName, onClose, onSubmit }: Crea
           <Button variant="secondary" onClick={handleClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={handleSubmit} disabled={!file} loading={submitting}>
-            Save
+          <Button variant="primary" onClick={handleContinue} disabled={!canContinue} loading={validating}>
+            Continue
           </Button>
         </>
       }
@@ -92,16 +97,16 @@ export function CreateModelDialog({ open, companyName, onClose, onSubmit }: Crea
           />
         </Field>
 
-        <Field label="Model file" error={fileError ?? undefined}>
+        <Field label="Model file" error={fileError ?? undefined} hint={!fileError && validating ? 'Checking the file…' : undefined}>
           {file ? (
             <div
               style={{
                 display: 'flex', alignItems: 'center', gap: 'var(--space-4)',
                 padding: 'var(--space-4) var(--space-6)', background: 'var(--surface-card)',
-                border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)',
+                border: '1px solid ' + (fileError ? 'var(--red-600)' : 'var(--border-default)'), borderRadius: 'var(--radius-md)',
               }}
             >
-              <Icon name="file-spreadsheet" size={16} color="var(--text-brand)" />
+              <Icon name="file-spreadsheet" size={16} color={fileError ? 'var(--text-negative)' : 'var(--text-brand)'} />
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                 <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
                   {file.name}
