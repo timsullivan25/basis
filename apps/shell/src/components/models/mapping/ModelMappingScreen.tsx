@@ -12,8 +12,9 @@ import {
 } from '../../../data';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
-import { getRequiredMeta } from '../../statements/statementFormatting';
+import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
+import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
 import { formatPeriodValue, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
@@ -57,6 +58,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
   const [onlyReview, setOnlyReview] = useState(false);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
   const [importedLinesOpen, setImportedLinesOpen] = useState(false);
+  const [mappedLinesOpen, setMappedLinesOpen] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
@@ -187,6 +189,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
         const missing = isMissingRequired(row.line, m);
         const low = isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
+        const rowLineStyle = getLineRowStyle(row.line);
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
             <span
@@ -195,8 +198,8 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
             />
             <span
               style={{
-                fontSize: 'var(--text-sm)', color: 'var(--text-primary)', whiteSpace: 'nowrap',
-                fontWeight: row.line.formula.trim() ? 'var(--weight-semibold)' : 'var(--weight-medium)',
+                fontSize: 'var(--text-sm)', whiteSpace: 'nowrap', fontWeight: 'var(--weight-medium)',
+                color: 'var(--text-primary)', ...rowLineStyle, background: undefined, borderTop: undefined,
               }}
             >
               {row.line.name}
@@ -360,11 +363,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
             label="Mapped"
             value={`${mappedCount} / ${mappableLines.length}`}
             icon="git-merge"
-            onDrill={() => {
-              setTab('all');
-              setOnlyReview(false);
-              setSearch('');
-            }}
+            onDrill={() => setMappedLinesOpen(true)}
           />
         </Card>
         <Card padding="sm">
@@ -404,6 +403,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
           columns={columns}
           rows={rows}
           rowKey="id"
+          rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
           dense
           stickyHeader
           maxHeight="calc(100vh - 420px)"
@@ -440,6 +440,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
       </div>
 
       <ImportedLinesDialog open={importedLinesOpen} workbook={workbook} onClose={() => setImportedLinesOpen(false)} />
+      <MappedLinesDialog open={mappedLinesOpen} statementSchema={statementSchema} mapping={mapping} onClose={() => setMappedLinesOpen(false)} />
 
       <Dialog
         open={cancelConfirmOpen}

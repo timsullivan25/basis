@@ -120,7 +120,11 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
               </div>
             </div>
           ) : (
-            <FileDropzone accept=".xlsx" hint="XLSX files only" onFilesSelected={handleFilesSelected} />
+            <FileDropzone
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              hint="XLSX files only"
+              onFilesSelected={handleFilesSelected}
+            />
           )}
         </Field>
       </div>
