@@ -24,7 +24,7 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
   const [model, setModel] = useState<ModelImport | null | undefined>(undefined);
   const [schemas, setSchemas] = useState<StatementSchema[] | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File; statementSchemaId: string } | null>(null);
+  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File } | null>(null);
   const [editingMapping, setEditingMapping] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -63,13 +63,12 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
   }
 
   // New upload: nothing is saved until mapping is completed and "Save mapping" is clicked.
+  // The mapping screen itself picks which schema to map against for a new draft.
   if (draft) {
-    const schema = schemas.find((s) => s.id === draft.statementSchemaId);
-    if (!schema) throw new Error(`Statement schema not found: ${draft.statementSchemaId}`);
     return (
       <ModelMappingScreen
         company={company}
-        statementSchema={schema}
+        schemas={schemas}
         draft={draft}
         onCancel={() => setDraft(null)}
         onSaved={(created) => {
@@ -80,16 +79,13 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
     );
   }
 
-  // Re-mapping an already-saved model: Save just updates its mapping in place.
+  // Re-mapping an already-saved model: Save just updates its mapping in place. Its schema
+  // is fixed — retemplating an existing model is a bigger, not-yet-built workflow.
   if (editingMapping && model) {
-    // Models saved before schemas became a library have no statementSchemaId — they were
-    // always implicitly mapped against the one schema that existed then, so fall back to it.
-    const schema = schemas.find((s) => s.id === model.statementSchemaId) ?? schemas[0];
-    if (!schema) throw new Error(`Statement schema not found: ${model.statementSchemaId}`);
     return (
       <ModelMappingScreen
         company={company}
-        statementSchema={schema}
+        schemas={schemas}
         modelImport={model}
         onCancel={() => setEditingMapping(false)}
         onSaved={(updated) => {
@@ -145,7 +141,6 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
       <CreateModelDialog
         open={dialogOpen}
         companyName={company.name}
-        schemas={schemas}
         onClose={() => setDialogOpen(false)}
         onContinue={(input) => {
           setDialogOpen(false);

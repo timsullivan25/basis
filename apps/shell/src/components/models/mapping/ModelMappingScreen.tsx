@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Tabs, Toast } from '@basis/design-system';
+import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Select, Tabs, Toast } from '@basis/design-system';
 import {
   modelImportRepository,
   type Company,
@@ -36,19 +36,29 @@ function computeTargetValue(mapping: LineMapping | undefined, workbook: ParsedWo
 
 interface ModelMappingScreenProps {
   company: Company;
-  statementSchema: StatementSchema;
-  /** Editing an already-saved model — Save updates its mapping in place. */
+  /** Every statement schema available to map against. */
+  schemas: StatementSchema[];
+  /** Editing an already-saved model — Save updates its mapping in place. Its schema is fixed. */
   modelImport?: ModelImport;
   /** A freshly-picked, not-yet-saved file — Save creates the model and its mapping together. */
-  draft?: { templateType: ModelTemplateType; file: File; statementSchemaId: string };
+  draft?: { templateType: ModelTemplateType; file: File };
   onCancel: () => void;
   onSaved: (updated: ModelImport) => void;
 }
 
-export function ModelMappingScreen({ company, statementSchema, modelImport, draft, onCancel, onSaved }: ModelMappingScreenProps) {
+export function ModelMappingScreen({ company, schemas, modelImport, draft, onCancel, onSaved }: ModelMappingScreenProps) {
   const file = modelImport?.file ?? draft?.file;
   const fileName = modelImport?.fileName ?? draft?.file.name ?? '';
   if (!file) throw new Error('ModelMappingScreen requires either modelImport or draft.');
+
+  // Fixed once a model is saved; freely editable while still a draft (with a reset warning — see handleSchemaSelect).
+  const [selectedSchemaId, setSelectedSchemaId] = useState(() => {
+    if (modelImport && schemas.some((s) => s.id === modelImport.statementSchemaId)) return modelImport.statementSchemaId;
+    return schemas[0]?.id ?? '';
+  });
+  const [pendingSchemaId, setPendingSchemaId] = useState<string | null>(null);
+  const statementSchema = schemas.find((s) => s.id === selectedSchemaId);
+  if (!statementSchema) throw new Error(`Statement schema not found: ${selectedSchemaId}`);
 
   const [workbook, setWorkbook] = useState<ParsedWorkbook | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -68,13 +78,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
     (async () => {
       try {
         const parsed = await parseBasisTemplate(file);
-        if (cancelled) return;
-        setWorkbook(parsed);
-        if (modelImport?.mapping) {
-          setMapping(Object.fromEntries(modelImport.mapping.map((m) => [m.targetLineId, m])));
-        } else {
-          setMapping(matchStatementLines(statementSchema.sections, parsed.lines));
-        }
+        if (!cancelled) setWorkbook(parsed);
       } catch (err) {
         if (!cancelled) setParseError(err instanceof TemplateParseError ? err.message : 'Could not parse the uploaded file.');
       }
@@ -84,6 +88,29 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelImport?.id, draft?.file]);
+
+  // Recomputes whenever the schema changes — including the reset that a schema switch is
+  // meant to cause. Restores the saved mapping only on first load against the schema the
+  // model was actually saved with; any other schema (or a fresh draft) gets a fresh auto-match.
+  useEffect(() => {
+    if (!workbook) return;
+    if (modelImport?.mapping && selectedSchemaId === modelImport.statementSchemaId) {
+      setMapping(Object.fromEntries(modelImport.mapping.map((m) => [m.targetLineId, m])));
+    } else {
+      setMapping(matchStatementLines(statementSchema.sections, workbook.lines));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workbook, selectedSchemaId]);
+
+  function handleSchemaSelect(id: string) {
+    if (id === selectedSchemaId) return;
+    setPendingSchemaId(id);
+  }
+
+  function confirmSchemaChange() {
+    if (pendingSchemaId) setSelectedSchemaId(pendingSchemaId);
+    setPendingSchemaId(null);
+  }
 
   const allLines = useMemo(
     () => statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))),
@@ -120,7 +147,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
         : await modelImportRepository.create({
             companyId: company.id,
             templateType: draft!.templateType,
-            statementSchemaId: draft!.statementSchemaId,
+            statementSchemaId: selectedSchemaId,
             file: draft!.file,
             mapping: Object.values(mapping),
           });
@@ -344,13 +371,36 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
           })}
         </ol>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
-          <Icon name="file-spreadsheet" size={16} color="var(--text-brand)" />
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{fileName}</span>
-            <span style={{ fontSize: 'var(--text-3xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
-              {workbook.periods.length} periods · {workbook.lines.length} lines
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
+            <Icon name="layout-template" size={16} color="var(--text-brand)" />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 'var(--text-3xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                Statement schema
+              </span>
+              {modelImport ? (
+                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{statementSchema.name}</span>
+              ) : (
+                <Select
+                  size="sm"
+                  options={schemas.map((s) => ({ value: s.id, label: s.name }))}
+                  value={selectedSchemaId}
+                  onChange={(e) => handleSchemaSelect(e.target.value)}
+                  disabled={saving}
+                  style={{ width: 180 }}
+                />
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
+            <Icon name="file-spreadsheet" size={16} color="var(--text-brand)" />
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{fileName}</span>
+              <span style={{ fontSize: 'var(--text-3xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>
+                {workbook.periods.length} periods · {workbook.lines.length} lines
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -442,6 +492,26 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
 
       <ImportedLinesDialog open={importedLinesOpen} workbook={workbook} onClose={() => setImportedLinesOpen(false)} />
       <MappedLinesDialog open={mappedLinesOpen} statementSchema={statementSchema} mapping={mapping} onClose={() => setMappedLinesOpen(false)} />
+
+      <Dialog
+        open={pendingSchemaId !== null}
+        onClose={() => setPendingSchemaId(null)}
+        icon="alert-triangle"
+        title="Change statement schema?"
+        subtitle={company.name}
+        footer={
+          <>
+            <Button onClick={() => setPendingSchemaId(null)}>Keep current schema</Button>
+            <Button variant="danger" iconLeft="refresh-cw" onClick={confirmSchemaChange}>
+              Change schema
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          Every line will be re-matched against the new schema's structure. Any manual corrections made to the current mapping will be lost.
+        </p>
+      </Dialog>
 
       <Dialog
         open={cancelConfirmOpen}
