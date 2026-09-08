@@ -19,6 +19,8 @@ export interface CompanyRepository {
 export type LineRowFormat = 'normal' | 'total' | 'metric';
 export type LineNumberFormat = 'number' | 'percentage' | 'multiple';
 export type LineSign = 'natural' | 'absolute';
+/** How a flow/balance line rolls up when periods are collapsed (e.g. quarters into a year) — 'none' for ratios/metrics that don't aggregate. Not used until period rollup ships. */
+export type LineAggregation = 'sum' | 'last' | 'none';
 
 export interface StatementLine {
   /** Stable once created — never regenerated on rename/reorder/move, since formulas and aliases reference it. */
@@ -29,6 +31,7 @@ export interface StatementLine {
   rowFormat: LineRowFormat;
   numberFormat: LineNumberFormat;
   sign: LineSign;
+  aggregation: LineAggregation;
   /** Raw expression referencing other line ids, e.g. "revenue - cogs". Parsed by the modeling engine later. */
   formula: string;
   aliases: string[];
@@ -43,13 +46,23 @@ export interface StatementSection {
 }
 
 export interface StatementSchema {
+  /** Stable once created — never regenerated on rename. */
+  id: string;
+  name: string;
+  /** Set when this schema was created via duplicate() — provenance only, no runtime merge with the source. */
+  copiedFromSchemaId?: string;
+  createdAt: string;
   /** Array position is the display order of sections. */
   sections: StatementSection[];
 }
 
 export interface StatementSchemaRepository {
-  get(): Promise<StatementSchema>;
+  list(): Promise<StatementSchema[]>;
+  get(id: string): Promise<StatementSchema | undefined>;
+  create(input: { name: string }): Promise<StatementSchema>;
+  duplicate(id: string, name: string): Promise<StatementSchema>;
   save(schema: StatementSchema): Promise<void>;
+  remove(id: string): Promise<void>;
 }
 
 /** "extract-ai" is a placeholder for now — not selectable until AI extraction exists. */
@@ -59,6 +72,8 @@ export interface ModelImport {
   id: string;
   companyId: string;
   templateType: ModelTemplateType;
+  /** Which statement schema this import is mapped (or being mapped) against. */
+  statementSchemaId: string;
   fileName: string;
   fileSize: number;
   uploadedAt: string;
@@ -72,6 +87,7 @@ export interface ModelImport {
 export interface CreateModelImportInput {
   companyId: string;
   templateType: ModelTemplateType;
+  statementSchemaId: string;
   file: File;
   /** Provided when upload and mapping are completed as one step — see ModelMappingScreen. */
   mapping?: LineMapping[];

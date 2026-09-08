@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Toast } from '@basis/design-system';
-import { statementSchemaRepository, type StatementLine, type StatementSection } from '../data';
+import { Alert, Button, Dialog, Field, IconButton, Input, Select, Toast } from '@basis/design-system';
+import { statementSchemaRepository, type StatementLine, type StatementSchema, type StatementSection } from '../data';
 import { SectionEditor } from '../components/statements/SectionEditor';
 import { validateFormula } from '../components/statements/formulaUtils';
 
@@ -12,6 +12,7 @@ function emptyLine(): StatementLine {
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
+    aggregation: 'sum',
     formula: '',
     aliases: [],
   };
@@ -25,22 +26,65 @@ function moveWithinArray<T>(items: T[], index: number, direction: 'up' | 'down')
   return next;
 }
 
+/** Shared, fully-controlled name-prompt dialog for "New schema", "Duplicate" and "Rename". */
+function NameDialog({
+  open, title, name, confirmLabel, onChangeName, onClose, onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  name: string;
+  confirmLabel: string;
+  onChangeName: (name: string) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={title}
+      width={420}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={!name.trim()} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <Field label="Name">
+        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus />
+      </Field>
+    </Dialog>
+  );
+}
+
 export function StatementDefinitionsScreen() {
+  const [schemas, setSchemas] = useState<StatementSchema[]>([]);
+  const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [sections, setSections] = useState<StatementSection[]>([]);
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<'new' | 'duplicate' | 'rename' | null>(null);
+  const [pendingName, setPendingName] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const schema = await statementSchemaRepository.get();
-      if (!cancelled) {
-        setSections(schema.sections);
-        setSavedSnapshot(JSON.stringify(schema.sections));
-        setLoading(false);
-      }
+      const list = await statementSchemaRepository.list();
+      if (cancelled) return;
+      setSchemas(list);
+      const first = list[0];
+      setSelectedSchemaId(first?.id ?? null);
+      setSections(first?.sections ?? []);
+      setSavedSnapshot(JSON.stringify(first?.sections ?? []));
+      setLoading(false);
     })();
     return () => {
       cancelled = true;
@@ -52,6 +96,64 @@ export function StatementDefinitionsScreen() {
     const timer = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  const selectedSchema = schemas.find((s) => s.id === selectedSchemaId) ?? null;
+  const isDirty = savedSnapshot !== null && JSON.stringify(sections) !== savedSnapshot;
+
+  function selectSchema(id: string) {
+    if (isDirty) return;
+    const schema = schemas.find((s) => s.id === id);
+    if (!schema) return;
+    setSelectedSchemaId(id);
+    setSections(schema.sections);
+    setSavedSnapshot(JSON.stringify(schema.sections));
+  }
+
+  function openDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
+    setPendingName(initialName);
+    setDialog(kind);
+  }
+
+  async function handleCreate() {
+    const created = await statementSchemaRepository.create({ name: pendingName.trim() });
+    setSchemas((prev) => [...prev, created]);
+    setDialog(null);
+    setSelectedSchemaId(created.id);
+    setSections(created.sections);
+    setSavedSnapshot(JSON.stringify(created.sections));
+  }
+
+  async function handleDuplicate() {
+    if (!selectedSchema) return;
+    const copy = await statementSchemaRepository.duplicate(selectedSchema.id, pendingName.trim());
+    setSchemas((prev) => [...prev, copy]);
+    setDialog(null);
+    setSelectedSchemaId(copy.id);
+    setSections(copy.sections);
+    setSavedSnapshot(JSON.stringify(copy.sections));
+  }
+
+  async function handleRename() {
+    if (!selectedSchema) return;
+    const renamed = { ...selectedSchema, name: pendingName.trim(), sections };
+    await statementSchemaRepository.save(renamed);
+    setSchemas((prev) => prev.map((s) => (s.id === renamed.id ? renamed : s)));
+    setDialog(null);
+    setToast('Schema renamed');
+  }
+
+  async function handleDelete() {
+    if (!selectedSchema || schemas.length <= 1) return;
+    await statementSchemaRepository.remove(selectedSchema.id);
+    const remaining = schemas.filter((s) => s.id !== selectedSchema.id);
+    setSchemas(remaining);
+    setDeleteConfirmOpen(false);
+    const next = remaining[0];
+    setSelectedSchemaId(next?.id ?? null);
+    setSections(next?.sections ?? []);
+    setSavedSnapshot(JSON.stringify(next?.sections ?? []));
+    setToast('Schema deleted');
+  }
 
   function addSection() {
     setSections((prev) => [...prev, { id: crypto.randomUUID(), name: '', lines: [] }]);
@@ -113,17 +215,18 @@ export function StatementDefinitionsScreen() {
   }
 
   async function handleSave() {
+    if (!selectedSchema) return;
     setSaving(true);
     try {
-      await statementSchemaRepository.save({ sections });
+      const updated = { ...selectedSchema, sections };
+      await statementSchemaRepository.save(updated);
+      setSchemas((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setSavedSnapshot(JSON.stringify(sections));
       setToast('Statement definitions saved');
     } finally {
       setSaving(false);
     }
   }
-
-  const isDirty = savedSnapshot !== null && JSON.stringify(sections) !== savedSnapshot;
 
   const allLineNames = useMemo(
     () => sections.flatMap((s) => s.lines.map((line) => line.name)).filter(Boolean),
@@ -157,6 +260,50 @@ export function StatementDefinitionsScreen() {
         </Button>
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+        <div style={{ width: 240 }}>
+          <Select
+            size="sm"
+            options={schemas.map((s) => ({ value: s.id, label: s.name }))}
+            value={selectedSchemaId ?? ''}
+            onChange={(e) => selectSchema(e.target.value)}
+            disabled={isDirty}
+          />
+        </div>
+        <Button size="sm" iconLeft="plus" onClick={() => openDialog('new', '')} disabled={isDirty}>
+          New schema
+        </Button>
+        <Button
+          size="sm"
+          iconLeft="copy"
+          onClick={() => selectedSchema && openDialog('duplicate', `${selectedSchema.name} copy`)}
+          disabled={isDirty || !selectedSchema}
+        >
+          Duplicate
+        </Button>
+        <Button
+          size="sm"
+          iconLeft="pencil"
+          onClick={() => selectedSchema && openDialog('rename', selectedSchema.name)}
+          disabled={isDirty || !selectedSchema}
+        >
+          Rename
+        </Button>
+        <IconButton
+          icon="trash-2"
+          label="Delete schema"
+          size="sm"
+          variant="ghost"
+          onClick={() => setDeleteConfirmOpen(true)}
+          disabled={isDirty || !selectedSchema || schemas.length <= 1}
+        />
+        {isDirty ? (
+          <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>
+            Save or discard changes to switch schemas.
+          </span>
+        ) : null}
+      </div>
+
       {errorLineCount > 0 ? (
         <Alert tone="negative" compact>
           {errorLineCount} line{errorLineCount > 1 ? 's have' : ' has'} formula errors that need to be reviewed.
@@ -188,6 +335,55 @@ export function StatementDefinitionsScreen() {
       <Button variant="secondary" iconLeft="plus" onClick={addSection} style={{ alignSelf: 'flex-start' }}>
         Add section
       </Button>
+
+      <NameDialog
+        open={dialog === 'new'}
+        title="New statement schema"
+        name={pendingName}
+        confirmLabel="Create"
+        onChangeName={setPendingName}
+        onClose={() => setDialog(null)}
+        onConfirm={handleCreate}
+      />
+      <NameDialog
+        open={dialog === 'duplicate'}
+        title="Duplicate statement schema"
+        name={pendingName}
+        confirmLabel="Duplicate"
+        onChangeName={setPendingName}
+        onClose={() => setDialog(null)}
+        onConfirm={handleDuplicate}
+      />
+      <NameDialog
+        open={dialog === 'rename'}
+        title="Rename statement schema"
+        name={pendingName}
+        confirmLabel="Rename"
+        onChangeName={setPendingName}
+        onClose={() => setDialog(null)}
+        onConfirm={handleRename}
+      />
+
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={() => setDeleteConfirmOpen(false)}
+        icon="alert-triangle"
+        title="Delete this schema?"
+        subtitle={selectedSchema?.name}
+        footer={
+          <>
+            <Button onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={handleDelete}>
+              Delete schema
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          Sections and lines defined here will be permanently removed. Models already mapped against it keep their
+          saved mapping, but it can no longer be edited or duplicated. This cannot be undone.
+        </p>
+      </Dialog>
 
       {toast ? (
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>

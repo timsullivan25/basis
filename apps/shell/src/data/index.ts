@@ -8,6 +8,7 @@ export type {
   CompanyRepository,
   CreateCompanyInput,
   CreateModelImportInput,
+  LineAggregation,
   LineMapping,
   LineNumberFormat,
   LineRowFormat,
