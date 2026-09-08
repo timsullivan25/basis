@@ -3,6 +3,7 @@ import { Alert, Button, Dialog, Field, IconButton, Input, Select, Toast } from '
 import { statementSchemaRepository, type StatementLine, type StatementSchema, type StatementSection } from '../data';
 import { SectionEditor } from '../components/statements/SectionEditor';
 import { validateFormula } from '../components/statements/formulaUtils';
+import { renameInFormula } from '../lib/engine/parse';
 
 function emptyLine(): StatementLine {
   return {
@@ -175,14 +176,24 @@ export function StatementDefinitionsScreen() {
     setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, lines: [...s.lines, emptyLine()] } : s)));
   }
 
-  function updateLine(sectionId: string, lineId: string, patch: Partial<StatementLine>) {
-    setSections((prev) =>
-      prev.map((s) =>
-        s.id === sectionId
-          ? { ...s, lines: s.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)) }
-          : s,
-      ),
-    );
+  function updateLine(lineId: string, patch: Partial<StatementLine>) {
+    setSections((prev) => {
+      const allLines = prev.flatMap((s) => s.lines);
+      const oldLine = allLines.find((l) => l.id === lineId);
+      const renaming = Boolean(oldLine && patch.name !== undefined && patch.name !== oldLine.name && oldLine.name.trim());
+      // Pre-rename names, so the old name is still "known" for tokenizing the cascade below.
+      const knownNames = allLines.map((l) => l.name).filter(Boolean);
+      return prev.map((s) => ({
+        ...s,
+        lines: s.lines.map((line) => {
+          if (line.id === lineId) return { ...line, ...patch };
+          if (renaming && line.formula.trim()) {
+            return { ...line, formula: renameInFormula(line.formula, knownNames, oldLine!.name, patch.name!) };
+          }
+          return line;
+        }),
+      }));
+    });
   }
 
   function deleteLine(sectionId: string, lineId: string) {
@@ -324,7 +335,7 @@ export function StatementDefinitionsScreen() {
             onMoveDown={() => moveSection(section.id, 'down')}
             onDelete={() => deleteSection(section.id)}
             onAddLine={() => addLine(section.id)}
-            onUpdateLine={(lineId, patch) => updateLine(section.id, lineId, patch)}
+            onUpdateLine={updateLine}
             onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
             onMoveLine={(lineId, direction) => moveLine(section.id, lineId, direction)}
             onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(section.id, lineId, toSectionId)}

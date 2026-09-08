@@ -16,7 +16,7 @@ export function FormulaInput({ value, onChange, knownNames }: FormulaInputProps)
   const errors = useMemo(() => validateFormula(value, knownNames), [value, knownNames]);
 
   function refreshSuggestions(nextValue: string, cursorPos: number) {
-    const { word } = getFormulaSegment(nextValue, cursorPos);
+    const { word } = getFormulaSegment(nextValue, cursorPos, knownNames);
     if (!word) {
       setSuggestions([]);
       return;
@@ -36,7 +36,7 @@ export function FormulaInput({ value, onChange, knownNames }: FormulaInputProps)
   function applySuggestion(name: string) {
     const input = inputRef.current;
     const cursorPos = input?.selectionStart ?? value.length;
-    const { start, end } = getFormulaSegment(value, cursorPos);
+    const { start, end } = getFormulaSegment(value, cursorPos, knownNames);
     const next = value.slice(0, start) + name + value.slice(end);
     onChange(next);
     setSuggestions([]);
