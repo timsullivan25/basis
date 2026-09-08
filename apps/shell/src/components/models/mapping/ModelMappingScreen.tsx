@@ -246,7 +246,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
         if (row.line.formula.trim()) {
           return (
             <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-              Calculated · {row.line.formula}
+              {row.line.formula}
             </span>
           );
         }
