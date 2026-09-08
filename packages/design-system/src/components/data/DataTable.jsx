@@ -74,7 +74,7 @@ export function DataTable({
             if (isGroup) {
               return (
                 <tr key={k}>
-                  <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ height: 'var(--control-md)', padding: '0 var(--space-6)', background: 'var(--surface-strong)', borderTop: 'var(--space-4) solid var(--surface-card)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
+                  <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ height: h, padding: '0 var(--space-6)', background: 'var(--surface-strong)', borderBottom: '1px solid var(--border-default)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
                     {r.__group}
                   </td>
                 </tr>
