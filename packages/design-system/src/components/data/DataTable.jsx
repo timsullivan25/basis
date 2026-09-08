@@ -76,7 +76,7 @@ export function DataTable({
             const isGroup = r.__group;
             const expanded = expandedKey === k;
             if (isGroup) {
-              const groupCellStyle = { height: 'var(--control-sm)', padding: '0 var(--space-6)', background: 'var(--surface-sunken)', borderBottom: '1px solid var(--border-subtle)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' };
+              const groupCellStyle = { height: h, padding: '0 var(--space-6)', background: 'var(--surface-strong)', borderBottom: '1px solid var(--border-default)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-primary)' };
               if (stickyFirstColumn) {
                 // Split into a sticky label cell plus a plain continuation cell, so the group
                 // label stays pinned with the rest of the first column instead of scrolling
