@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Dialog, Icon, IconButton } from '@basis/design-system';
 import {
+  mappingRepository,
   modelImportRepository,
+  modelRepository,
   statementSchemaRepository,
   type Company,
+  type Mapping,
+  type Model,
   type ModelImport,
   type ModelTemplateType,
   type StatementSchema,
@@ -23,7 +27,9 @@ interface FinancialsTabProps {
 }
 
 export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
-  const [model, setModel] = useState<ModelImport | null | undefined>(undefined);
+  const [model, setModel] = useState<Model | null | undefined>(undefined);
+  const [modelImport, setModelImport] = useState<ModelImport | null>(null);
+  const [mapping, setMapping] = useState<Mapping | null>(null);
   const [schemas, setSchemas] = useState<StatementSchema[] | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -32,14 +38,22 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [existing, schemaList] = await Promise.all([
-        modelImportRepository.getForCompany(company.id),
+      const [existingModel, schemaList] = await Promise.all([
+        modelRepository.getForCompany(company.id),
         statementSchemaRepository.list(),
       ]);
-      if (!cancelled) {
-        setModel(existing ?? null);
-        setSchemas(schemaList);
-      }
+      if (cancelled) return;
+      const [imp, map] = existingModel
+        ? await Promise.all([
+            modelImportRepository.get(existingModel.modelImportId),
+            mappingRepository.get(existingModel.mappingId),
+          ])
+        : [null, null];
+      if (cancelled) return;
+      setModel(existingModel ?? null);
+      setModelImport(imp ?? null);
+      setMapping(map ?? null);
+      setSchemas(schemaList);
     })();
     return () => {
       cancelled = true;
@@ -50,12 +64,24 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
     if (!model) return;
     setDeleting(true);
     try {
-      await modelImportRepository.remove(model.id);
+      await modelRepository.remove(model.id);
       setModel(null);
+      setModelImport(null);
+      setMapping(null);
     } finally {
       setDeleting(false);
       setDeleteConfirmOpen(false);
     }
+  }
+
+  async function loadModelDetails(savedModel: Model) {
+    const [imp, map] = await Promise.all([
+      modelImportRepository.get(savedModel.modelImportId),
+      mappingRepository.get(savedModel.mappingId),
+    ]);
+    setModel(savedModel);
+    setModelImport(imp ?? null);
+    setMapping(map ?? null);
   }
 
   function startNewImport(input: { templateType: ModelTemplateType; file: File }) {
@@ -63,20 +89,24 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
     onOpenMapping({
       company,
       schemas,
-      draft: input,
+      draft: { ...input, existingModel: model ?? undefined },
       onCancel: () => {},
-      onSaved: (created) => setModel(created),
+      onSaved: (savedModel) => {
+        void loadModelDetails(savedModel);
+      },
     });
   }
 
   function startEditMapping() {
-    if (!schemas || !model) return;
+    if (!schemas || !model || !modelImport) return;
     onOpenMapping({
       company,
       schemas,
-      modelImport: model,
+      editing: { model, modelImport },
       onCancel: () => {},
-      onSaved: (updated) => setModel(updated),
+      onSaved: (updatedModel) => {
+        void loadModelDetails(updatedModel);
+      },
     });
   }
 
@@ -86,34 +116,31 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
-      {model ? (
+      {model && modelImport && mapping ? (
         <Card
           title="Model"
           icon="file-spreadsheet"
           actions={
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
               <Button size="sm" iconLeft="git-merge" onClick={startEditMapping}>
-                {model.mapping ? 'Edit mapping' : 'Map line items'}
+                Edit mapping
+              </Button>
+              <Button size="sm" iconLeft="upload" onClick={() => setDialogOpen(true)}>
+                Upload new file
               </Button>
               <IconButton icon="trash-2" label="Delete model" size="sm" variant="ghost" onClick={() => setDeleteConfirmOpen(true)} />
             </div>
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{model.fileName}</span>
+            <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{modelImport.fileName}</span>
             <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>
-              {TEMPLATE_LABELS[model.templateType]} · uploaded {new Date(model.uploadedAt).toLocaleDateString()}
+              {TEMPLATE_LABELS[modelImport.templateType]} · uploaded {new Date(modelImport.uploadedAt).toLocaleDateString()}
             </span>
-            {model.mapping ? (
-              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
-                Mapped {model.mappedAt ? new Date(model.mappedAt).toLocaleDateString() : ''} ·{' '}
-                {model.mapping.filter((m) => m.sourceLineIds.length > 0).length} of {model.mapping.length} lines mapped
-              </span>
-            ) : (
-              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
-                Not mapped to the statement definitions yet.
-              </span>
-            )}
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
+              Mapped {new Date(mapping.mappedAt).toLocaleDateString()} ·{' '}
+              {mapping.lines.filter((m) => m.sourceLineIds.length > 0).length} of {mapping.lines.length} lines mapped
+            </span>
           </div>
         </Card>
       ) : (
@@ -141,7 +168,7 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
         onClose={() => setDeleteConfirmOpen(false)}
         icon="alert-triangle"
         title="Delete this model?"
-        subtitle={model?.fileName}
+        subtitle={modelImport?.fileName}
         footer={
           <>
             <Button onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>

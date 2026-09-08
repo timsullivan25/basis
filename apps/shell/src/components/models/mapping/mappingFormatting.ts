@@ -5,6 +5,7 @@ type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'bra
 export const MATCH_METHOD_META: Record<MatchMethod, { label: string; tone: BadgeTone; icon: string }> = {
   exact: { label: 'Exact', tone: 'positive', icon: 'check-circle-2' },
   alias: { label: 'Alias', tone: 'positive', icon: 'book-marked' },
+  prior: { label: 'Prior', tone: 'info', icon: 'history' },
   fuzzy: { label: 'Fuzzy', tone: 'neutral', icon: 'search' },
   ai: { label: 'AI', tone: 'info', icon: 'sparkles' },
   manual: { label: 'Manual', tone: 'brand', icon: 'pencil' },

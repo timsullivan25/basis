@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Company, ModelImport, StatementSchema } from './types';
+import type { Company, Mapping, Model, ModelImport, StatementSchema } from './types';
 
 export interface BasisDb extends DBSchema {
   companies: {
@@ -17,10 +17,20 @@ export interface BasisDb extends DBSchema {
     value: ModelImport;
     indexes: { 'by-companyId': string };
   };
+  models: {
+    key: string;
+    value: Model;
+    indexes: { 'by-companyId': string };
+  };
+  mappings: {
+    key: string;
+    value: Mapping;
+    indexes: { 'by-modelImportId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -63,6 +73,51 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
             } as StatementSchema);
           }
           // Otherwise leave the store empty — the repository seeds a real default on first list().
+        }
+        if (oldVersion < 5) {
+          const modelsStore = db.createObjectStore('models', { keyPath: 'id' });
+          modelsStore.createIndex('by-companyId', 'companyId');
+          const mappingsStore = db.createObjectStore('mappings', { keyPath: 'id' });
+          mappingsStore.createIndex('by-modelImportId', 'modelImportId');
+
+          // modelImports used to carry mapping/mappedAt inline. Split each into a Mapping and
+          // a Model record so today's data survives as a real current model, then strip those
+          // fields off the import (it's pure upload provenance now). Historicals can't be
+          // cheaply re-resolved here (would mean re-parsing the xlsx inside this transaction),
+          // so a migrated model starts with empty historicals — re-mapping (or, once it exists,
+          // opening the workspace) regenerates them like any other save.
+          if (oldVersion >= 3) {
+            const importsStore = transaction.objectStore('modelImports');
+            const legacyImports = (await importsStore.getAll()) as (ModelImport & {
+              mapping?: Mapping['lines'];
+              mappedAt?: string;
+            })[];
+            for (const imp of legacyImports) {
+              if (imp.mapping && imp.mapping.length > 0) {
+                const mappingId = crypto.randomUUID();
+                await mappingsStore.add({
+                  id: mappingId,
+                  modelImportId: imp.id,
+                  statementSchemaId: imp.statementSchemaId,
+                  lines: imp.mapping,
+                  mappedAt: imp.mappedAt ?? new Date().toISOString(),
+                });
+                await modelsStore.add({
+                  id: crypto.randomUUID(),
+                  companyId: imp.companyId,
+                  name: imp.fileName,
+                  statementSchemaId: imp.statementSchemaId,
+                  modelImportId: imp.id,
+                  mappingId,
+                  timeline: [],
+                  historicals: {},
+                  createdAt: imp.uploadedAt,
+                });
+              }
+              const { mapping: _mapping, mappedAt: _mappedAt, ...rest } = imp;
+              await importsStore.put(rest);
+            }
+          }
         }
       },
     });

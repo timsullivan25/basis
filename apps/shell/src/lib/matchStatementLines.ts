@@ -75,7 +75,7 @@ function matchOne(target: StatementLine, sourceLines: ParsedSourceLine[], extraA
     };
   }
 
-  const aliasSet = new Set([...target.aliases, ...extraAliases].map(normalize).filter(Boolean));
+  const aliasSet = new Set(target.aliases.map(normalize).filter(Boolean));
   if (aliasSet.size > 0) {
     const aliasHit = sourceLines.find((source) => aliasSet.has(normalize(source.name)));
     if (aliasHit) {
@@ -85,6 +85,23 @@ function matchOne(target: StatementLine, sourceLines: ParsedSourceLine[], extraA
         method: 'alias',
         confidence: 1,
         note: `"${aliasHit.name}" matches a registered alias.`,
+        approved: false,
+      };
+    }
+  }
+
+  // Names carried from the company's previous mapping — a real hit, but not a registered
+  // schema alias, so it's tagged and reviewed differently (see MatchMethod).
+  const priorSet = new Set(extraAliases.map(normalize).filter(Boolean));
+  if (priorSet.size > 0) {
+    const priorHit = sourceLines.find((source) => priorSet.has(normalize(source.name)));
+    if (priorHit) {
+      return {
+        targetLineId: target.id,
+        sourceLineIds: [priorHit.id],
+        method: 'prior',
+        confidence: 1,
+        note: `"${priorHit.name}" matches the line mapped here last time.`,
         approved: false,
       };
     }

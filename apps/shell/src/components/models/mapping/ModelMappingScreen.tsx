@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Select, Tabs, Toast } from '@basis/design-system';
 import {
+  mappingRepository,
   modelImportRepository,
+  modelRepository,
   type Company,
   type LineMapping,
+  type Model,
   type ModelImport,
   type ModelTemplateType,
   type ParsedWorkbook,
@@ -12,6 +15,8 @@ import {
 } from '../../../data';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
+import { buildTimeline } from '../../../lib/periodTimeline';
+import { resolveActuals } from '../../../lib/resolveActuals';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
@@ -20,40 +25,31 @@ import { formatPeriodValue, isLowConfidence, isMissingRequired, needsReview, MAT
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
 
-function computeTargetValue(mapping: LineMapping | undefined, workbook: ParsedWorkbook, periodIndex: number): number | null {
-  if (!mapping || mapping.sourceLineIds.length === 0) return null;
-  let sum = 0;
-  let any = false;
-  for (const id of mapping.sourceLineIds) {
-    const value = workbook.lines.find((line) => line.id === id)?.values[periodIndex];
-    if (value !== null && value !== undefined) {
-      sum += value;
-      any = true;
-    }
-  }
-  return any ? sum : null;
-}
-
 export interface ModelMappingScreenProps {
   company: Company;
   /** Every statement schema available to map against. */
   schemas: StatementSchema[];
-  /** Editing an already-saved model — Save updates its mapping in place. Its schema is fixed. */
-  modelImport?: ModelImport;
-  /** A freshly-picked, not-yet-saved file — Save creates the model and its mapping together. */
-  draft?: { templateType: ModelTemplateType; file: File };
+  /** Re-reviewing an already-saved model's existing file — Save updates its mapping in place. Schema fixed. */
+  editing?: { model: Model; modelImport: ModelImport };
+  /** A freshly-picked, not-yet-saved file — Save creates a new model (schema editable until saved). */
+  draft?: {
+    templateType: ModelTemplateType;
+    file: File;
+    /** The company's current model, if any — seeds prior-mapping hints and triggers the replace confirm on save. */
+    existingModel?: Model;
+  };
   onCancel: () => void;
-  onSaved: (updated: ModelImport) => void;
+  onSaved: (model: Model) => void;
 }
 
-export function ModelMappingScreen({ company, schemas, modelImport, draft, onCancel, onSaved }: ModelMappingScreenProps) {
-  const file = modelImport?.file ?? draft?.file;
-  const fileName = modelImport?.fileName ?? draft?.file.name ?? '';
-  if (!file) throw new Error('ModelMappingScreen requires either modelImport or draft.');
+export function ModelMappingScreen({ company, schemas, editing, draft, onCancel, onSaved }: ModelMappingScreenProps) {
+  const file = editing?.modelImport.file ?? draft?.file;
+  const fileName = editing?.modelImport.fileName ?? draft?.file.name ?? '';
+  if (!file) throw new Error('ModelMappingScreen requires either editing or draft.');
 
   // Fixed once a model is saved; freely editable while still a draft (with a reset warning — see handleSchemaSelect).
   const [selectedSchemaId, setSelectedSchemaId] = useState(() => {
-    if (modelImport && schemas.some((s) => s.id === modelImport.statementSchemaId)) return modelImport.statementSchemaId;
+    if (editing && schemas.some((s) => s.id === editing.model.statementSchemaId)) return editing.model.statementSchemaId;
     return schemas[0]?.id ?? '';
   });
   const [pendingSchemaId, setPendingSchemaId] = useState<string | null>(null);
@@ -70,6 +66,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
   const [importedLinesOpen, setImportedLinesOpen] = useState(false);
   const [mappedLinesOpen, setMappedLinesOpen] = useState(false);
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
 
@@ -87,18 +84,53 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelImport?.id, draft?.file]);
+  }, [editing?.modelImport.id, draft?.file]);
 
-  // Recomputes whenever the schema changes — including the reset that a schema switch is
-  // meant to cause. Restores the saved mapping only on first load against the schema the
-  // model was actually saved with; any other schema (or a fresh draft) gets a fresh auto-match.
+  // Recomputes whenever the schema changes — including the reset that a schema switch is meant
+  // to cause. Restores the saved mapping only when re-reviewing the same file against the schema
+  // it was actually saved with; any other case (a fresh draft, or a schema switch away from that)
+  // gets a fresh auto-match, seeded with hints from the company's existing model when there is one.
   useEffect(() => {
     if (!workbook) return;
-    if (modelImport?.mapping && selectedSchemaId === modelImport.statementSchemaId) {
-      setMapping(Object.fromEntries(modelImport.mapping.map((m) => [m.targetLineId, m])));
-    } else {
-      setMapping(matchStatementLines(statementSchema.sections, workbook.lines));
-    }
+    let cancelled = false;
+    (async () => {
+      if (editing && selectedSchemaId === editing.model.statementSchemaId) {
+        const savedMapping = await mappingRepository.get(editing.model.mappingId);
+        if (!cancelled && savedMapping) {
+          setMapping(Object.fromEntries(savedMapping.lines.map((m) => [m.targetLineId, m])));
+        }
+        return;
+      }
+
+      let hints: Record<string, string[]> = {};
+      if (draft?.existingModel) {
+        try {
+          const [priorMapping, priorImport] = await Promise.all([
+            mappingRepository.get(draft.existingModel.mappingId),
+            modelImportRepository.get(draft.existingModel.modelImportId),
+          ]);
+          if (priorMapping && priorImport) {
+            const priorWorkbook = await parseBasisTemplate(priorImport.file);
+            hints = Object.fromEntries(
+              priorMapping.lines
+                .filter((m) => m.sourceLineIds.length > 0)
+                .map((m) => [
+                  m.targetLineId,
+                  m.sourceLineIds
+                    .map((id) => priorWorkbook.lines.find((l) => l.id === id)?.name)
+                    .filter((name): name is string => Boolean(name)),
+                ]),
+            );
+          }
+        } catch {
+          // Prior file no longer parseable — fall back to a plain match rather than blocking the new one.
+        }
+      }
+      if (!cancelled) setMapping(matchStatementLines(statementSchema.sections, workbook.lines, hints));
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook, selectedSchemaId]);
 
@@ -121,6 +153,12 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
 
+  const timeline = useMemo(() => (workbook ? buildTimeline(workbook.periods) : []), [workbook]);
+  const historicals = useMemo(
+    () => (workbook ? resolveActuals(Object.values(mapping), workbook, timeline) : {}),
+    [mapping, workbook, timeline],
+  );
+
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
     setMapping((prev) => ({ ...prev, [targetLineId]: { ...prev[targetLineId], ...patch } }));
   }
@@ -138,21 +176,54 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
     });
   }
 
-  async function handleSave() {
+  function handleSaveClick() {
     if (blockers.length > 0) return;
+    if (!editing && draft?.existingModel) {
+      setReplaceConfirmOpen(true);
+      return;
+    }
+    void handleSave();
+  }
+
+  async function handleSave() {
+    if (!workbook) return;
+    setReplaceConfirmOpen(false);
     setSaving(true);
     try {
-      const updated = modelImport
-        ? await modelImportRepository.saveMapping(modelImport.id, Object.values(mapping))
-        : await modelImportRepository.create({
-            companyId: company.id,
-            templateType: draft!.templateType,
-            statementSchemaId: selectedSchemaId,
-            file: draft!.file,
-            mapping: Object.values(mapping),
-          });
+      const resolvedTimeline = buildTimeline(workbook.periods);
+      const resolvedHistoricals = resolveActuals(Object.values(mapping), workbook, resolvedTimeline);
+
+      let savedModel: Model;
+      if (editing) {
+        await mappingRepository.save(editing.model.mappingId, Object.values(mapping));
+        savedModel = await modelRepository.update(editing.model.id, {
+          timeline: resolvedTimeline,
+          historicals: resolvedHistoricals,
+        });
+      } else {
+        const createdImport = await modelImportRepository.create({
+          companyId: company.id,
+          templateType: draft!.templateType,
+          statementSchemaId: selectedSchemaId,
+          file: draft!.file,
+        });
+        const createdMapping = await mappingRepository.create({
+          modelImportId: createdImport.id,
+          statementSchemaId: selectedSchemaId,
+          lines: Object.values(mapping),
+        });
+        savedModel = await modelRepository.create({
+          companyId: company.id,
+          name: createdImport.fileName,
+          statementSchemaId: selectedSchemaId,
+          modelImportId: createdImport.id,
+          mappingId: createdMapping.id,
+          timeline: resolvedTimeline,
+          historicals: resolvedHistoricals,
+        });
+      }
       setSavedToast(true);
-      onSaved(updated);
+      onSaved(savedModel);
     } finally {
       setSaving(false);
     }
@@ -317,7 +388,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
         if (row.line.formula.trim()) {
           return <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
         }
-        const value = computeTargetValue(mapping[row.line.id], workbook, i);
+        const value = historicals[row.line.id]?.[i] ?? null;
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)', color: value === null ? 'var(--text-disabled)' : 'var(--text-body)' }}>
             {formatPeriodValue(value)}
@@ -378,7 +449,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
               <span style={{ fontSize: 'var(--text-3xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
                 Statement schema
               </span>
-              {modelImport ? (
+              {editing ? (
                 <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{statementSchema.name}</span>
               ) : (
                 <Select
@@ -484,7 +555,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
           <Button onClick={() => setCancelConfirmOpen(true)}>Cancel import</Button>
-          <Button variant="primary" iconLeft="check" disabled={blockers.length > 0} loading={saving} onClick={handleSave}>
+          <Button variant="primary" iconLeft="check" disabled={blockers.length > 0} loading={saving} onClick={handleSaveClick}>
             Save mapping
           </Button>
         </div>
@@ -510,6 +581,27 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
       >
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
           Every line will be re-matched against the new schema's structure. Any manual corrections made to the current mapping will be lost.
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={replaceConfirmOpen}
+        onClose={() => setReplaceConfirmOpen(false)}
+        icon="alert-triangle"
+        title="Replace the current model?"
+        subtitle={company.name}
+        footer={
+          <>
+            <Button onClick={() => setReplaceConfirmOpen(false)}>Keep current model</Button>
+            <Button variant="danger" iconLeft="refresh-cw" loading={saving} onClick={() => void handleSave()}>
+              Replace model
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          This company already has a current model. Saving replaces it — it won't be recoverable afterward. Durable
+          model history arrives with Snapshots in a later phase.
         </p>
       </Dialog>
 
