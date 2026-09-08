@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Dialog, Field, FileDropzone, Icon, IconButton, Select } from '@basis/design-system';
-import type { ModelTemplateType } from '../../data';
+import type { ModelTemplateType, StatementSchema } from '../../data';
 import { parseBasisTemplate, TemplateParseError } from '../../lib/parseBasisTemplate';
 
 const TEMPLATE_OPTIONS = [
@@ -17,19 +17,23 @@ function formatFileSize(bytes: number): string {
 interface CreateModelDialogProps {
   open: boolean;
   companyName: string;
+  /** Which statement schemas the model can be mapped against. */
+  schemas: StatementSchema[];
   onClose: () => void;
   /** Nothing is saved here — this just hands off a validated file to the mapping screen. */
-  onContinue: (input: { templateType: ModelTemplateType; file: File }) => void;
+  onContinue: (input: { templateType: ModelTemplateType; file: File; statementSchemaId: string }) => void;
 }
 
-export function CreateModelDialog({ open, companyName, onClose, onContinue }: CreateModelDialogProps) {
+export function CreateModelDialog({ open, companyName, schemas, onClose, onContinue }: CreateModelDialogProps) {
   const [templateType, setTemplateType] = useState<ModelTemplateType>('basis-template');
+  const [statementSchemaId, setStatementSchemaId] = useState(schemas[0]?.id ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
 
   function reset() {
     setTemplateType('basis-template');
+    setStatementSchemaId(schemas[0]?.id ?? '');
     setFile(null);
     setFileError(null);
     setValidating(false);
@@ -58,12 +62,12 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
   }
 
   function handleContinue() {
-    if (!file || fileError || validating) return;
-    onContinue({ templateType, file });
+    if (!file || fileError || validating || !statementSchemaId) return;
+    onContinue({ templateType, file, statementSchemaId });
     reset();
   }
 
-  const canContinue = Boolean(file) && !fileError && !validating;
+  const canContinue = Boolean(file) && !fileError && !validating && Boolean(statementSchemaId);
 
   return (
     <Dialog
@@ -94,6 +98,15 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
             options={TEMPLATE_OPTIONS}
             value={templateType}
             onChange={(e) => setTemplateType(e.target.value as ModelTemplateType)}
+          />
+        </Field>
+
+        <Field label="Statement schema">
+          <Select
+            size="sm"
+            options={schemas.map((s) => ({ value: s.id, label: s.name }))}
+            value={statementSchemaId}
+            onChange={(e) => setStatementSchemaId(e.target.value)}
           />
         </Field>
 

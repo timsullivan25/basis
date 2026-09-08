@@ -18,6 +18,7 @@ export class IndexedDbModelImportRepository implements ModelImportRepository {
       id: crypto.randomUUID(),
       companyId: input.companyId,
       templateType: input.templateType,
+      statementSchemaId: input.statementSchemaId,
       fileName: input.file.name,
       fileSize: input.file.size,
       uploadedAt: new Date().toISOString(),

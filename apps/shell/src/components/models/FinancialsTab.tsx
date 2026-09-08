@@ -22,9 +22,9 @@ interface FinancialsTabProps {
 
 export function FinancialsTab({ company }: FinancialsTabProps) {
   const [model, setModel] = useState<ModelImport | null | undefined>(undefined);
-  const [schema, setSchema] = useState<StatementSchema | null>(null);
+  const [schemas, setSchemas] = useState<StatementSchema[] | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File } | null>(null);
+  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File; statementSchemaId: string } | null>(null);
   const [editingMapping, setEditingMapping] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -32,13 +32,13 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [existing, statementSchema] = await Promise.all([
+      const [existing, schemaList] = await Promise.all([
         modelImportRepository.getForCompany(company.id),
-        statementSchemaRepository.get(),
+        statementSchemaRepository.list(),
       ]);
       if (!cancelled) {
         setModel(existing ?? null);
-        setSchema(statementSchema);
+        setSchemas(schemaList);
       }
     })();
     return () => {
@@ -58,12 +58,14 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
     }
   }
 
-  if (model === undefined || !schema) {
+  if (model === undefined || !schemas) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
 
   // New upload: nothing is saved until mapping is completed and "Save mapping" is clicked.
   if (draft) {
+    const schema = schemas.find((s) => s.id === draft.statementSchemaId);
+    if (!schema) throw new Error(`Statement schema not found: ${draft.statementSchemaId}`);
     return (
       <ModelMappingScreen
         company={company}
@@ -80,6 +82,10 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
 
   // Re-mapping an already-saved model: Save just updates its mapping in place.
   if (editingMapping && model) {
+    // Models saved before schemas became a library have no statementSchemaId — they were
+    // always implicitly mapped against the one schema that existed then, so fall back to it.
+    const schema = schemas.find((s) => s.id === model.statementSchemaId) ?? schemas[0];
+    if (!schema) throw new Error(`Statement schema not found: ${model.statementSchemaId}`);
     return (
       <ModelMappingScreen
         company={company}
@@ -139,6 +145,7 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
       <CreateModelDialog
         open={dialogOpen}
         companyName={company.name}
+        schemas={schemas}
         onClose={() => setDialogOpen(false)}
         onContinue={(input) => {
           setDialogOpen(false);

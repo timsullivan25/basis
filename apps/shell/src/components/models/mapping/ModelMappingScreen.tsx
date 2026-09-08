@@ -40,7 +40,7 @@ interface ModelMappingScreenProps {
   /** Editing an already-saved model — Save updates its mapping in place. */
   modelImport?: ModelImport;
   /** A freshly-picked, not-yet-saved file — Save creates the model and its mapping together. */
-  draft?: { templateType: ModelTemplateType; file: File };
+  draft?: { templateType: ModelTemplateType; file: File; statementSchemaId: string };
   onCancel: () => void;
   onSaved: (updated: ModelImport) => void;
 }
@@ -120,6 +120,7 @@ export function ModelMappingScreen({ company, statementSchema, modelImport, draf
         : await modelImportRepository.create({
             companyId: company.id,
             templateType: draft!.templateType,
+            statementSchemaId: draft!.statementSchemaId,
             file: draft!.file,
             mapping: Object.values(mapping),
           });
