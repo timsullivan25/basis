@@ -371,7 +371,7 @@ export function ModelMappingScreen({ company, schemas, modelImport, draft, onCan
           })}
         </ol>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 'var(--space-4)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
             <Icon name="layout-template" size={16} color="var(--text-brand)" />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
