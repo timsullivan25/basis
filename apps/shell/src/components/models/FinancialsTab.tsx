@@ -9,7 +9,7 @@ import {
   type StatementSchema,
 } from '../../data';
 import { CreateModelDialog } from './CreateModelDialog';
-import { ModelMappingScreen } from './mapping/ModelMappingScreen';
+import type { ModelMappingScreenProps } from './mapping/ModelMappingScreen';
 
 const TEMPLATE_LABELS: Record<ModelTemplateType, string> = {
   'basis-template': 'Basis Template',
@@ -18,14 +18,14 @@ const TEMPLATE_LABELS: Record<ModelTemplateType, string> = {
 
 interface FinancialsTabProps {
   company: Company;
+  /** Opens the mapping screen as a dedicated app-level overlay — see AppShell. */
+  onOpenMapping: (props: ModelMappingScreenProps) => void;
 }
 
-export function FinancialsTab({ company }: FinancialsTabProps) {
+export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
   const [model, setModel] = useState<ModelImport | null | undefined>(undefined);
   const [schemas, setSchemas] = useState<StatementSchema[] | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [draft, setDraft] = useState<{ templateType: ModelTemplateType; file: File } | null>(null);
-  const [editingMapping, setEditingMapping] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -58,42 +58,30 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
     }
   }
 
+  function startNewImport(input: { templateType: ModelTemplateType; file: File }) {
+    if (!schemas) return;
+    onOpenMapping({
+      company,
+      schemas,
+      draft: input,
+      onCancel: () => {},
+      onSaved: (created) => setModel(created),
+    });
+  }
+
+  function startEditMapping() {
+    if (!schemas || !model) return;
+    onOpenMapping({
+      company,
+      schemas,
+      modelImport: model,
+      onCancel: () => {},
+      onSaved: (updated) => setModel(updated),
+    });
+  }
+
   if (model === undefined || !schemas) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
-  }
-
-  // New upload: nothing is saved until mapping is completed and "Save mapping" is clicked.
-  // The mapping screen itself picks which schema to map against for a new draft.
-  if (draft) {
-    return (
-      <ModelMappingScreen
-        company={company}
-        schemas={schemas}
-        draft={draft}
-        onCancel={() => setDraft(null)}
-        onSaved={(created) => {
-          setModel(created);
-          setDraft(null);
-        }}
-      />
-    );
-  }
-
-  // Re-mapping an already-saved model: Save just updates its mapping in place. Its schema
-  // is fixed — retemplating an existing model is a bigger, not-yet-built workflow.
-  if (editingMapping && model) {
-    return (
-      <ModelMappingScreen
-        company={company}
-        schemas={schemas}
-        modelImport={model}
-        onCancel={() => setEditingMapping(false)}
-        onSaved={(updated) => {
-          setModel(updated);
-          setEditingMapping(false);
-        }}
-      />
-    );
   }
 
   return (
@@ -104,7 +92,7 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
           icon="file-spreadsheet"
           actions={
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-              <Button size="sm" iconLeft="git-merge" onClick={() => setEditingMapping(true)}>
+              <Button size="sm" iconLeft="git-merge" onClick={startEditMapping}>
                 {model.mapping ? 'Edit mapping' : 'Map line items'}
               </Button>
               <IconButton icon="trash-2" label="Delete model" size="sm" variant="ghost" onClick={() => setDeleteConfirmOpen(true)} />
@@ -144,7 +132,7 @@ export function FinancialsTab({ company }: FinancialsTabProps) {
         onClose={() => setDialogOpen(false)}
         onContinue={(input) => {
           setDialogOpen(false);
-          setDraft(input);
+          startNewImport(input);
         }}
       />
 

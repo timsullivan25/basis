@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
 import type { Company } from './data';
+import { ModelMappingScreen, type ModelMappingScreenProps } from './components/models/mapping/ModelMappingScreen';
 import { CompanyDetailScreen } from './screens/CompanyDetailScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
@@ -34,8 +35,26 @@ const PORTFOLIO_CRUMB = 'portfolio-root';
 export function AppShell() {
   const [active, setActive] = useState('overview');
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const [mappingSession, setMappingSession] = useState<ModelMappingScreenProps | null>(null);
   const screen = SCREENS[active] ?? SCREENS.overview;
   const parentScreen = screen.parent ? SCREENS[screen.parent] : null;
+
+  // Renders as a full-viewport overlay (see below) covering the sidebar too, so there is
+  // nothing else to click while a mapping session is open — the only way out is its own
+  // Cancel (which already confirms discarding) or Save, never a background nav click.
+  function openMapping(props: ModelMappingScreenProps) {
+    setMappingSession({
+      ...props,
+      onCancel: () => {
+        props.onCancel();
+        setMappingSession(null);
+      },
+      onSaved: (updated) => {
+        props.onSaved(updated);
+        setMappingSession(null);
+      },
+    });
+  }
 
   function handleNavChange(value: string) {
     setActive(value);
@@ -63,7 +82,7 @@ export function AppShell() {
   function renderScreen() {
     if (active === 'portfolio') {
       return selectedCompany ? (
-        <CompanyDetailScreen company={selectedCompany} />
+        <CompanyDetailScreen company={selectedCompany} onOpenMapping={openMapping} />
       ) : (
         <PortfolioScreen onSelectCompany={setSelectedCompany} />
       );
@@ -99,6 +118,17 @@ export function AppShell() {
           {renderScreen()}
         </main>
       </div>
+
+      {mappingSession ? (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000, overflow: 'auto',
+            background: 'var(--surface-app)', padding: 'var(--gutter)',
+          }}
+        >
+          <ModelMappingScreen {...mappingSession} />
+        </div>
+      ) : null}
     </div>
   );
 }

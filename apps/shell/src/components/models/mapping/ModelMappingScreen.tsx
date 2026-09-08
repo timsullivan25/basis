@@ -34,7 +34,7 @@ function computeTargetValue(mapping: LineMapping | undefined, workbook: ParsedWo
   return any ? sum : null;
 }
 
-interface ModelMappingScreenProps {
+export interface ModelMappingScreenProps {
   company: Company;
   /** Every statement schema available to map against. */
   schemas: StatementSchema[];
