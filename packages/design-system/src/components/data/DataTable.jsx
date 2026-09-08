@@ -76,9 +76,23 @@ export function DataTable({
             const isGroup = r.__group;
             const expanded = expandedKey === k;
             if (isGroup) {
+              const groupCellStyle = { height: 'var(--control-sm)', padding: '0 var(--space-6)', background: 'var(--surface-sunken)', borderBottom: '1px solid var(--border-subtle)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' };
+              if (stickyFirstColumn) {
+                // Split into a sticky label cell plus a plain continuation cell, so the group
+                // label stays pinned with the rest of the first column instead of scrolling
+                // away as one wide colSpan cell would.
+                return (
+                  <tr key={k}>
+                    <td style={{ ...groupCellStyle, position: 'sticky', left: 0, zIndex: 1, width: columns[0]?.width, whiteSpace: 'nowrap', borderRight: '1px solid var(--border-default)' }}>
+                      {r.__group}
+                    </td>
+                    <td colSpan={columns.length - 1 + (selectable ? 1 : 0)} style={groupCellStyle} />
+                  </tr>
+                );
+              }
               return (
                 <tr key={k}>
-                  <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ height: 'var(--control-sm)', padding: '0 var(--space-6)', background: 'var(--surface-sunken)', borderBottom: '1px solid var(--border-subtle)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  <td colSpan={columns.length + (selectable ? 1 : 0)} style={groupCellStyle}>
                     {r.__group}
                   </td>
                 </tr>
