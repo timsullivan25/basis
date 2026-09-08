@@ -3,6 +3,7 @@ import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
 import type { Company } from './data';
 import { ModelMappingScreen, type ModelMappingScreenProps } from './components/models/mapping/ModelMappingScreen';
 import { CompanyDetailScreen } from './screens/CompanyDetailScreen';
+import { ModelWorkspaceScreen } from './screens/ModelWorkspaceScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
 import { SettingsIndexScreen } from './screens/SettingsIndexScreen';
@@ -31,10 +32,12 @@ const SCREENS: Record<string, { section: string; title: string; parent?: string 
 };
 
 const PORTFOLIO_CRUMB = 'portfolio-root';
+const COMPANY_CRUMB = 'company-root';
 
 export function AppShell() {
   const [active, setActive] = useState('overview');
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const [viewingModelWorkspace, setViewingModelWorkspace] = useState(false);
   const [mappingSession, setMappingSession] = useState<ModelMappingScreenProps | null>(null);
   const screen = SCREENS[active] ?? SCREENS.overview;
   const parentScreen = screen.parent ? SCREENS[screen.parent] : null;
@@ -59,6 +62,7 @@ export function AppShell() {
   function handleNavChange(value: string) {
     setActive(value);
     setSelectedCompany(null);
+    setViewingModelWorkspace(false);
   }
 
   const breadcrumbItems = parentScreen
@@ -66,12 +70,20 @@ export function AppShell() {
     : [
         { label: screen.section },
         { value: PORTFOLIO_CRUMB, label: screen.title },
-        ...(active === 'portfolio' && selectedCompany ? [{ label: selectedCompany.name }] : []),
+        ...(active === 'portfolio' && selectedCompany
+          ? [
+              { value: viewingModelWorkspace ? COMPANY_CRUMB : undefined, label: selectedCompany.name },
+              ...(viewingModelWorkspace ? [{ label: 'Model' }] : []),
+            ]
+          : []),
       ];
 
   function handleBreadcrumbNavigate(value: string | undefined) {
     if (value === PORTFOLIO_CRUMB && selectedCompany) {
       setSelectedCompany(null);
+      setViewingModelWorkspace(false);
+    } else if (value === COMPANY_CRUMB) {
+      setViewingModelWorkspace(false);
     } else if (value && value === screen.parent) {
       setActive(value);
     }
@@ -79,12 +91,19 @@ export function AppShell() {
 
   const breadcrumbNavigable = Boolean(parentScreen) || (active === 'portfolio' && Boolean(selectedCompany));
 
+  const fullBleed = active === 'portfolio' && Boolean(selectedCompany) && viewingModelWorkspace;
+
   function renderScreen() {
     if (active === 'portfolio') {
-      return selectedCompany ? (
-        <CompanyDetailScreen company={selectedCompany} onOpenMapping={openMapping} />
+      if (!selectedCompany) return <PortfolioScreen onSelectCompany={setSelectedCompany} />;
+      return viewingModelWorkspace ? (
+        <ModelWorkspaceScreen company={selectedCompany} />
       ) : (
-        <PortfolioScreen onSelectCompany={setSelectedCompany} />
+        <CompanyDetailScreen
+          company={selectedCompany}
+          onOpenMapping={openMapping}
+          onOpenWorkspace={() => setViewingModelWorkspace(true)}
+        />
       );
     }
     if (active === 'settings') {
@@ -114,7 +133,7 @@ export function AppShell() {
           <Breadcrumb items={breadcrumbItems} onNavigate={breadcrumbNavigable ? handleBreadcrumbNavigate : undefined} />
           <div style={{ flex: '1 1 auto' }} />
         </header>
-        <main style={{ flex: '1 1 auto', overflow: 'auto', padding: 'var(--gutter)' }}>
+        <main style={{ flex: '1 1 auto', overflow: 'auto', padding: fullBleed ? 0 : 'var(--gutter)' }}>
           {renderScreen()}
         </main>
       </div>

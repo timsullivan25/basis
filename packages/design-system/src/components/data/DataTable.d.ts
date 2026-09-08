@@ -49,6 +49,8 @@ export interface DataTableProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Per-row style override (e.g. background/border/font for a "total" or "metric" row), merged onto every cell. */
   rowStyle?: (row: any) => React.CSSProperties;
   stickyHeader?: boolean;
+  /** Pins `columns[0]` while the rest scrolls horizontally — for a wide grid whose first column is the row identity (e.g. a period grid). Not combined with `selectable` anywhere in the app yet. */
+  stickyFirstColumn?: boolean;
   maxHeight?: number | string;
 }
 export function DataTable(props: DataTableProps): JSX.Element;

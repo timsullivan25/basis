@@ -6,7 +6,7 @@ import { Checkbox } from '../forms/Checkbox.jsx';
 export function DataTable({
   columns = [], rows = [], rowKey = 'id', dense = false, striped = false,
   sort, onSortChange, selectable = false, selected = [], onSelectedChange,
-  expandedKey, onRowClick, renderDetail, rowStyle, stickyHeader = true, maxHeight, style, ...rest
+  expandedKey, onRowClick, renderDetail, rowStyle, stickyHeader = true, stickyFirstColumn = false, maxHeight, style, ...rest
 }) {
   const h = dense ? 'var(--row-h-dense)' : 'var(--row-h)';
   const [hoverRow, setHoverRow] = React.useState(null);
@@ -38,20 +38,24 @@ export function DataTable({
                 <Checkbox checked={allSel} indeterminate={!allSel && selected.length > 0} onChange={toggleAll} />
               </th>
             ) : null}
-            {columns.map((c) => {
+            {columns.map((c, ci) => {
               const active = sort && sort.key === c.key;
+              const stickyLeft = stickyFirstColumn && ci === 0;
               return (
                 <th
                   key={c.key}
                   onClick={() => c.sortable !== false && onSortChange && onSortChange({ key: c.key, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' })}
                   style={{
-                    position: stickyHeader ? 'sticky' : 'static', top: 0, zIndex: 2,
+                    position: stickyHeader || stickyLeft ? 'sticky' : 'static',
+                    top: stickyHeader ? 0 : undefined, left: stickyLeft ? 0 : undefined,
+                    zIndex: stickyLeft ? (stickyHeader ? 3 : 2) : (stickyHeader ? 2 : undefined),
                     height: 'var(--subbar-h)', padding: '0 var(--space-6)', width: c.width,
                     textAlign: align(c), whiteSpace: 'nowrap',
                     fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)',
                     letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase',
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                     background: 'var(--surface-table-head)', borderBottom: '1px solid var(--border-default)',
+                    borderRight: stickyLeft ? '1px solid var(--border-default)' : undefined,
                     cursor: c.sortable === false ? 'default' : 'pointer', userSelect: 'none',
                   }}
                   title={c.description}
@@ -82,6 +86,11 @@ export function DataTable({
             }
             const hovered = hoverRow === k;
             const rowOverrides = rowStyle ? rowStyle(r) : null;
+            // Sticky cells need an opaque background of their own — otherwise cells scrolling
+            // past underneath a `position: sticky` cell show through it. Only computed (and only
+            // applied to the first data column) when stickyFirstColumn is on; every other row
+            // keeps the plain 'transparent' default, unchanged.
+            const rowBg = expanded ? 'var(--surface-selected)' : hovered ? 'var(--surface-hover)' : (striped && i % 2 ? 'var(--surface-table-stripe)' : 'var(--surface-card)');
             return (
               <React.Fragment key={k}>
                 <tr
@@ -97,10 +106,11 @@ export function DataTable({
                       <Checkbox checked={selected.includes(k)} onChange={() => toggleRow(k)} />
                     </td>
                   ) : null}
-                  {columns.map((c) => {
+                  {columns.map((c, ci) => {
                     const cellId = k + ':' + c.key;
                     const editable = Boolean(c.renderEdit) && (c.canEdit ? c.canEdit(r) : true);
                     const editing = editable && activeCell === cellId;
+                    const stickyLeft = stickyFirstColumn && ci === 0;
                     return (
                       <td
                         key={c.key}
@@ -114,6 +124,7 @@ export function DataTable({
                           color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
                           whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
                           cursor: editable && !editing ? 'text' : undefined,
+                          ...(stickyLeft ? { position: 'sticky', left: 0, zIndex: 1, background: rowBg, borderRight: '1px solid var(--border-default)' } : null),
                           ...rowOverrides,
                         }}
                       >

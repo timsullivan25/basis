@@ -24,9 +24,11 @@ interface FinancialsTabProps {
   company: Company;
   /** Opens the mapping screen as a dedicated app-level overlay — see AppShell. */
   onOpenMapping: (props: ModelMappingScreenProps) => void;
+  /** Navigates to the model workspace — see AppShell. */
+  onOpenWorkspace: () => void;
 }
 
-export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
+export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: FinancialsTabProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [modelImport, setModelImport] = useState<ModelImport | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
@@ -122,6 +124,9 @@ export function FinancialsTab({ company, onOpenMapping }: FinancialsTabProps) {
           icon="file-spreadsheet"
           actions={
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+              <Button size="sm" variant="primary" iconLeft="layout-dashboard" onClick={onOpenWorkspace}>
+                Open workspace
+              </Button>
               <Button size="sm" iconLeft="git-merge" onClick={startEditMapping}>
                 Edit mapping
               </Button>

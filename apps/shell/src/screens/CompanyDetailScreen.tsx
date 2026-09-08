@@ -16,9 +16,11 @@ interface CompanyDetailScreenProps {
   company: Company;
   /** Opens the mapping screen as a dedicated app-level overlay — see AppShell. */
   onOpenMapping: (props: ModelMappingScreenProps) => void;
+  /** Navigates to the model workspace — a sibling screen, not nested here — see AppShell. */
+  onOpenWorkspace: () => void;
 }
 
-export function CompanyDetailScreen({ company, onOpenMapping }: CompanyDetailScreenProps) {
+export function CompanyDetailScreen({ company, onOpenMapping, onOpenWorkspace }: CompanyDetailScreenProps) {
   const [tab, setTab] = useState(TABS[0].value);
   const activeTab = TABS.find((t) => t.value === tab) ?? TABS[0];
 
@@ -27,7 +29,7 @@ export function CompanyDetailScreen({ company, onOpenMapping }: CompanyDetailScr
       <h1 style={{ fontSize: 'var(--text-2xl)' }}>{company.name}</h1>
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
       {tab === 'financials' ? (
-        <FinancialsTab company={company} onOpenMapping={onOpenMapping} />
+        <FinancialsTab company={company} onOpenMapping={onOpenMapping} onOpenWorkspace={onOpenWorkspace} />
       ) : (
         <PlaceholderScreen title={activeTab.label} />
       )}
