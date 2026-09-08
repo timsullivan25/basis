@@ -4,6 +4,7 @@ color-scheme:light;
 --surface-app:var(--ink-50);--surface-card:var(--white);--surface-raised:var(--white);
 --surface-sunken:var(--ink-100);--surface-chrome:var(--white);--surface-inverse:var(--ink-900);
 --surface-hover:var(--ink-50);--surface-active:var(--ink-100);--surface-selected:var(--blue-50);
+--surface-strong:var(--ink-200);
 --surface-table-head:var(--ink-25);--surface-table-stripe:var(--ink-25);
 --surface-overlay:var(--alpha-ink-40);--surface-tooltip:var(--ink-900);
 /* Text */
@@ -39,6 +40,7 @@ color-scheme:dark;
 --surface-app:#080B10;--surface-card:var(--ink-900);--surface-raised:var(--ink-800);
 --surface-sunken:#0C1118;--surface-chrome:var(--ink-900);--surface-inverse:var(--white);
 --surface-hover:var(--ink-800);--surface-active:var(--ink-700);--surface-selected:#12274F;
+--surface-strong:var(--ink-600);
 --surface-table-head:#0E141C;--surface-table-stripe:#0E141C;
 --surface-overlay:rgba(4,6,10,.64);--surface-tooltip:var(--ink-700);
 --text-primary:#F2F5F9;--text-body:var(--ink-150);--text-secondary:var(--ink-400);
