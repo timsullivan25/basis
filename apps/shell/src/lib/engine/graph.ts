@@ -1,5 +1,4 @@
-import type { StatementSchema } from '../../data';
-import { collectRefIds } from './resolve';
+import type { ResolvedFormula, StatementSchema } from '../../data';
 
 export interface LineGraph {
   /** Every line id in the schema, calculated or not. */
@@ -16,9 +15,27 @@ export interface LineGraph {
   order: string[][];
 }
 
-/** Builds the line-level dependency graph and its evaluation order via Tarjan's SCC algorithm.
- *  Formulas never reference a period, only other lines, so this graph is shared across every
- *  period in a model — evaluate.ts walks it once per period, not once per (line, period). */
+/** Every lineId a formula reads at the SAME period it's evaluated at — unlike resolve.ts's
+ *  `collectRefIds` (which collects every ref regardless, for dangling-ref detection), this
+ *  deliberately does not descend into a `priorPeriod`/`priorYear` call's argument: a ref used
+ *  only there points at a strictly earlier, already-resolved period, so it can never contribute
+ *  to a same-period cycle no matter what it transitively references. Getting this distinction
+ *  right is what lets a self-referencing running-total pattern (e.g. `priorPeriod(x) + delta`)
+ *  evaluate as a plain single pass instead of being misclassified as a cycle and routed through
+ *  Gauss-Seidel needlessly. */
+function collectSamePeriodRefIds(formula: ResolvedFormula): string[] {
+  if (formula.kind === 'num') return [];
+  if (formula.kind === 'ref') return [formula.lineId];
+  if (formula.kind === 'neg') return collectSamePeriodRefIds(formula.arg);
+  if (formula.kind === 'bin') return [...collectSamePeriodRefIds(formula.left), ...collectSamePeriodRefIds(formula.right)];
+  if (formula.fn === 'priorPeriod' || formula.fn === 'priorYear') return [];
+  return formula.args.flatMap(collectSamePeriodRefIds);
+}
+
+/** Builds the line-level dependency graph and its evaluation order via Tarjan's SCC algorithm,
+ *  over same-period dependencies only (see `collectSamePeriodRefIds`) — this graph is shared
+ *  across every period in a model since it never varies with which period is being evaluated;
+ *  evaluate.ts walks it once per period, not once per (line, period). */
 export function buildLineGraph(schema: StatementSchema): LineGraph {
   const lines = schema.sections.flatMap((s) => s.lines);
   const lineIds = lines.map((l) => l.id);
@@ -31,7 +48,7 @@ export function buildLineGraph(schema: StatementSchema): LineGraph {
   for (const line of lines) {
     // A dangling ref (line deleted since this formula was resolved) is filtered out here rather
     // than left to break the graph walk — SectionEditor already surfaces it as an editor warning.
-    const refs = line.formula ? collectRefIds(line.formula).filter((id) => idSet.has(id)) : [];
+    const refs = line.formula ? collectSamePeriodRefIds(line.formula).filter((id) => idSet.has(id)) : [];
     precedents.set(line.id, refs);
     for (const ref of refs) dependents.get(ref)!.push(line.id);
   }

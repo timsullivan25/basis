@@ -1,8 +1,60 @@
-import type { Model, ResolvedFormula, StatementLine, StatementSchema } from '../../data';
+import type { Model, PeriodType, ResolvedFormula, StatementLine, StatementSchema, Timeline } from '../../data';
 import { buildLineGraph } from './graph';
 
 const TOLERANCE = 1e-6;
 const MAX_ITERATIONS = 100;
+
+/** How far a same-type period's end date may drift from exactly one year prior and still count
+ *  as "the prior year" — roughly 20% of the period's nominal length, generous enough to survive
+ *  a fiscal-year-end that moves by a few weeks year to year, tight enough to refuse a match
+ *  across a real gap in the data (e.g. only two FYs on file, three years apart). */
+const PRIOR_YEAR_TOLERANCE_DAYS: Record<PeriodType, number> = {
+  FY: 60,
+  'Semi-Annual': 35,
+  Quarter: 18,
+};
+const MS_PER_DAY = 86_400_000;
+
+/** Parses a plain "YYYY-MM-DD" endDate into UTC milliseconds without ever going through a Date
+ *  constructor's local-timezone interpretation — endDate is always a date-only ISO string, and
+ *  `new Date(s).getDate()` etc. can silently shift by a day depending on the runtime's timezone. */
+function toUTCMillis(endDate: string): number {
+  const [y, m, d] = endDate.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+/** One calendar year before `endDate`, in UTC milliseconds. Deliberately not "minus 365 days" —
+ *  calendar subtraction is what makes Feb 29 land on Mar 1 in a non-leap year rather than
+ *  drifting by a day, which is the normalization `Date.UTC` already does for an out-of-range day. */
+function oneYearBeforeMillis(endDate: string): number {
+  const [y, m, d] = endDate.split('-').map(Number);
+  return Date.UTC(y - 1, m - 1, d);
+}
+
+/** Finds the period one year before `timeline[periodIndex]`, matched by date rather than a fixed
+ *  index offset so it stays correct on a hybrid or non-annual timeline (a semi-annual model's
+ *  "one year back" is 2 periods, a quarterly model's is 4 — both fall out of this search for
+ *  free, no special-casing per PeriodType needed beyond the tolerance table above). Restricted to
+ *  periods of the same `type` so it never matches across a mixed-frequency timeline by accident;
+ *  only ever looks at indices before `periodIndex`, which periods are always built/extended in
+ *  order, so this is exactly the set already evaluated by the time this runs. */
+function findPriorYear(timeline: Timeline, periodIndex: number): number | null {
+  const period = timeline[periodIndex];
+  const target = oneYearBeforeMillis(period.endDate);
+  const tolerance = PRIOR_YEAR_TOLERANCE_DAYS[period.type] * MS_PER_DAY;
+
+  let bestIndex: number | null = null;
+  let bestDiff = Infinity;
+  for (let i = 0; i < periodIndex; i++) {
+    if (timeline[i].type !== period.type) continue;
+    const diff = Math.abs(toUTCMillis(timeline[i].endDate) - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIndex = i;
+    }
+  }
+  return bestIndex !== null && bestDiff <= tolerance ? bestIndex : null;
+}
 
 export interface EvaluationResult {
   /** null means no value for that period — an uncalculated line with no mapped historical,
@@ -81,6 +133,13 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
         case '^':
           return finite(Math.pow(l, r));
       }
+    }
+    if (node.fn === 'priorPeriod' || node.fn === 'priorYear') {
+      const priorIndex = node.fn === 'priorPeriod' ? periodIndex - 1 : findPriorYear(model.timeline, periodIndex);
+      if (priorIndex === null || priorIndex < 0) return null;
+      // undefined, not cycleValues — this reads a DIFFERENT period, so the current period's
+      // in-flight Gauss-Seidel values (scoped to periodIndex) must never leak into it.
+      return evalNode(node.args[0], priorIndex, undefined);
     }
     // call — abs takes exactly one arg and propagates null; sum/min/max/avg skip null args
     // (an Excel-like "ignore blanks"), and are null only when every arg is null.

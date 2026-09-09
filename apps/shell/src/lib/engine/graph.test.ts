@@ -20,6 +20,10 @@ function ref(lineId: string): ResolvedFormula {
   return { kind: 'ref', lineId };
 }
 
+function call(fn: 'priorPeriod' | 'priorYear', args: ResolvedFormula[]): ResolvedFormula {
+  return { kind: 'call', fn, args };
+}
+
 function schema(lines: StatementLine[]): StatementSchema {
   return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }] };
 }
@@ -78,5 +82,31 @@ describe('buildLineGraph', () => {
     const g = buildLineGraph(schema([line('a', ref('deleted-line'))]));
     expect(g.precedents.get('a')).toEqual([]);
     expect(g.order.flat().sort()).toEqual(['a']);
+  });
+
+  it('does not treat a priorPeriod-wrapped self-reference as a same-period cycle', () => {
+    // A running-total-style formula: this period's value is last period's plus a delta line.
+    // The self-reference only ever points at a strictly earlier, already-resolved period, so it
+    // must not force this line through the (unnecessary, and here undefined) cycle solver.
+    const g = buildLineGraph(
+      schema([
+        line('delta'),
+        line('running-total', { kind: 'bin', op: '+', left: call('priorPeriod', [ref('running-total')]), right: ref('delta') }),
+      ]),
+    );
+    expect(g.precedents.get('running-total')).toEqual(['delta']);
+    const group = g.order.find((grp) => grp.includes('running-total'));
+    expect(group).toEqual(['running-total']);
+  });
+
+  it('still detects a genuine same-period cycle even when one side also uses priorPeriod', () => {
+    const g = buildLineGraph(
+      schema([
+        line('a', { kind: 'bin', op: '+', left: ref('b'), right: call('priorPeriod', [ref('a')]) }),
+        line('b', ref('a')),
+      ]),
+    );
+    const group = g.order.find((grp) => grp.includes('a'));
+    expect(group?.sort()).toEqual(['a', 'b']);
   });
 });

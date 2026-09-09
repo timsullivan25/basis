@@ -29,7 +29,7 @@ export type ResolvedFormula =
   | { kind: 'ref'; lineId: string }
   | { kind: 'neg'; arg: ResolvedFormula }
   | { kind: 'bin'; op: '+' | '-' | '*' | '/' | '^'; left: ResolvedFormula; right: ResolvedFormula }
-  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs'; args: ResolvedFormula[] };
+  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear'; args: ResolvedFormula[] };
 
 export interface StatementLine {
   /** Stable once created — never regenerated on rename/reorder/move, since formulas and aliases reference it. */
