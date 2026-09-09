@@ -36,15 +36,19 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
   const errors = compileResult.ok ? [] : compileResult.errors;
 
   function refreshSuggestions(nextValue: string, cursorPos: number) {
-    const candidates = nameIndex.candidates();
-    const { word } = getFormulaSegment(nextValue, cursorPos, candidates);
+    // Segment lookup still needs the full tokenizer vocabulary (a typed qualified form must
+    // tokenize correctly even if it's not one of the suggestions offered below).
+    const { word } = getFormulaSegment(nextValue, cursorPos, nameIndex.candidates());
     if (!word) {
       setSuggestions([]);
       return;
     }
     const lower = word.toLowerCase();
+    // But only ever suggest strings that would actually resolve if picked — an ambiguous name's
+    // bare form is deliberately excluded here (see NameIndex.suggestions).
     setSuggestions(
-      [...new Set(candidates)]
+      nameIndex
+        .suggestions(ownLineId)
         .filter((c) => c.toLowerCase() !== lower && c.toLowerCase().includes(lower))
         .slice(0, 8),
     );

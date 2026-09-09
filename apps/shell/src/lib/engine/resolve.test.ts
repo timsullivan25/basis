@@ -8,6 +8,7 @@ import {
   remapFormulaIds,
   type ResolvedFormula,
 } from './resolve';
+
 import type { StatementLine, StatementSchema } from '../../data';
 
 function line(id: string, name: string, formula: ResolvedFormula | null = null): StatementLine {
@@ -204,6 +205,36 @@ describe('remapFormulaIds', () => {
   it('leaves numeric literals untouched', () => {
     const formula: ResolvedFormula = { kind: 'num', value: 42 };
     expect(remapFormulaIds(formula, new Map())).toEqual(formula);
+  });
+});
+
+describe('buildNameIndex — suggestions', () => {
+  it('offers a bare suggestion for a name unambiguous from this line', () => {
+    const index = buildNameIndex(fixtureSchema());
+    expect(index.suggestions('op-income')).toContain('Revenue');
+  });
+
+  it('never offers a bare suggestion for a name ambiguous from this line', () => {
+    const index = buildNameIndex(fixtureSchema());
+    const suggestions = index.suggestions('op-income');
+    expect(suggestions).not.toContain('Depreciation & Amortization');
+    expect(suggestions).toContain('Income Statement.Depreciation & Amortization');
+    expect(suggestions).toContain('Cash Flow Statement.Depreciation & Amortization');
+  });
+
+  it('offers a bare suggestion for a pull-through line reading its own name elsewhere', () => {
+    const index = buildNameIndex(fixtureSchema());
+    // From da-cf's own formula, "Depreciation & Amortization" resolves unambiguously to da-is
+    // once self is excluded — so the bare form is fine to suggest here, unlike from op-income.
+    const suggestions = index.suggestions('da-cf');
+    expect(suggestions).toContain('Depreciation & Amortization');
+    expect(suggestions).not.toContain('Income Statement.Depreciation & Amortization');
+  });
+
+  it('never suggests a name only this line itself has', () => {
+    const index = buildNameIndex(fixtureSchema());
+    // "Revenue" belongs to no one else — referencing it from its own formula would self-cycle.
+    expect(index.suggestions('revenue')).not.toContain('Revenue');
   });
 });
 

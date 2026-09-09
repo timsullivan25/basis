@@ -27,6 +27,11 @@ export interface NameIndex {
   /** Current display name for a line, and whether some other line currently shares its
    *  (unqualified) name — used by formatFormula to decide whether to qualify on display. */
   describe(lineId: string): { name: string; qualifiedName: string; ambiguous: boolean } | undefined;
+  /** Autocomplete suggestions for a formula being edited on `fromLineId` — unlike `candidates()`
+   *  (the full tokenizer vocabulary), this omits anything that would fail to resolve if picked:
+   *  a name ambiguous from this line's perspective appears only in its qualified form(s), and a
+   *  name only this line itself has (nothing else to resolve to) doesn't appear at all. */
+  suggestions(fromLineId: string): string[];
 }
 
 export function buildNameIndex(schema: NameIndexInput): NameIndex {
@@ -76,6 +81,32 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
         qualifiedName: `${found.section.name}.${found.line.name}`,
         ambiguous: group.length > 1,
       };
+    },
+
+    suggestions(fromLineId) {
+      const seen = new Set<string>();
+      const result: string[] = [];
+      for (const group of byNameKey.values()) {
+        const remaining = group.filter((g) => g.lineId !== fromLineId);
+        if (remaining.length === 0) continue; // only this line has the name — nothing to resolve to
+        if (remaining.length === 1) {
+          const target = entries.find((e) => e.line.id === remaining[0].lineId)!;
+          if (!seen.has(target.line.name)) {
+            seen.add(target.line.name);
+            result.push(target.line.name);
+          }
+        } else {
+          for (const g of remaining) {
+            const target = entries.find((e) => e.line.id === g.lineId)!;
+            const qualified = `${g.sectionName}.${target.line.name}`;
+            if (!seen.has(qualified)) {
+              seen.add(qualified);
+              result.push(qualified);
+            }
+          }
+        }
+      }
+      return result;
     },
   };
 }
