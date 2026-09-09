@@ -217,30 +217,3 @@ export function parseFormula(formula: string, knownNames: string[]): ParseResult
     throw err;
   }
 }
-
-/** Unknown-line/syntax errors for a formula, given the set of valid line names in the schema. */
-export function validateFormula(formula: string, knownNames: string[]): string[] {
-  if (!formula.trim()) return [];
-  const result = parseFormula(formula, knownNames);
-  return result.ok ? [] : result.errors;
-}
-
-/**
- * Rewrites every reference to `oldName` in `formula` to `newName` — the rename-cascade primitive
- * used when a schema line is renamed, so formulas referencing it by name stay correct. Splices
- * right-to-left so earlier token offsets stay valid as later ones are rewritten.
- */
-export function renameInFormula(formula: string, knownNames: string[], oldName: string, newName: string): string {
-  const trimmedOld = oldName.trim();
-  if (!trimmedOld) return formula;
-  const tokens = tokenize(formula, knownNames);
-  const oldLower = trimmedOld.toLowerCase();
-  let result = formula;
-  for (let idx = tokens.length - 1; idx >= 0; idx--) {
-    const t = tokens[idx];
-    if (t.kind === 'name' && t.text.toLowerCase() === oldLower) {
-      result = result.slice(0, t.start) + newName + result.slice(t.end);
-    }
-  }
-  return result;
-}

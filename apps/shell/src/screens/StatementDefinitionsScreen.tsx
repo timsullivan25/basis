@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Dialog, Field, IconButton, Input, Select, Toast } from '@basis/design-system';
 import { statementSchemaRepository, type StatementLine, type StatementSchema, type StatementSection } from '../data';
 import { SectionEditor } from '../components/statements/SectionEditor';
-import { validateFormula } from '../components/statements/formulaUtils';
-import { renameInFormula } from '../lib/engine/parse';
+import { buildNameIndex, collectRefIds, isCalculated } from '../lib/engine/resolve';
 
 function emptyLine(): StatementLine {
   return {
@@ -14,7 +13,7 @@ function emptyLine(): StatementLine {
     numberFormat: 'number',
     sign: 'natural',
     aggregation: 'sum',
-    formula: '',
+    formula: null,
     aliases: [],
   };
 }
@@ -177,23 +176,14 @@ export function StatementDefinitionsScreen() {
   }
 
   function updateLine(lineId: string, patch: Partial<StatementLine>) {
-    setSections((prev) => {
-      const allLines = prev.flatMap((s) => s.lines);
-      const oldLine = allLines.find((l) => l.id === lineId);
-      const renaming = Boolean(oldLine && patch.name !== undefined && patch.name !== oldLine.name && oldLine.name.trim());
-      // Pre-rename names, so the old name is still "known" for tokenizing the cascade below.
-      const knownNames = allLines.map((l) => l.name).filter(Boolean);
-      return prev.map((s) => ({
+    // No rename cascade needed — formulas reference lines by resolved id (see
+    // lib/engine/resolve.ts), so a rename here never touches anything that reads this line.
+    setSections((prev) =>
+      prev.map((s) => ({
         ...s,
-        lines: s.lines.map((line) => {
-          if (line.id === lineId) return { ...line, ...patch };
-          if (renaming && line.formula.trim()) {
-            return { ...line, formula: renameInFormula(line.formula, knownNames, oldLine!.name, patch.name!) };
-          }
-          return line;
-        }),
-      }));
-    });
+        lines: s.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+      })),
+    );
   }
 
   function deleteLine(sectionId: string, lineId: string) {
@@ -239,18 +229,16 @@ export function StatementDefinitionsScreen() {
     }
   }
 
-  const allLineNames = useMemo(
-    () => sections.flatMap((s) => s.lines.map((line) => line.name)).filter(Boolean),
-    [sections],
-  );
+  const nameIndex = useMemo(() => buildNameIndex({ sections }), [sections]);
 
-  const errorLineCount = useMemo(
-    () =>
-      sections
-        .flatMap((s) => s.lines)
-        .filter((line) => validateFormula(line.formula, allLineNames).length > 0).length,
-    [sections, allLineNames],
-  );
+  // A stored formula is always valid when it's saved — the only way one can go stale afterward
+  // is a reference to a line that's since been deleted, so that's what this counts.
+  const errorLineCount = useMemo(() => {
+    const liveIds = new Set(sections.flatMap((s) => s.lines.map((l) => l.id)));
+    return sections
+      .flatMap((s) => s.lines)
+      .filter((line) => isCalculated(line) && collectRefIds(line.formula!).some((id) => !liveIds.has(id))).length;
+  }, [sections]);
 
   if (loading) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
@@ -317,7 +305,7 @@ export function StatementDefinitionsScreen() {
 
       {errorLineCount > 0 ? (
         <Alert tone="negative" compact>
-          {errorLineCount} line{errorLineCount > 1 ? 's have' : ' has'} formula errors that need to be reviewed.
+          {errorLineCount} line{errorLineCount > 1 ? 's reference' : ' references'} a line that no longer exists.
         </Alert>
       ) : null}
 
@@ -329,7 +317,7 @@ export function StatementDefinitionsScreen() {
             isFirst={index === 0}
             isLast={index === sections.length - 1}
             otherSections={sections.filter((s) => s.id !== section.id).map((s) => ({ id: s.id, name: s.name }))}
-            allLineNames={allLineNames}
+            nameIndex={nameIndex}
             onRename={(name) => renameSection(section.id, name)}
             onMoveUp={() => moveSection(section.id, 'up')}
             onMoveDown={() => moveSection(section.id, 'down')}

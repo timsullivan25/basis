@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine } from '../../data';
+import { isCalculated } from '../../lib/engine/resolve';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
 
@@ -22,7 +23,7 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
 
 /** Required/Optional is a manual choice, but a formula overrides it — the line is derived, not sourced. */
 export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
-  if (line.formula.trim()) return { label: 'Calculated', tone: 'positive' };
+  if (isCalculated(line)) return { label: 'Calculated', tone: 'positive' };
   return line.required ? { label: 'Required', tone: 'caution' } : { label: 'Optional', tone: 'neutral' };
 }
 

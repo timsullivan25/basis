@@ -36,6 +36,7 @@ export type {
   ParsedWorkbook,
   PeriodKind,
   PeriodType,
+  ResolvedFormula,
   StatementLine,
   StatementSchema,
   StatementSchemaRepository,

@@ -1,4 +1,5 @@
 import type { LineMapping, ParsedSourceLine, StatementLine, StatementSection } from '../data';
+import { isCalculated } from './engine/resolve';
 
 const FUZZY_THRESHOLD = 0.6;
 
@@ -52,7 +53,7 @@ export function matchStatementLines(
 
   for (const section of sections) {
     for (const line of section.lines) {
-      if (line.formula.trim()) continue; // calculated lines are never matched to source data
+      if (isCalculated(line)) continue; // calculated lines are never matched to source data
       result[line.id] = matchOne(line, sourceLines, additionalAliasesByLineId[line.id] ?? []);
     }
   }

@@ -1,7 +1,5 @@
 import { tokenize } from '../../lib/engine/parse';
 
-export { validateFormula } from '../../lib/engine/parse';
-
 /**
  * The identifier segment surrounding `cursorPos` — bounded by operators, not whitespace,
  * since line names can contain spaces (e.g. "Net Income"). Built on the same known-names-aware

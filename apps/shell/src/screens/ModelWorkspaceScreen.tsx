@@ -3,6 +3,7 @@ import { Card, DataTable, Tabs } from '@basis/design-system';
 import { modelRepository, statementSchemaRepository, type Company, type Model, type StatementLine, type StatementSchema } from '../data';
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
+import { isCalculated } from '../lib/engine/resolve';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -74,7 +75,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       width: 110,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        const value = row.line.formula.trim() ? null : (model.historicals[row.line.id]?.[i] ?? null);
+        const value = isCalculated(row.line) ? null : (model.historicals[row.line.id]?.[i] ?? null);
         return (
           <span
             style={{

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFormula, renameInFormula, tokenize, validateFormula, type FormulaAst } from './parse';
+import { parseFormula, tokenize, type FormulaAst } from './parse';
 
 /** Pure-arithmetic evaluator for AST shape/precedence tests — the real evaluator (with null
  *  propagation and line lookups) lands in slice 2; these formulas never reference a line. */
@@ -127,42 +127,5 @@ describe('parseFormula — syntax errors', () => {
 
   it('reports a trailing token', () => {
     expect(parseFormula('2 + 3)', []).ok).toBe(false);
-  });
-});
-
-describe('validateFormula', () => {
-  it('returns no errors for a valid formula', () => {
-    expect(validateFormula('Revenue - COGS', ['Revenue', 'COGS'])).toEqual([]);
-  });
-
-  it('returns no errors for an empty formula', () => {
-    expect(validateFormula('', ['Revenue'])).toEqual([]);
-  });
-
-  it('surfaces the unknown-line message', () => {
-    expect(validateFormula('Revenue - Bogus', ['Revenue'])).toEqual(['Unknown line: Bogus']);
-  });
-});
-
-describe('renameInFormula', () => {
-  it('renames a plain reference', () => {
-    expect(renameInFormula('Revenue - COGS', ['Revenue', 'COGS'], 'Revenue', 'Total Revenue')).toBe(
-      'Total Revenue - COGS',
-    );
-  });
-
-  it('renames a reference that itself contains a hyphen or comma', () => {
-    const knownNames = ['Stock-Based Compensation', 'EBITDA'];
-    expect(renameInFormula('EBITDA + Stock-Based Compensation', knownNames, 'Stock-Based Compensation', 'SBC')).toBe(
-      'EBITDA + SBC',
-    );
-  });
-
-  it('renames every occurrence when a name is referenced more than once', () => {
-    expect(renameInFormula('Revenue + Revenue', ['Revenue'], 'Revenue', 'Sales')).toBe('Sales + Sales');
-  });
-
-  it('leaves a formula untouched when it does not reference the old name', () => {
-    expect(renameInFormula('COGS * 2', ['Revenue', 'COGS'], 'Revenue', 'Total Revenue')).toBe('COGS * 2');
   });
 });

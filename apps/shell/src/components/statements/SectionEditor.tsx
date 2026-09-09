@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Tag } from '@basis/design-system';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine, StatementSection } from '../../data';
+import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { FormulaInput } from './FormulaInput';
-import { validateFormula } from './formulaUtils';
 import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
 
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
@@ -18,7 +18,7 @@ interface SectionEditorProps {
   isFirst: boolean;
   isLast: boolean;
   otherSections: { id: string; name: string }[];
-  allLineNames: string[];
+  nameIndex: NameIndex;
   onRename: (name: string) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
@@ -31,7 +31,7 @@ interface SectionEditorProps {
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, otherSections, allLineNames,
+  section, isFirst, isLast, otherSections, nameIndex,
   onRename, onMoveUp, onMoveDown, onDelete,
   onAddLine, onUpdateLine, onDeleteLine, onMoveLine, onMoveLineToSection,
 }: SectionEditorProps) {
@@ -56,18 +56,21 @@ export function SectionEditor({
       label: 'Line name',
       emphasis: true,
       render: (_: unknown, row: StatementLine) => {
-        const hasFormula = row.formula.trim().length > 0;
-        const errors = hasFormula ? validateFormula(row.formula, allLineNames) : [];
+        const hasFormula = isCalculated(row);
+        // A stored formula is always syntactically valid (it was compiled before being saved) —
+        // the one way it can go stale is a reference to a line deleted since, so that's the
+        // only thing worth flagging here rather than re-validating text that no longer exists.
+        const dangling = hasFormula ? collectRefIds(row.formula!).filter((id) => !nameIndex.describe(id)) : [];
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
             {row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
             {hasFormula ? (
-              errors.length > 0 ? (
-                <span title={errors[0]}>
+              dangling.length > 0 ? (
+                <span title="References a line that no longer exists">
                   <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
                 </span>
               ) : (
-                <span title={`Formula: ${row.formula}`}>
+                <span title={`Formula: ${formatFormula(row.formula, nameIndex)}`}>
                   <Icon name="sigma" size={12} color="var(--text-tertiary)" />
                 </span>
               )
@@ -100,7 +103,7 @@ export function SectionEditor({
       key: 'required',
       label: 'Required',
       width: 120,
-      canEdit: (row: StatementLine) => !row.formula.trim(),
+      canEdit: (row: StatementLine) => !isCalculated(row),
       render: (_: unknown, row: StatementLine) => {
         const meta = getRequiredMeta(row);
         return (
@@ -214,7 +217,7 @@ export function SectionEditor({
             <LineDetail
               line={row}
               otherSections={otherSections}
-              allLineNames={allLineNames}
+              nameIndex={nameIndex}
               onUpdateLine={onUpdateLine}
               onMoveLineToSection={onMoveLineToSection}
             />
@@ -275,12 +278,12 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
 interface LineDetailProps {
   line: StatementLine;
   otherSections: { id: string; name: string }[];
-  allLineNames: string[];
+  nameIndex: NameIndex;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
 }
 
-function LineDetail({ line, otherSections, allLineNames, onUpdateLine, onMoveLineToSection }: LineDetailProps) {
+function LineDetail({ line, otherSections, nameIndex, onUpdateLine, onMoveLineToSection }: LineDetailProps) {
   const [aliasDraft, setAliasDraft] = useState('');
 
   function addAlias() {
@@ -303,7 +306,8 @@ function LineDetail({ line, otherSections, allLineNames, onUpdateLine, onMoveLin
         <FormulaInput
           value={line.formula}
           onChange={(formula) => onUpdateLine(line.id, { formula })}
-          knownNames={allLineNames}
+          nameIndex={nameIndex}
+          ownLineId={line.id}
         />
       </div>
 

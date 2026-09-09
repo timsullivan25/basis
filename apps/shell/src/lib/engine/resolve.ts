@@ -1,0 +1,181 @@
+import { parseFormula, type FormulaAst } from './parse';
+import type { ResolvedFormula, StatementLine } from '../../data';
+
+export type { ResolvedFormula };
+
+interface Candidate {
+  text: string;
+  lineId: string;
+  qualified: boolean;
+}
+
+/** The only shape buildNameIndex actually needs — deliberately looser than StatementSchema so
+ *  it also accepts a schema still under construction, before formulas are compiled. */
+export interface NameIndexInput {
+  sections: Array<{ name: string; lines: Array<{ id: string; name: string }> }>;
+}
+
+export interface NameIndex {
+  /** Every matchable string — plain name, plus "Section.Name" for every line — fed straight
+   *  into tokenize()/parseFormula() as the candidate list. */
+  candidates(): string[];
+  /** Resolves a token's matched text to a specific line, excluding `fromLineId` (so a
+   *  pull-through line's self-reference narrows to the one other candidate with no
+   *  qualification needed). A qualified match is always unambiguous. A plain match with
+   *  more than one remaining candidate after self-exclusion is a genuine ambiguity. */
+  resolve(matchedText: string, fromLineId: string): { ok: true; lineId: string } | { ok: false; error: string };
+  /** Current display name for a line, and whether some other line currently shares its
+   *  (unqualified) name — used by formatFormula to decide whether to qualify on display. */
+  describe(lineId: string): { name: string; qualifiedName: string; ambiguous: boolean } | undefined;
+}
+
+export function buildNameIndex(schema: NameIndexInput): NameIndex {
+  const entries: { line: { id: string; name: string }; section: { name: string } }[] = [];
+  schema.sections.forEach((section) => {
+    section.lines.forEach((line) => entries.push({ line, section }));
+  });
+
+  const byNameKey = new Map<string, { lineId: string; sectionName: string }[]>();
+  for (const { line, section } of entries) {
+    const key = line.name.trim().toLowerCase();
+    if (!key) continue;
+    const group = byNameKey.get(key) ?? [];
+    group.push({ lineId: line.id, sectionName: section.name });
+    byNameKey.set(key, group);
+  }
+
+  const candidateList: Candidate[] = [];
+  for (const { line, section } of entries) {
+    if (!line.name.trim()) continue;
+    candidateList.push({ text: line.name, lineId: line.id, qualified: false });
+    candidateList.push({ text: `${section.name}.${line.name}`, lineId: line.id, qualified: true });
+  }
+
+  return {
+    candidates: () => candidateList.map((c) => c.text),
+
+    resolve(matchedText, fromLineId) {
+      const qualifiedMatch = candidateList.find((c) => c.qualified && c.text === matchedText);
+      if (qualifiedMatch) return { ok: true, lineId: qualifiedMatch.lineId };
+
+      const key = matchedText.trim().toLowerCase();
+      const group = (byNameKey.get(key) ?? []).filter((g) => g.lineId !== fromLineId);
+      if (group.length === 1) return { ok: true, lineId: group[0].lineId };
+      if (group.length === 0) return { ok: false, error: `Unknown line: ${matchedText}` };
+      const options = group.map((g) => `${g.sectionName}.${matchedText}`).join(' or ');
+      return { ok: false, error: `"${matchedText}" is ambiguous — qualify it as ${options}` };
+    },
+
+    describe(lineId) {
+      const found = entries.find((e) => e.line.id === lineId);
+      if (!found) return undefined;
+      const key = found.line.name.trim().toLowerCase();
+      const group = byNameKey.get(key) ?? [];
+      return {
+        name: found.line.name,
+        qualifiedName: `${found.section.name}.${found.line.name}`,
+        ambiguous: group.length > 1,
+      };
+    },
+  };
+}
+
+function resolveAst(
+  ast: FormulaAst,
+  index: NameIndex,
+  ownLineId: string,
+): { ok: true; formula: ResolvedFormula } | { ok: false; errors: string[] } {
+  if (ast.kind === 'num') return { ok: true, formula: { kind: 'num', value: ast.value } };
+  if (ast.kind === 'ref') {
+    const r = index.resolve(ast.name, ownLineId);
+    if (!r.ok) return { ok: false, errors: [r.error] };
+    return { ok: true, formula: { kind: 'ref', lineId: r.lineId } };
+  }
+  if (ast.kind === 'neg') {
+    const inner = resolveAst(ast.arg, index, ownLineId);
+    if (!inner.ok) return inner;
+    return { ok: true, formula: { kind: 'neg', arg: inner.formula } };
+  }
+  if (ast.kind === 'bin') {
+    const left = resolveAst(ast.left, index, ownLineId);
+    if (!left.ok) return left;
+    const right = resolveAst(ast.right, index, ownLineId);
+    if (!right.ok) return right;
+    return { ok: true, formula: { kind: 'bin', op: ast.op, left: left.formula, right: right.formula } };
+  }
+  const args: ResolvedFormula[] = [];
+  for (const a of ast.args) {
+    const res = resolveAst(a, index, ownLineId);
+    if (!res.ok) return res;
+    args.push(res.formula);
+  }
+  return { ok: true, formula: { kind: 'call', fn: ast.fn, args } };
+}
+
+export type CompileResult = { ok: true; formula: ResolvedFormula | null } | { ok: false; errors: string[] };
+
+/** tokenize + parseFormula + per-ref resolve, in one call — every formula-editing surface
+ *  (FormulaInput, seed construction) uses this to turn typed text into what's actually stored.
+ *  Empty text compiles to `formula: null` ("not calculated"), not an error. */
+export function compileFormula(text: string, index: NameIndex, ownLineId: string): CompileResult {
+  if (!text.trim()) return { ok: true, formula: null };
+  const parsed = parseFormula(text, index.candidates());
+  if (!parsed.ok) return { ok: false, errors: parsed.errors };
+  return resolveAst(parsed.ast, index, ownLineId);
+}
+
+function precedence(f: ResolvedFormula): number {
+  if (f.kind === 'neg') return 4;
+  if (f.kind === 'bin') return f.op === '^' ? 3 : f.op === '*' || f.op === '/' ? 2 : 1;
+  return 5; // num, ref, call
+}
+
+function formatNode(f: ResolvedFormula, index: NameIndex, minPrec: number): string {
+  const p = precedence(f);
+  const wrap = (s: string) => (p < minPrec ? `(${s})` : s);
+  if (f.kind === 'num') return String(f.value);
+  if (f.kind === 'ref') {
+    const d = index.describe(f.lineId);
+    return d ? (d.ambiguous ? d.qualifiedName : d.name) : '<unknown line>';
+  }
+  if (f.kind === 'neg') return wrap(`-${formatNode(f.arg, index, 4)}`);
+  if (f.kind === 'call') return `${f.fn}(${f.args.map((a) => formatNode(a, index, 0)).join(', ')})`;
+  // bin — '^' is right-associative, everything else left-associative
+  const leftMin = f.op === '^' ? p + 1 : p;
+  const rightMin = f.op === '^' ? p : p + 1;
+  return wrap(`${formatNode(f.left, index, leftMin)} ${f.op} ${formatNode(f.right, index, rightMin)}`);
+}
+
+/** Inverse of compileFormula — renders a resolved formula back to text using each ref's
+ *  CURRENT name, qualifying only refs whose name is currently ambiguous (checked fresh
+ *  against the schema every call, not stored) — so a rename or a later-introduced collision
+ *  is reflected correctly without ever needing to rewrite stored data. */
+export function formatFormula(formula: ResolvedFormula | null, index: NameIndex): string {
+  return formula ? formatNode(formula, index, 0) : '';
+}
+
+/** Every lineId a resolved formula references, including nested calls — used to detect a
+ *  dangling reference (a line deleted after something else's formula was resolved against it). */
+export function collectRefIds(formula: ResolvedFormula): string[] {
+  if (formula.kind === 'num') return [];
+  if (formula.kind === 'ref') return [formula.lineId];
+  if (formula.kind === 'neg') return collectRefIds(formula.arg);
+  if (formula.kind === 'bin') return [...collectRefIds(formula.left), ...collectRefIds(formula.right)];
+  return formula.args.flatMap(collectRefIds);
+}
+
+/** Rewrites every `ref.lineId` through `idMap` — the id-remap pass a schema duplicate needs,
+ *  since every line gets a fresh id on copy but formulas must keep pointing at the right ones. */
+export function remapFormulaIds(formula: ResolvedFormula, idMap: Map<string, string>): ResolvedFormula {
+  if (formula.kind === 'num') return formula;
+  if (formula.kind === 'ref') return { kind: 'ref', lineId: idMap.get(formula.lineId) ?? formula.lineId };
+  if (formula.kind === 'neg') return { kind: 'neg', arg: remapFormulaIds(formula.arg, idMap) };
+  if (formula.kind === 'bin') {
+    return { kind: 'bin', op: formula.op, left: remapFormulaIds(formula.left, idMap), right: remapFormulaIds(formula.right, idMap) };
+  }
+  return { kind: 'call', fn: formula.fn, args: formula.args.map((a) => remapFormulaIds(a, idMap)) };
+}
+
+export function isCalculated(line: Pick<StatementLine, 'formula'>): boolean {
+  return line.formula !== null;
+}

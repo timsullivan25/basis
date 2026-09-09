@@ -22,6 +22,15 @@ export type LineSign = 'natural' | 'absolute';
 /** How a flow/balance line rolls up when periods are collapsed (e.g. quarters into a year) — 'none' for ratios/metrics that don't aggregate. Not used until period rollup ships. */
 export type LineAggregation = 'sum' | 'last' | 'none';
 
+/** A formula resolved at authoring time (see lib/engine/resolve.ts) — every reference is a
+ *  specific line id, not a name, so it survives a rename or reorder elsewhere in the schema. */
+export type ResolvedFormula =
+  | { kind: 'num'; value: number }
+  | { kind: 'ref'; lineId: string }
+  | { kind: 'neg'; arg: ResolvedFormula }
+  | { kind: 'bin'; op: '+' | '-' | '*' | '/' | '^'; left: ResolvedFormula; right: ResolvedFormula }
+  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs'; args: ResolvedFormula[] };
+
 export interface StatementLine {
   /** Stable once created — never regenerated on rename/reorder/move, since formulas and aliases reference it. */
   id: string;
@@ -32,8 +41,10 @@ export interface StatementLine {
   numberFormat: LineNumberFormat;
   sign: LineSign;
   aggregation: LineAggregation;
-  /** Raw expression referencing other line ids, e.g. "revenue - cogs". Parsed by the modeling engine later. */
-  formula: string;
+  /** Resolved at authoring time (see lib/engine/resolve.ts) — refs point at a specific line id,
+   *  not a name, so a rename or reorder elsewhere in the schema never changes what this reads.
+   *  `null` means this line isn't calculated; its value comes from mapped historicals instead. */
+  formula: ResolvedFormula | null;
   aliases: string[];
 }
 
