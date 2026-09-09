@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Tag } from '@basis/design-system';
-import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine, StatementSection } from '../../data';
+import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { FormulaInput } from './FormulaInput';
 import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
@@ -13,11 +13,30 @@ const REQUIRED_OPTIONS = [
   { value: 'optional', label: 'Optional' },
 ];
 
+/** What the "Projection method" control in LineDetail commits — mirrors StatementLine.projection
+ *  plus the 'none' case, and carries a basisLineId only for the three methods that need one. */
+export type ProjectionSelection =
+  | { method: 'none' }
+  | { method: 'flat' }
+  | { method: 'growth' }
+  | { method: 'percent-of' | 'multiple-of' | 'days-of'; basisLineId: string };
+
+const PROJECTION_METHOD_OPTIONS: { value: 'none' | 'flat' | ProjectionMethod; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'flat', label: 'Flat (holds last actual)' },
+  { value: 'growth', label: 'Growth Rate' },
+  { value: 'percent-of', label: 'Percent of…' },
+  { value: 'multiple-of', label: 'Multiple of…' },
+  { value: 'days-of', label: 'Days of…' },
+];
+
 interface SectionEditorProps {
   section: StatementSection;
   isFirst: boolean;
   isLast: boolean;
   otherSections: { id: string; name: string }[];
+  allLines: { id: string; name: string }[];
+  drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onRename: (name: string) => void;
   onMoveUp: () => void;
@@ -25,15 +44,16 @@ interface SectionEditorProps {
   onDelete: () => void;
   onAddLine: () => void;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
+  onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
   onDeleteLine: (lineId: string) => void;
   onMoveLine: (lineId: string, direction: 'up' | 'down') => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, otherSections, nameIndex,
+  section, isFirst, isLast, otherSections, allLines, drivers, nameIndex,
   onRename, onMoveUp, onMoveDown, onDelete,
-  onAddLine, onUpdateLine, onDeleteLine, onMoveLine, onMoveLineToSection,
+  onAddLine, onUpdateLine, onSetProjection, onDeleteLine, onMoveLine, onMoveLineToSection,
 }: SectionEditorProps) {
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
 
@@ -103,7 +123,9 @@ export function SectionEditor({
       key: 'required',
       label: 'Required',
       width: 120,
-      canEdit: (row: StatementLine) => !isCalculated(row),
+      // A line with a projection method still needs a real mapped value for actual periods —
+      // only a genuine structural formula (no projection attached) locks this.
+      canEdit: (row: StatementLine) => !isCalculated(row) || Boolean(row.projection),
       render: (_: unknown, row: StatementLine) => {
         const meta = getRequiredMeta(row);
         return (
@@ -217,8 +239,11 @@ export function SectionEditor({
             <LineDetail
               line={row}
               otherSections={otherSections}
+              allLines={allLines}
+              drivers={drivers}
               nameIndex={nameIndex}
               onUpdateLine={onUpdateLine}
+              onSetProjection={onSetProjection}
               onMoveLineToSection={onMoveLineToSection}
             />
           )}
@@ -278,13 +303,49 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
 interface LineDetailProps {
   line: StatementLine;
   otherSections: { id: string; name: string }[];
+  allLines: { id: string; name: string }[];
+  drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
+  onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
 }
 
-function LineDetail({ line, otherSections, nameIndex, onUpdateLine, onMoveLineToSection }: LineDetailProps) {
+function methodOf(line: StatementLine): 'none' | 'flat' | ProjectionMethod {
+  return line.projection?.method ?? 'none';
+}
+
+function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is 'percent-of' | 'multiple-of' | 'days-of' {
+  return method === 'percent-of' || method === 'multiple-of' || method === 'days-of';
+}
+
+function LineDetail({ line, otherSections, allLines, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection }: LineDetailProps) {
   const [aliasDraft, setAliasDraft] = useState('');
+  // A method that needs a basis line isn't committed to the line until one is picked — held here
+  // locally in the meantime rather than writing a half-configured projection onto the line.
+  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'multiple-of' | 'days-of' | null>(null);
+
+  const currentMethod = pendingMethod ?? methodOf(line);
+  const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
+  const currentDriver = drivers.find((d) => d.id === currentDriverId);
+  // Blank while a new basis-needing method is pending (nothing chosen yet); otherwise reflects
+  // the already-committed driver's basis line, so reopening a configured line shows it correctly.
+  const basisLineId = pendingMethod ? '' : (currentDriver?.basisLineId ?? '');
+
+  function handleMethodChange(method: 'none' | 'flat' | ProjectionMethod) {
+    if (needsBasisLine(method)) {
+      setPendingMethod(method);
+      return;
+    }
+    setPendingMethod(null);
+    onSetProjection(line.id, method === 'none' ? { method: 'none' } : method === 'flat' ? { method: 'flat' } : { method: 'growth' });
+  }
+
+  function handleBasisLineChange(nextBasisLineId: string) {
+    if (!needsBasisLine(currentMethod) || !nextBasisLineId) return;
+    onSetProjection(line.id, { method: currentMethod, basisLineId: nextBasisLineId });
+    setPendingMethod(null);
+  }
 
   function addAlias() {
     const trimmed = aliasDraft.trim();
@@ -301,14 +362,57 @@ function LineDetail({ line, otherSections, nameIndex, onUpdateLine, onMoveLineTo
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 560 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+          Projection method
+        </span>
+        <Select
+          size="sm"
+          fullWidth={false}
+          style={{ width: 220 }}
+          options={PROJECTION_METHOD_OPTIONS}
+          value={currentMethod}
+          onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
+        />
+      </div>
+
+      {needsBasisLine(currentMethod) ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+            Basis line
+          </span>
+          <Select
+            size="sm"
+            fullWidth={false}
+            style={{ width: 220 }}
+            value={basisLineId}
+            options={[
+              { value: '', label: 'Select a line…' },
+              ...allLines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
+            ]}
+            onChange={(e) => handleBasisLineChange(e.target.value)}
+          />
+        </div>
+      ) : null}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
           Formula
         </span>
-        <FormulaInput
-          value={line.formula}
-          onChange={(formula) => onUpdateLine(line.id, { formula })}
-          nameIndex={nameIndex}
-          ownLineId={line.id}
-        />
+        {currentMethod === 'none' ? (
+          <FormulaInput
+            value={line.formula}
+            onChange={(formula) => onUpdateLine(line.id, { formula })}
+            nameIndex={nameIndex}
+            ownLineId={line.id}
+          />
+        ) : currentMethod === 'flat' ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Holds the last actual value.</span>
+        ) : pendingMethod ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Choose a basis line to generate the formula.</span>
+        ) : (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+            {formatFormula(line.formula, nameIndex)}
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>

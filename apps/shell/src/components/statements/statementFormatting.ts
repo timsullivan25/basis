@@ -21,9 +21,13 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
   absolute: { label: 'Absolute', tone: 'caution' },
 };
 
-/** Required/Optional is a manual choice, but a formula overrides it — the line is derived, not sourced. */
+/** Required/Optional is a manual choice, overridden by "Calculated" only for a genuine
+ *  structural formula (Gross Profit-style — never meant to be sourced). A line with a
+ *  `projection` method is still normally-sourced (it needs a real mapped value for every actual
+ *  period) even though it also carries a formula — that formula only ever governs its future
+ *  periods, so it keeps showing Required/Optional rather than being folded into "Calculated". */
 export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
-  if (isCalculated(line)) return { label: 'Calculated', tone: 'positive' };
+  if (isCalculated(line) && !line.projection) return { label: 'Calculated', tone: 'positive' };
   return line.required ? { label: 'Required', tone: 'caution' } : { label: 'Optional', tone: 'neutral' };
 }
 
