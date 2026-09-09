@@ -1,4 +1,5 @@
 import type { LineMapping, MatchMethod, StatementLine } from '../../../data';
+import { isCalculated } from '../../../lib/engine/resolve';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
 
@@ -29,7 +30,7 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
 
 /** Required and still unmapped — the red dot / save-blocking condition. */
 export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined): boolean {
-  if (target.formula.trim()) return false; // calculated lines are never "missing"
+  if (isCalculated(target)) return false; // calculated lines are never "missing"
   if (!target.required) return false;
   return !mapping || mapping.sourceLineIds.length === 0;
 }

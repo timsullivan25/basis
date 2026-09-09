@@ -1,5 +1,5 @@
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -14,5 +14,10 @@ export default defineConfig({
   },
   resolve: {
     dedupe: ['react', 'react-dom'],
+  },
+  test: {
+    // Every engine test target (parse/graph/evaluate) is plain TS with no DOM dependency.
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
   },
 })

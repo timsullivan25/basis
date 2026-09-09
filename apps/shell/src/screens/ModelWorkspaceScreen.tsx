@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Card, DataTable, Tabs } from '@basis/design-system';
+import { useEffect, useMemo, useState } from 'react';
+import { Card, DataTable, Tabs, Icon } from '@basis/design-system';
 import { modelRepository, statementSchemaRepository, type Company, type Model, type StatementLine, type StatementSchema } from '../data';
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
+import { isCalculated } from '../lib/engine/resolve';
+import { evaluateModel } from '../lib/engine/evaluate';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -10,9 +12,9 @@ interface ModelWorkspaceScreenProps {
 
 /**
  * The current model's live view — statement sub-tabs over a period grid reading the model's
- * persisted historicals. Purely today's model; no history/read-only mode (that's phase 07, once
- * Snapshot exists) and no computed/projected values (that's phase 03's engine) — calculated
- * lines render an em dash rather than a number that doesn't exist yet.
+ * persisted historicals plus every calculated line's live value from the engine. Purely today's
+ * model; no history/read-only mode (that's phase 07, once Snapshot exists) and no projected
+ * periods (that's phase 04) — every period here is one already in the model's timeline.
  */
 export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
@@ -33,6 +35,8 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       cancelled = true;
     };
   }, [company.id]);
+
+  const evaluation = useMemo(() => (schema && model ? evaluateModel(schema, model) : null), [schema, model]);
 
   if (model === undefined) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
@@ -74,7 +78,16 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       width: 110,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        const value = row.line.formula.trim() ? null : (model.historicals[row.line.id]?.[i] ?? null);
+        const calculated = isCalculated(row.line);
+        const value = calculated ? (evaluation?.getValue(row.line.id, i) ?? null) : (model.historicals[row.line.id]?.[i] ?? null);
+        const error = calculated ? evaluation?.getError(row.line.id) : undefined;
+        if (error) {
+          return (
+            <span title={error} style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
+              <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+            </span>
+          );
+        }
         return (
           <span
             style={{

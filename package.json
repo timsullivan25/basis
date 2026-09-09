@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @basis/shell dev",
-    "build": "pnpm --filter @basis/shell build"
+    "build": "pnpm --filter @basis/shell build",
+    "test": "pnpm --filter @basis/shell test"
   },
   "engines": {
     "node": ">=24"

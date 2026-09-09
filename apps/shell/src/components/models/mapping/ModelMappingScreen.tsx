@@ -17,6 +17,8 @@ import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisT
 import { matchStatementLines } from '../../../lib/matchStatementLines';
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
+import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
+import { evaluateModel } from '../../../lib/engine/evaluate';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
@@ -144,11 +146,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     setPendingSchemaId(null);
   }
 
+  const nameIndex = useMemo(() => buildNameIndex(statementSchema), [statementSchema]);
   const allLines = useMemo(
     () => statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))),
     [statementSchema],
   );
-  const mappableLines = useMemo(() => allLines.filter(({ line }) => !line.formula.trim()), [allLines]);
+  const mappableLines = useMemo(() => allLines.filter(({ line }) => !isCalculated(line)), [allLines]);
   const mappedCount = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) > 0).length;
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
@@ -157,6 +160,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const historicals = useMemo(
     () => (workbook ? resolveActuals(Object.values(mapping), workbook, timeline) : {}),
     [mapping, workbook, timeline],
+  );
+  // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
+  // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals.
+  const evaluation = useMemo(
+    () => evaluateModel(statementSchema, { timeline, historicals }),
+    [statementSchema, timeline, historicals],
   );
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
@@ -274,7 +283,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       label: '',
       width: 24,
       render: (_: unknown, row: { line?: StatementLine }) =>
-        row.line && !row.line.formula.trim() ? (
+        row.line && !isCalculated(row.line) ? (
           <Icon name={expandedLineId === row.line.id ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
         ) : null,
     },
@@ -303,7 +312,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             >
               {row.line.name}
             </span>
-            {row.line.formula.trim() ? <Icon name="function-square" size={11} color="var(--text-tertiary)" /> : null}
+            {isCalculated(row.line) ? <Icon name="function-square" size={11} color="var(--text-tertiary)" /> : null}
           </div>
         );
       },
@@ -314,10 +323,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 280,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (row.line.formula.trim()) {
+        if (isCalculated(row.line)) {
           return (
             <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-              {row.line.formula}
+              {formatFormula(row.line.formula, nameIndex)}
             </span>
           );
         }
@@ -358,7 +367,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 130,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (row.line.formula.trim()) {
+        if (isCalculated(row.line)) {
           return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Derived</span>;
         }
         const m = mapping[row.line.id];
@@ -385,8 +394,26 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 96,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (row.line.formula.trim()) {
-          return <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+        if (isCalculated(row.line)) {
+          const error = evaluation.getError(row.line.id);
+          if (error) {
+            return (
+              <span title={error} style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
+                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+              </span>
+            );
+          }
+          const calculatedValue = evaluation.getValue(row.line.id, i);
+          return (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+                color: calculatedValue === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
+              }}
+            >
+              {formatPeriodValue(calculatedValue)}
+            </span>
+          );
         }
         const value = historicals[row.line.id]?.[i] ?? null;
         return (
@@ -531,7 +558,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           maxHeight="calc(100vh - 420px)"
           expandedKey={expandedLineId}
           onRowClick={(row) => {
-            if (row.line && !row.line.formula.trim()) setExpandedLineId(expandedLineId === row.line.id ? null : row.line.id);
+            if (row.line && !isCalculated(row.line)) setExpandedLineId(expandedLineId === row.line.id ? null : row.line.id);
           }}
           renderDetail={(row: { line?: StatementLine; sectionName?: string }) =>
             row.line ? (

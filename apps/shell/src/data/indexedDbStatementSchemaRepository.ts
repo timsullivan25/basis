@@ -1,12 +1,29 @@
 import type { StatementLine, StatementSchema, StatementSchemaRepository, StatementSection } from './types';
 import { openBasisDb } from './db';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
+import { remapFormulaIds } from '../lib/engine/resolve';
 
-function cloneSection(section: StatementSection): StatementSection {
+/** Every line gets a fresh id on copy, recorded in `idMap` as it goes — formulas aren't
+ *  touched here, since a line's formula can reference a line defined later in the schema and
+ *  the full old-id -> new-id map needs to exist before any of them are remapped. */
+function cloneSectionShallow(section: StatementSection, idMap: Map<string, string>): StatementSection {
   return {
     id: crypto.randomUUID(),
     name: section.name,
-    lines: section.lines.map((l): StatementLine => ({ ...l, id: crypto.randomUUID() })),
+    lines: section.lines.map((l): StatementLine => {
+      const newId = crypto.randomUUID();
+      idMap.set(l.id, newId);
+      return { ...l, id: newId };
+    }),
+  };
+}
+
+/** Second pass, once every line in the copy has its final id — rewrites each formula's
+ *  resolved refs to point at the copy's ids instead of the source schema's. */
+function remapSectionFormulas(section: StatementSection, idMap: Map<string, string>): StatementSection {
+  return {
+    ...section,
+    lines: section.lines.map((l) => ({ ...l, formula: l.formula ? remapFormulaIds(l.formula, idMap) : null })),
   };
 }
 
@@ -46,12 +63,14 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     const source = await db.get('statementSchema', id);
     if (!source) throw new Error(`Statement schema not found: ${id}`);
 
+    const idMap = new Map<string, string>();
+    const clonedSections = source.sections.map((s) => cloneSectionShallow(s, idMap));
     const copy: StatementSchema = {
       id: crypto.randomUUID(),
       name,
       copiedFromSchemaId: source.id,
       createdAt: new Date().toISOString(),
-      sections: source.sections.map(cloneSection),
+      sections: clonedSections.map((s) => remapSectionFormulas(s, idMap)),
     };
     await db.add('statementSchema', copy);
     return copy;

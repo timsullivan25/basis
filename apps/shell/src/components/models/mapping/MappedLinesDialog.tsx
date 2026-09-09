@@ -1,5 +1,6 @@
 import { Dialog, Icon } from '@basis/design-system';
 import type { LineMapping, StatementLine, StatementSchema } from '../../../data';
+import { isCalculated } from '../../../lib/engine/resolve';
 import { isMissingRequired } from './mappingFormatting';
 
 const cellStyle = { padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)' } as const;
@@ -12,7 +13,7 @@ const headStyle = {
 };
 
 function StatusCell({ line, mapping }: { line: StatementLine; mapping: LineMapping | undefined }) {
-  if (line.formula.trim()) {
+  if (isCalculated(line)) {
     return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Calculated</span>;
   }
   if ((mapping?.sourceLineIds.length ?? 0) > 0) {
