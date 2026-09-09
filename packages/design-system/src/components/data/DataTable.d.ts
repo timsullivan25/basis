@@ -20,6 +20,10 @@ export interface DataTableColumn {
   renderEdit?: (value: any, row: any) => React.ReactNode;
   /** Gate editability per row (e.g. a derived value shouldn't be clickable). Defaults to true whenever renderEdit is set. */
   canEdit?: (row: any) => boolean;
+  /** Static background for the whole column (header + every cell) — e.g. a subtle tint marking
+   *  every projected-period column in a period grid. A row's own `rowStyle` background still
+   *  wins over this where both apply. */
+  background?: string;
 }
 
 /**

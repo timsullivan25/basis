@@ -86,20 +86,23 @@ export function SectionEditor({
         // A stored formula is always syntactically valid (it was compiled before being saved) —
         // the one way it can go stale is a reference to a line deleted since, so that's the
         // only thing worth flagging here rather than re-validating text that no longer exists.
+        // Checked regardless of projection — a broken reference matters whether the formula was
+        // hand-written or generated, but the informational sigma icon below is deliberately not:
+        // it's only for a genuine structural formula, since a projection-carrying line already
+        // shows its (non-"Calculated") status in the Required column and its formula in the
+        // expanded row detail — showing the icon on every projected line too would just be noise.
         const dangling = hasFormula ? collectRefIds(row.formula!).filter((id) => !nameIndex.describe(id)) : [];
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
             {row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
-            {hasFormula ? (
-              dangling.length > 0 ? (
-                <span title="References a line that no longer exists">
-                  <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
-                </span>
-              ) : (
-                <span title={`Formula: ${formatFormula(row.formula, nameIndex)}`}>
-                  <Icon name="sigma" size={12} color="var(--text-tertiary)" />
-                </span>
-              )
+            {dangling.length > 0 ? (
+              <span title="References a line that no longer exists">
+                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+              </span>
+            ) : hasFormula && !row.projection ? (
+              <span title={`Formula: ${formatFormula(row.formula, nameIndex)}`}>
+                <Icon name="sigma" size={12} color="var(--text-tertiary)" />
+              </span>
             ) : null}
             {row.aliases.length > 0 ? (
               <span

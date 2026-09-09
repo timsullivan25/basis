@@ -1,4 +1,4 @@
-import type { Model, PeriodType, ResolvedFormula, StatementLine, StatementSchema, Timeline } from '../../data';
+import type { DriverDefinition, Model, PeriodType, ResolvedFormula, StatementLine, StatementSchema, Timeline } from '../../data';
 import { buildLineGraph } from './graph';
 
 const TOLERANCE = 1e-6;
@@ -63,6 +63,11 @@ export interface EvaluationResult {
   /** Set only for a cyclic group of lines whose fixed-point iteration didn't converge — a
    *  correctness bug to surface as an error, per the engine's staleness design, not a badge. */
   getError(lineId: string): string | undefined;
+  /** The value a driverRef actually resolves to at this period — the stored value if one was
+   *  entered, otherwise the same default `evalNode`'s driverRef case falls back to (0% for
+   *  growth; the last actual period's own implied ratio for percent-of/days-of). Lets the
+   *  drivers panel show what's actually being assumed instead of a blank when nothing's typed. */
+  getDriverValue(driverId: string, periodIndex: number): number | null;
 }
 
 /** Only the fields evaluateModel actually reads — a saved Model satisfies this, but so does an
@@ -86,11 +91,22 @@ function finite(v: number): number | null {
 export function evaluateModel(schema: StatementSchema, model: EvaluationInput): EvaluationResult {
   const graph = buildLineGraph(schema);
   const linesById = new Map<string, StatementLine>(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l]));
+  const driversById = new Map<string, DriverDefinition>((schema.drivers ?? []).map((d) => [d.id, d]));
   const periodCount = model.timeline.length;
 
   const memo = new Map<string, Map<number, number | null>>();
   for (const id of graph.lineIds) memo.set(id, new Map());
   const errors = new Map<string, string>();
+
+  // The last period that isn't a projection — periods are always built/extended so actuals form
+  // a prefix and projected ones a suffix, but this scans defensively rather than assuming that.
+  let lastActualIndex = -1;
+  for (let i = model.timeline.length - 1; i >= 0; i--) {
+    if (model.timeline[i].kind === 'actual') {
+      lastActualIndex = i;
+      break;
+    }
+  }
 
   function historicalValue(lineId: string, periodIndex: number): number | null {
     return model.historicals[lineId]?.[periodIndex] ?? null;
@@ -105,6 +121,28 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
     return null;
   }
 
+  /** What an unfilled driver period falls back to: 0% growth (a flat carry-forward, same
+   *  assumption 'flat' itself makes) or, for percent-of/days-of, whatever ratio the last actual
+   *  period actually implies — an unfilled projection continues the recent trend rather than
+   *  going silently blank. Reads lastActualIndex, always strictly before any period a driver
+   *  default is ever needed for, so both lines are guaranteed already resolved in memo. */
+  function defaultDriverValue(driver: DriverDefinition): number | null {
+    if (driver.method === 'growth') return 0;
+    if (lastActualIndex < 0 || !driver.basisLineId) return null;
+    const targetValue = readLine(driver.targetLineId, lastActualIndex, undefined);
+    const basisValue = readLine(driver.basisLineId, lastActualIndex, undefined);
+    if (targetValue === null || basisValue === null || basisValue === 0) return null;
+    const ratio = targetValue / basisValue;
+    return driver.method === 'days-of' ? ratio * 365 : ratio;
+  }
+
+  function driverValue(driverId: string, periodIndex: number): number | null {
+    const explicit = model.driverValues?.[driverId]?.[periodIndex] ?? null;
+    if (explicit !== null) return explicit;
+    const driver = driversById.get(driverId);
+    return driver ? defaultDriverValue(driver) : null;
+  }
+
   function evalNode(
     node: ResolvedFormula,
     periodIndex: number,
@@ -112,7 +150,7 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
   ): number | null {
     if (node.kind === 'num') return node.value;
     if (node.kind === 'ref') return readLine(node.lineId, periodIndex, cycleValues);
-    if (node.kind === 'driverRef') return model.driverValues?.[node.driverId]?.[periodIndex] ?? null;
+    if (node.kind === 'driverRef') return driverValue(node.driverId, periodIndex);
     if (node.kind === 'neg') {
       const v = evalNode(node.arg, periodIndex, cycleValues);
       return v === null ? null : -v;
@@ -212,5 +250,6 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
   return {
     getValue: (lineId, periodIndex) => memo.get(lineId)?.get(periodIndex) ?? null,
     getError: (lineId) => errors.get(lineId),
+    getDriverValue: (driverId, periodIndex) => driverValue(driverId, periodIndex),
   };
 }

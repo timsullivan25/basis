@@ -322,8 +322,8 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             >
               {row.line.name}
             </span>
-            {isCalculated(row.line) ? (
-              <span title={`Formula (fallback when unmapped): ${formatFormula(row.line.formula, nameIndex)}`}>
+            {isCalculated(row.line) && !row.line.projection ? (
+              <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="function-square" size={11} color="var(--text-tertiary)" />
               </span>
             ) : null}
@@ -339,17 +339,17 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         if (!row.line) return null;
         const m = mapping[row.line.id];
         const empty = !m || m.sourceLineIds.length === 0;
-        // A structural formula (no projection) is never expected to be mapped — "Not mapped" is
-        // just a neutral fact for it, not the caution color a genuinely-missing line gets.
+        // A structural formula (no projection) is never expected to be mapped — an empty cell
+        // for it is a non-event, not worth a "Not mapped" label competing for attention with a
+        // genuinely missing line.
         const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
-        const summary = empty
-          ? 'Not mapped'
-          : m.sourceLineIds.map((id) => workbook.lines.find((source) => source.id === id)?.name).join('  +  ');
+        if (empty && !expectsMapping) return null;
+        const summary = empty ? 'Not mapped' : m.sourceLineIds.map((id) => workbook.lines.find((source) => source.id === id)?.name).join('  +  ');
         return (
           <span
             style={{
               fontSize: 'var(--text-xs)',
-              color: !empty ? 'var(--text-body)' : expectsMapping ? 'var(--text-caution)' : 'var(--text-tertiary)',
+              color: empty ? 'var(--text-caution)' : 'var(--text-body)',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}
           >
@@ -384,12 +384,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
         const m = mapping[row.line.id];
-        // No real match, and this line never needed one — a structural formula's fallback,
-        // not a genuinely unmapped line, so "Derived" instead of the caution "Unmapped" badge.
+        // No real match, and this line never needed one — a structural formula's fallback, not
+        // a genuinely unmapped line, so blank rather than the caution "Unmapped" badge.
         const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
-        if ((!m || m.method === 'none') && !expectsMapping) {
-          return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Derived</span>;
-        }
+        if ((!m || m.method === 'none') && !expectsMapping) return null;
         if (!m) return null;
         const meta = MATCH_METHOD_META[m.method];
         return (
@@ -422,19 +420,17 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           );
         }
         // evaluation already applies the mapped-value-wins-else-formula priority uniformly, so
-        // this is correct for every line — but the color still distinguishes a real mapped value
-        // (body) from one that only exists because a formula filled in for a missing mapping
-        // (tertiary), the same visual cue a calculated line always had here.
+        // this is correct for every line — status/badge columns already say whether a line is
+        // calculated or mapped, so the value itself doesn't need a second, redundant color cue.
         const value = evaluation.getValue(row.line.id, i);
-        const mapped = historicals[row.line.id]?.[i] != null;
         return (
           <span
             style={{
               fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-              color: value === null ? 'var(--text-disabled)' : mapped ? 'var(--text-body)' : 'var(--text-tertiary)',
+              color: value === null ? 'var(--text-disabled)' : 'var(--text-body)',
             }}
           >
-            {formatPeriodValue(value)}
+            {formatPeriodValue(value, row.line.numberFormat)}
           </span>
         );
       },

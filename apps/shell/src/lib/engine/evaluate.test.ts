@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateModel } from './evaluate';
-import type { Model, ResolvedFormula, StatementLine, StatementSchema, TimelinePeriod } from '../../data';
+import type { DriverDefinition, Model, ProjectionMethod, ResolvedFormula, StatementLine, StatementSchema, TimelinePeriod } from '../../data';
 
 function line(id: string, formula: ResolvedFormula | null = null): StatementLine {
   return {
@@ -33,8 +33,12 @@ function driverRef(driverId: string): ResolvedFormula {
   return { kind: 'driverRef', driverId };
 }
 
-function schema(lines: StatementLine[]): StatementSchema {
-  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers: [] };
+function schema(lines: StatementLine[], drivers: DriverDefinition[] = []): StatementSchema {
+  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers };
+}
+
+function driver(id: string, method: ProjectionMethod, targetLineId: string, basisLineId?: string): DriverDefinition {
+  return { id, name: id, unit: method === 'days-of' ? 'days' : '%', targetLineId, method, basisLineId };
 }
 
 function modelWithTimeline(
@@ -344,5 +348,69 @@ describe('driverRef and the mapped-value-first priority', () => {
     const m = model(1, { revenue: [365] }, { dso: [30] });
     const result = evaluateModel(s, m);
     expect(result.getValue('ar', 0)).toBeCloseTo(30, 6); // 30/365 * 365
+  });
+});
+
+describe('driver defaults (no explicit value entered for a period)', () => {
+  const mixedTimeline: TimelinePeriod[] = [
+    { id: 'a0', type: 'FY', endDate: '2024-12-31', label: 'FY2024', kind: 'actual' },
+    { id: 'p0', type: 'FY', endDate: '2025-12-31', label: 'FY2025', kind: 'projected' },
+  ];
+
+  it('growth defaults to 0% (a flat carry-forward) when nothing is entered', () => {
+    const s = schema(
+      [line('revenue', bin('*', call('priorPeriod', [ref('revenue')]), bin('+', num(1), driverRef('g'))))],
+      [driver('g', 'growth', 'revenue')],
+    );
+    const m = modelWithTimeline(mixedTimeline, { revenue: [100] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('g', 1)).toBe(0);
+    expect(result.getValue('revenue', 1)).toBe(100);
+  });
+
+  it("percent-of defaults to the last actual period's implied ratio", () => {
+    const s = schema(
+      [line('revenue'), line('cogs', bin('*', ref('revenue'), driverRef('pct')))],
+      [driver('pct', 'percent-of', 'cogs', 'revenue')],
+    );
+    // Last actual: cogs=30, revenue=100 -> implied 30%.
+    const m = modelWithTimeline(mixedTimeline, { revenue: [100, 200], cogs: [30] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('pct', 1)).toBeCloseTo(0.3, 6);
+    expect(result.getValue('cogs', 1)).toBeCloseTo(60, 6); // 200 * 0.3
+  });
+
+  it("days-of defaults to the last actual period's implied day count", () => {
+    const s = schema(
+      [line('revenue'), line('ar', bin('*', bin('/', driverRef('dso'), num(365)), ref('revenue')))],
+      [driver('dso', 'days-of', 'ar', 'revenue')],
+    );
+    // Last actual: ar=30, revenue=365 -> implied 30 days.
+    const m = modelWithTimeline(mixedTimeline, { revenue: [365, 730], ar: [30] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('dso', 1)).toBeCloseTo(30, 6);
+    expect(result.getValue('ar', 1)).toBeCloseTo(60, 6); // (30/365) * 730
+  });
+
+  it('an explicit value still overrides the computed default', () => {
+    const s = schema(
+      [line('revenue', bin('*', call('priorPeriod', [ref('revenue')]), bin('+', num(1), driverRef('g'))))],
+      [driver('g', 'growth', 'revenue')],
+    );
+    const m = modelWithTimeline(mixedTimeline, { revenue: [100] }, { g: [null, 0.2] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('g', 1)).toBeCloseTo(0.2, 6);
+    expect(result.getValue('revenue', 1)).toBeCloseTo(120, 6);
+  });
+
+  it('percent-of/days-of default to null when there is no actual period to imply a ratio from', () => {
+    const allProjected: TimelinePeriod[] = [{ id: 'p0', type: 'FY', endDate: '2025-12-31', label: 'FY2025', kind: 'projected' }];
+    const s = schema(
+      [line('revenue'), line('cogs', bin('*', ref('revenue'), driverRef('pct')))],
+      [driver('pct', 'percent-of', 'cogs', 'revenue')],
+    );
+    const m = modelWithTimeline(allProjected, {});
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('pct', 0)).toBeNull();
   });
 });

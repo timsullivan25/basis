@@ -1,4 +1,4 @@
-import type { LineMapping, MatchMethod, StatementLine } from '../../../data';
+import type { LineMapping, LineNumberFormat, MatchMethod, StatementLine } from '../../../data';
 import { isCalculated } from '../../../lib/engine/resolve';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
@@ -15,10 +15,14 @@ export const MATCH_METHOD_META: Record<MatchMethod, { label: string; tone: Badge
 
 export const REVIEW_THRESHOLD = 0.8;
 
-export function formatPeriodValue(value: number | null): string {
+/** Renders per the line's numberFormat — 'percentage' scales by 100 and appends "%", 'multiple'
+ *  appends "x"; plain 'number' (the default) is unchanged from before this had a format at all. */
+export function formatPeriodValue(value: number | null, numberFormat: LineNumberFormat = 'number'): string {
   if (value === null) return '—';
-  const abs = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return (value < 0 ? '−' : '') + abs;
+  const scaled = numberFormat === 'percentage' ? value * 100 : value;
+  const abs = Math.abs(scaled).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const suffix = numberFormat === 'percentage' ? '%' : numberFormat === 'multiple' ? 'x' : '';
+  return (scaled < 0 ? '−' : '') + abs + suffix;
 }
 
 /** Low-confidence, not-yet-approved match — the purple dot / review filter condition. */

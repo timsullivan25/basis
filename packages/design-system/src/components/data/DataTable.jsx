@@ -54,7 +54,7 @@ export function DataTable({
                     fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)',
                     letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase',
                     color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    background: 'var(--surface-table-head)', borderBottom: '1px solid var(--border-default)',
+                    background: c.background || 'var(--surface-table-head)', borderBottom: '1px solid var(--border-default)',
                     borderRight: stickyLeft ? '1px solid var(--border-default)' : undefined,
                     cursor: c.sortable === false ? 'default' : 'pointer', userSelect: 'none',
                   }}
@@ -138,6 +138,7 @@ export function DataTable({
                           color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
                           whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
                           cursor: editable && !editing ? 'text' : undefined,
+                          ...(c.background ? { background: c.background } : null),
                           ...(stickyLeft ? { position: 'sticky', left: 0, zIndex: 1, background: rowBg, borderRight: '1px solid var(--border-default)' } : null),
                           ...rowOverrides,
                         }}

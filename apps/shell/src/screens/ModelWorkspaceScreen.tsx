@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, DataTable, Icon, Input, SegmentedControl, Tabs } from '@basis/design-system';
+import { Button, Card, DataTable, Dialog, Icon, Input, SegmentedControl, Tabs } from '@basis/design-system';
 import {
   modelRepository,
   statementSchemaRepository,
@@ -33,13 +33,15 @@ function fromDisplayValue(display: string, unit: string): number | null {
   if (Number.isNaN(n)) return null;
   return unit === '%' ? n / 100 : n;
 }
-function formatDriverValue(stored: number | null, unit: string): string {
-  if (stored === null) return '—';
-  return unit === '%' ? `${(stored * 100).toFixed(1)}%` : `${stored} days`;
+function formatDriverValue(value: number | null, unit: string): string {
+  if (value === null) return '—';
+  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value} days`;
 }
 
 /** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
- *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. */
+ *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. Always
+ *  seeded from the raw stored value (blank if unset), never the computed default — editing means
+ *  setting an override, not accepting-then-resaving whatever was being assumed. */
 function DriverValueInput({ stored, unit, onCommit }: { stored: number | null; unit: string; onCommit: (value: number | null) => void }) {
   const [text, setText] = useState(() => toDisplayValue(stored, unit));
   return (
@@ -66,7 +68,10 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [tab, setTab] = useState('all');
-  const [horizonInput, setHorizonInput] = useState('4');
+  const [horizonInput, setHorizonInput] = useState('0');
+  // Set only while confirming a reduction in projected periods — growing needs no confirmation
+  // (purely additive), but shrinking permanently drops driver values entered for the removed tail.
+  const [shrinkConfirm, setShrinkConfirm] = useState<{ nextCount: number } | null>(null);
   const [recalcMode, setRecalcMode] = useState<'auto' | 'manual'>('auto');
   // Frozen the instant manual mode is entered (or Recalculate is pressed) — driver edits still
   // save immediately either way, but in manual mode `evaluation` keeps reading this snapshot
@@ -88,6 +93,16 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     };
   }, [company.id]);
 
+  const currentProjectedCount = model ? model.timeline.filter((p) => p.kind === 'projected').length : 0;
+
+  // Resyncs the horizon field when a different model loads (initial load / company switch) —
+  // our own extend/shrink actions explicitly set this themselves right after, so this effect
+  // firing only on `model?.id` (not on every timeline edit) never fights with that.
+  useEffect(() => {
+    setHorizonInput(String(currentProjectedCount));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.id]);
+
   const evaluatedModel = recalcMode === 'auto' ? model : (manualSnapshot ?? model);
   const evaluation = useMemo(
     () => (schema && evaluatedModel ? evaluateModel(schema, evaluatedModel) : null),
@@ -106,12 +121,42 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     setModel(updated);
   }
 
-  async function extendHorizon() {
+  async function commitHorizonChange() {
     if (!model) return;
-    const count = Math.floor(Number(horizonInput));
-    if (!Number.isFinite(count) || count <= 0) return;
-    const updated = await modelRepository.update(model.id, { timeline: extendTimeline(model.timeline, count) });
+    const parsed = Math.floor(Number(horizonInput));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setHorizonInput(String(currentProjectedCount));
+      return;
+    }
+    if (parsed === currentProjectedCount) return;
+    if (parsed > currentProjectedCount) {
+      const updated = await modelRepository.update(model.id, {
+        timeline: extendTimeline(model.timeline, parsed - currentProjectedCount),
+      });
+      setModel(updated);
+      return;
+    }
+    // Shrinking is destructive to anything entered for the dropped periods — confirm first.
+    setShrinkConfirm({ nextCount: parsed });
+  }
+
+  async function confirmShrink() {
+    if (!model || !shrinkConfirm) return;
+    const actualCount = model.timeline.length - currentProjectedCount;
+    const newLength = actualCount + shrinkConfirm.nextCount;
+    const nextTimeline = model.timeline.slice(0, newLength);
+    const nextDriverValues = Object.fromEntries(
+      Object.entries(model.driverValues ?? {}).map(([id, values]) => [id, values.slice(0, newLength)]),
+    );
+    const updated = await modelRepository.update(model.id, { timeline: nextTimeline, driverValues: nextDriverValues });
     setModel(updated);
+    setHorizonInput(String(shrinkConfirm.nextCount));
+    setShrinkConfirm(null);
+  }
+
+  function cancelShrink() {
+    setHorizonInput(String(currentProjectedCount));
+    setShrinkConfirm(null);
   }
 
   function handleRecalcModeChange(mode: 'auto' | 'manual') {
@@ -161,6 +206,9 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       label: period.label,
       numeric: true,
       width: 110,
+      // A subtle tint marking every projected column, so the actual/projected boundary reads at
+      // a glance without needing a second color on the values themselves.
+      background: period.kind === 'projected' ? 'var(--surface-sunken)' : undefined,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
         const error = evaluation?.getError(row.line.id);
@@ -172,18 +220,17 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
           );
         }
         // evaluation already applies mapped-value-wins-else-formula for every line uniformly —
-        // the color still distinguishes a real mapped value (body) from one only present
-        // because a formula (a projection, or a genuinely structural one) filled in for it.
+        // status/badge columns elsewhere already say whether a line is calculated, so the value
+        // itself doesn't need a second color cue on top of that.
         const value = evaluation?.getValue(row.line.id, i) ?? null;
-        const mapped = model.historicals[row.line.id]?.[i] != null;
         return (
           <span
             style={{
               fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-              color: value === null ? 'var(--text-disabled)' : mapped ? 'var(--text-body)' : 'var(--text-tertiary)',
+              color: value === null ? 'var(--text-disabled)' : 'var(--text-body)',
             }}
           >
-            {formatPeriodValue(value)}
+            {formatPeriodValue(value, row.line.numberFormat)}
           </span>
         );
       },
@@ -212,11 +259,26 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       label: period.label,
       numeric: true,
       width: 110,
-      render: (_: unknown, row: DriverDefinition) => (
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-body)' }}>
-          {formatDriverValue(driverValues[row.id]?.[index] ?? null, row.unit)}
-        </span>
-      ),
+      render: (_: unknown, row: DriverDefinition) => {
+        const stored = driverValues[row.id]?.[index] ?? null;
+        const effective = evaluation?.getDriverValue(row.id, index) ?? null;
+        // No explicit value entered, but a default was computed (0% growth, or the last actual
+        // period's own implied ratio) — shown, not left blank, but italicized the same way a
+        // metric row already is elsewhere in this app, to mark it as an assumption rather than
+        // something actually typed.
+        const isDefault = stored === null && effective !== null;
+        return (
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+              fontStyle: isDefault ? 'italic' : 'normal',
+              color: effective === null ? 'var(--text-disabled)' : isDefault ? 'var(--text-tertiary)' : 'var(--text-body)',
+            }}
+          >
+            {formatDriverValue(effective, row.unit)}
+          </span>
+        );
+      },
       renderEdit: (_: unknown, row: DriverDefinition) => (
         <DriverValueInput
           stored={driverValues[row.id]?.[index] ?? null}
@@ -241,20 +303,17 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Project forward</span>
+              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
               <Input
                 size="sm"
                 mono
                 type="number"
                 value={horizonInput}
                 onChange={(e) => setHorizonInput(e.target.value)}
+                onBlur={commitHorizonChange}
                 fullWidth={false}
                 style={{ width: 56 }}
               />
-              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>periods</span>
-              <Button size="sm" variant="secondary" onClick={extendHorizon}>
-                Extend
-              </Button>
             </div>
             <SegmentedControl
               size="sm"
@@ -279,7 +338,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
           </div>
         ) : projectedPeriods.length === 0 ? (
           <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-            No projected periods yet — extend the timeline above to start entering driver assumptions.
+            No projected periods yet — set how many above to start entering driver assumptions.
           </div>
         ) : (
           <DataTable columns={driverColumns} rows={schema.drivers} rowKey="id" dense stickyFirstColumn />
@@ -300,6 +359,27 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
           maxHeight="calc(100vh - 260px)"
         />
       </Card>
+
+      <Dialog
+        open={shrinkConfirm !== null}
+        onClose={cancelShrink}
+        icon="alert-triangle"
+        title="Reduce projected periods?"
+        subtitle={model.name}
+        footer={
+          <>
+            <Button onClick={cancelShrink}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={confirmShrink}>
+              Remove periods
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          Reducing from {currentProjectedCount} to {shrinkConfirm?.nextCount} projected periods permanently removes any driver
+          assumptions entered for the dropped periods. This cannot be undone.
+        </p>
+      </Dialog>
     </div>
   );
 }
