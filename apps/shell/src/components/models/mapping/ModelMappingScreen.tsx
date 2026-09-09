@@ -18,6 +18,7 @@ import { matchStatementLines } from '../../../lib/matchStatementLines';
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
+import { evaluateModel } from '../../../lib/engine/evaluate';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
@@ -159,6 +160,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const historicals = useMemo(
     () => (workbook ? resolveActuals(Object.values(mapping), workbook, timeline) : {}),
     [mapping, workbook, timeline],
+  );
+  // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
+  // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals.
+  const evaluation = useMemo(
+    () => evaluateModel(statementSchema, { timeline, historicals }),
+    [statementSchema, timeline, historicals],
   );
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
@@ -388,7 +395,25 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
         if (isCalculated(row.line)) {
-          return <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+          const error = evaluation.getError(row.line.id);
+          if (error) {
+            return (
+              <span title={error} style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
+                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
+              </span>
+            );
+          }
+          const calculatedValue = evaluation.getValue(row.line.id, i);
+          return (
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+                color: calculatedValue === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
+              }}
+            >
+              {formatPeriodValue(calculatedValue)}
+            </span>
+          );
         }
         const value = historicals[row.line.id]?.[i] ?? null;
         return (

@@ -13,6 +13,12 @@ export interface EvaluationResult {
   getError(lineId: string): string | undefined;
 }
 
+/** Only the two fields evaluateModel actually reads — a saved Model satisfies this, but so does
+ *  an in-progress mapping-screen draft that hasn't been saved as a Model yet (or, later, a
+ *  projected timeline whose non-calculated periods are sourced from drivers instead of a
+ *  mapped workbook — the evaluator doesn't care where a period's raw inputs came from). */
+export type EvaluationInput = Pick<Model, 'timeline' | 'historicals'>;
+
 /** Non-finite (NaN/Infinity, e.g. from a division by zero elsewhere or 0^-1) collapses to null
  *  rather than leaking into the UI — a modeling engine should show a blank, not "NaN". */
 function finite(v: number): number | null {
@@ -26,7 +32,7 @@ function finite(v: number): number | null {
  * each (lineId, periodIndex) result. A group of mutually-dependent lines (a cycle) is solved
  * together per period via Gauss-Seidel fixed-point iteration instead of a single pass.
  */
-export function evaluateModel(schema: StatementSchema, model: Model): EvaluationResult {
+export function evaluateModel(schema: StatementSchema, model: EvaluationInput): EvaluationResult {
   const graph = buildLineGraph(schema);
   const linesById = new Map<string, StatementLine>(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l]));
   const periodCount = model.timeline.length;
