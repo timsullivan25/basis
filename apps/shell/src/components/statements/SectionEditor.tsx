@@ -14,19 +14,25 @@ const REQUIRED_OPTIONS = [
 ];
 
 /** What the "Projection method" control in LineDetail commits — mirrors StatementLine.projection
- *  plus the 'none' case, and carries a basisLineId only for the three methods that need one. */
+ *  plus the 'none' case, and carries a basisLineId only for the two methods that need one. */
 export type ProjectionSelection =
   | { method: 'none' }
   | { method: 'flat' }
   | { method: 'growth' }
-  | { method: 'percent-of' | 'multiple-of' | 'days-of'; basisLineId: string };
+  | { method: 'percent-of' | 'days-of'; basisLineId: string };
+
+/** A statement section's lines, for populating a basis-line picker grouped the same way the
+ *  statement itself is organized — the same reason a long <Select> benefits from <optgroup>. */
+export interface LineGroup {
+  sectionName: string;
+  lines: { id: string; name: string }[];
+}
 
 const PROJECTION_METHOD_OPTIONS: { value: 'none' | 'flat' | ProjectionMethod; label: string }[] = [
   { value: 'none', label: 'None' },
   { value: 'flat', label: 'Flat (holds last actual)' },
   { value: 'growth', label: 'Growth Rate' },
   { value: 'percent-of', label: 'Percent of…' },
-  { value: 'multiple-of', label: 'Multiple of…' },
   { value: 'days-of', label: 'Days of…' },
 ];
 
@@ -35,7 +41,7 @@ interface SectionEditorProps {
   isFirst: boolean;
   isLast: boolean;
   otherSections: { id: string; name: string }[];
-  allLines: { id: string; name: string }[];
+  lineGroups: LineGroup[];
   drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onRename: (name: string) => void;
@@ -51,7 +57,7 @@ interface SectionEditorProps {
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, otherSections, allLines, drivers, nameIndex,
+  section, isFirst, isLast, otherSections, lineGroups, drivers, nameIndex,
   onRename, onMoveUp, onMoveDown, onDelete,
   onAddLine, onUpdateLine, onSetProjection, onDeleteLine, onMoveLine, onMoveLineToSection,
 }: SectionEditorProps) {
@@ -239,7 +245,7 @@ export function SectionEditor({
             <LineDetail
               line={row}
               otherSections={otherSections}
-              allLines={allLines}
+              lineGroups={lineGroups}
               drivers={drivers}
               nameIndex={nameIndex}
               onUpdateLine={onUpdateLine}
@@ -303,7 +309,7 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
 interface LineDetailProps {
   line: StatementLine;
   otherSections: { id: string; name: string }[];
-  allLines: { id: string; name: string }[];
+  lineGroups: LineGroup[];
   drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
@@ -315,15 +321,15 @@ function methodOf(line: StatementLine): 'none' | 'flat' | ProjectionMethod {
   return line.projection?.method ?? 'none';
 }
 
-function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is 'percent-of' | 'multiple-of' | 'days-of' {
-  return method === 'percent-of' || method === 'multiple-of' || method === 'days-of';
+function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is 'percent-of' | 'days-of' {
+  return method === 'percent-of' || method === 'days-of';
 }
 
-function LineDetail({ line, otherSections, allLines, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection }: LineDetailProps) {
+function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection }: LineDetailProps) {
   const [aliasDraft, setAliasDraft] = useState('');
   // A method that needs a basis line isn't committed to the line until one is picked — held here
   // locally in the meantime rather than writing a half-configured projection onto the line.
-  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'multiple-of' | 'days-of' | null>(null);
+  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
 
   const currentMethod = pendingMethod ?? methodOf(line);
   const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
@@ -360,38 +366,43 @@ function LineDetail({ line, otherSections, allLines, drivers, nameIndex, onUpdat
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 560 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-          Projection method
-        </span>
-        <Select
-          size="sm"
-          fullWidth={false}
-          style={{ width: 220 }}
-          options={PROJECTION_METHOD_OPTIONS}
-          value={currentMethod}
-          onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
-        />
-      </div>
-
-      {needsBasisLine(currentMethod) ? (
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-6)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
           <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Basis line
+            Projection method
           </span>
           <Select
             size="sm"
             fullWidth={false}
             style={{ width: 220 }}
-            value={basisLineId}
-            options={[
-              { value: '', label: 'Select a line…' },
-              ...allLines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
-            ]}
-            onChange={(e) => handleBasisLineChange(e.target.value)}
+            options={PROJECTION_METHOD_OPTIONS}
+            value={currentMethod}
+            onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
           />
         </div>
-      ) : null}
+
+        {needsBasisLine(currentMethod) ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              Basis line
+            </span>
+            <Select
+              size="sm"
+              fullWidth={false}
+              style={{ width: 220 }}
+              value={basisLineId}
+              options={[{ value: '', label: 'Select a line…' }]}
+              groups={lineGroups
+                .map((g) => ({
+                  label: g.sectionName,
+                  options: g.lines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
+                }))
+                .filter((g) => g.options.length > 0)}
+              onChange={(e) => handleBasisLineChange(e.target.value)}
+            />
+          </div>
+        ) : null}
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>

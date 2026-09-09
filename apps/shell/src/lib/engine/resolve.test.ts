@@ -328,7 +328,7 @@ describe('projection-method formula builders', () => {
     });
   });
 
-  it('buildRatioFormula is basis * driver — shared by percent-of and multiple-of', () => {
+  it('buildRatioFormula is basis * driver — percent-of', () => {
     expect(buildRatioFormula('revenue', 'd1')).toEqual({
       kind: 'bin',
       op: '*',

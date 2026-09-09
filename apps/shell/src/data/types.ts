@@ -36,10 +36,10 @@ export type ResolvedFormula =
 
 /** How a line's PROJECTED periods derive a value when no mapped source exists for them (an
  *  actual period always prefers its mapped value regardless of this — see StatementLine.formula
- *  and lib/engine/evaluate.ts's computeLine). 'growth'/'percent-of'/'multiple-of'/'days-of' each
- *  generate a formula that reads a DriverDefinition's per-period value via a driverRef node;
- *  'flat' is a pure carry-forward (priorPeriod(self)) and needs no driver at all. */
-export type ProjectionMethod = 'growth' | 'percent-of' | 'multiple-of' | 'days-of';
+ *  and lib/engine/evaluate.ts's computeLine). 'growth'/'percent-of'/'days-of' each generate a
+ *  formula that reads a DriverDefinition's per-period value via a driverRef node; 'flat' is a
+ *  pure carry-forward (priorPeriod(self)) and needs no driver at all. */
+export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of';
 
 /** A named, per-period leaf value (see StatementSchema.drivers) — architecturally almost
  *  identical to a non-calculated line, just living outside the statement sections and feeding
@@ -51,12 +51,12 @@ export interface DriverDefinition {
   id: string;
   /** Auto-suggested from the target line at creation (e.g. "Revenue Growth Rate"), editable after. */
   name: string;
-  /** Display only ("%", "x", "days") — never read by the engine. */
+  /** Display only ("%", "days") — never read by the engine. */
   unit: string;
   targetLineId: string;
   method: ProjectionMethod;
-  /** Required for 'percent-of' | 'multiple-of' | 'days-of' — the line this driver is expressed
-   *  against. Absent for 'growth', which references its own target line via priorPeriod instead. */
+  /** Required for 'percent-of' | 'days-of' — the line this driver is expressed against. Absent
+   *  for 'growth', which references its own target line via priorPeriod instead. */
   basisLineId?: string;
 }
 

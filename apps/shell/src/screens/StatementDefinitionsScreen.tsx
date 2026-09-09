@@ -22,15 +22,13 @@ import {
 const PROJECTION_METHOD_UNIT: Record<ProjectionMethod, string> = {
   growth: '%',
   'percent-of': '%',
-  'multiple-of': 'x',
   'days-of': 'days',
 };
 /** Phrasing for an auto-generated driver name — distinct from the Select's option labels
  *  ("Percent of…") so the two can read naturally in their own contexts: a dropdown option vs.
  *  "Revenue % of Cost of Revenue" once a basis line is appended to it. */
-const DRIVER_NAME_PHRASE: Record<'percent-of' | 'multiple-of' | 'days-of', string> = {
+const DRIVER_NAME_PHRASE: Record<'percent-of' | 'days-of', string> = {
   'percent-of': '% of',
-  'multiple-of': 'Multiple of',
   'days-of': 'Days of',
 };
 
@@ -342,7 +340,10 @@ export function StatementDefinitionsScreen() {
   }
 
   const nameIndex = useMemo(() => buildNameIndex({ sections, drivers }), [sections, drivers]);
-  const allLines = useMemo(() => sections.flatMap((s) => s.lines.map((l) => ({ id: l.id, name: l.name }))), [sections]);
+  const lineGroups = useMemo(
+    () => sections.map((s) => ({ sectionName: s.name, lines: s.lines.map((l) => ({ id: l.id, name: l.name })) })),
+    [sections],
+  );
 
   // A stored formula is always valid when it's saved — the only way one can go stale afterward
   // is a reference to a line that's since been deleted, so that's what this counts.
@@ -430,7 +431,7 @@ export function StatementDefinitionsScreen() {
             isFirst={index === 0}
             isLast={index === sections.length - 1}
             otherSections={sections.filter((s) => s.id !== section.id).map((s) => ({ id: s.id, name: s.name }))}
-            allLines={allLines}
+            lineGroups={lineGroups}
             drivers={drivers}
             nameIndex={nameIndex}
             onRename={(name) => renameSection(section.id, name)}

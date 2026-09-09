@@ -236,8 +236,6 @@ export function isCalculated(line: Pick<StatementLine, 'formula'>): boolean {
 // ---- Projection-method formula builders ---------------------------------------------------
 // Used only by the schema editor's projection-method UI to construct a line's formula directly
 // (never parsed from text — a driverRef is never hand-typed, see NameIndexInput's doc comment).
-// 'percent-of' and 'multiple-of' are mechanically identical (basisLine * driver) and share
-// buildRatioFormula; they differ only in the driver's `unit` ("%" vs "x"), decided by the caller.
 
 function ref(lineId: string): ResolvedFormula {
   return { kind: 'ref', lineId };
@@ -263,8 +261,7 @@ export function buildGrowthFormula(lineId: string, driverId: string): ResolvedFo
   return { kind: 'bin', op: '*', left: priorPeriodOf(ref(lineId)), right: { kind: 'bin', op: '+', left: num(1), right: driverRef(driverId) } };
 }
 
-/** basisLine * driver — shared by 'percent-of' (driver as a fraction) and 'multiple-of' (driver
- *  as a multiple); the formula shape is identical, only the driver's `unit` differs. */
+/** basisLine * driver — 'percent-of', the driver being the fraction (0.3 = 30%). */
 export function buildRatioFormula(basisLineId: string, driverId: string): ResolvedFormula {
   return { kind: 'bin', op: '*', left: ref(basisLineId), right: driverRef(driverId) };
 }

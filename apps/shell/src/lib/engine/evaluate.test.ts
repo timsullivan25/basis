@@ -336,16 +336,13 @@ describe('driverRef and the mapped-value-first priority', () => {
     expect(result.getError('a')).toBeUndefined();
   });
 
-  it('days-of and multiple-of driverRef formulas evaluate like any other arithmetic', () => {
+  it('a days-of driverRef formula evaluates like any other arithmetic', () => {
     const s = schema([
       line('revenue'),
-      line('cogs'),
       line('ar', bin('*', bin('/', driverRef('dso'), num(365)), ref('revenue'))),
-      line('debt', bin('*', ref('cogs'), driverRef('multiple'))),
     ]);
-    const m = model(1, { revenue: [365], cogs: [10] }, { dso: [30], multiple: [3] });
+    const m = model(1, { revenue: [365] }, { dso: [30] });
     const result = evaluateModel(s, m);
     expect(result.getValue('ar', 0)).toBeCloseTo(30, 6); // 30/365 * 365
-    expect(result.getValue('debt', 0)).toBe(30); // 10 * 3
   });
 });
