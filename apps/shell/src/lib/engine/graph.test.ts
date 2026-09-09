@@ -12,6 +12,7 @@ function line(id: string, formula: ResolvedFormula | null = null): StatementLine
     sign: 'natural',
     aggregation: 'sum',
     formula,
+    projection: null,
     aliases: [],
   };
 }
@@ -24,8 +25,12 @@ function call(fn: 'priorPeriod' | 'priorYear', args: ResolvedFormula[]): Resolve
   return { kind: 'call', fn, args };
 }
 
+function driverRef(driverId: string): ResolvedFormula {
+  return { kind: 'driverRef', driverId };
+}
+
 function schema(lines: StatementLine[]): StatementSchema {
-  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }] };
+  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers: [] };
 }
 
 describe('buildLineGraph', () => {
@@ -108,5 +113,19 @@ describe('buildLineGraph', () => {
     );
     const group = g.order.find((grp) => grp.includes('a'));
     expect(group?.sort()).toEqual(['a', 'b']);
+  });
+
+  it('a driverRef contributes no precedent edge — a driver is always an immediately-available leaf', () => {
+    const g = buildLineGraph(
+      schema([line('cogs'), line('ar', { kind: 'bin', op: '*', left: driverRef('dso'), right: ref('cogs') })]),
+    );
+    // Real precedent from the `ref('cogs')` side; the driverRef side contributes nothing.
+    expect(g.precedents.get('ar')).toEqual(['cogs']);
+  });
+
+  it('a line whose formula is ONLY a driverRef has no precedents at all', () => {
+    const g = buildLineGraph(schema([line('constant-ish', driverRef('d1'))]));
+    expect(g.precedents.get('constant-ish')).toEqual([]);
+    expect(g.order.flat().sort()).toEqual(['constant-ish']);
   });
 });

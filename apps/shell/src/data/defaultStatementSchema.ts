@@ -40,6 +40,7 @@ function line(name: string, options: LineOptions = {}): DraftLine {
     sign: options.sign ?? 'natural',
     aggregation: options.aggregation ?? 'sum',
     formula,
+    projection: null,
     aliases: options.aliases ?? [],
   };
 }
@@ -197,5 +198,6 @@ export function createDefaultStatementSchema(): StatementSchema {
     name: 'Basis Default',
     createdAt: new Date().toISOString(),
     sections: draftSections.map((s) => compileSection(s, index)),
+    drivers: [],
   };
 }

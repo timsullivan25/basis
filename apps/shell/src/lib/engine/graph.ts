@@ -22,9 +22,11 @@ export interface LineGraph {
  *  to a same-period cycle no matter what it transitively references. Getting this distinction
  *  right is what lets a self-referencing running-total pattern (e.g. `priorPeriod(x) + delta`)
  *  evaluate as a plain single pass instead of being misclassified as a cycle and routed through
- *  Gauss-Seidel needlessly. */
+ *  Gauss-Seidel needlessly. A driverRef is excluded for a related but distinct reason: a driver
+ *  is always an immediately-available leaf value (no formula of its own), so it can never
+ *  participate in a same-period cycle and needs no precedent/dependent edge at all. */
 function collectSamePeriodRefIds(formula: ResolvedFormula): string[] {
-  if (formula.kind === 'num') return [];
+  if (formula.kind === 'num' || formula.kind === 'driverRef') return [];
   if (formula.kind === 'ref') return [formula.lineId];
   if (formula.kind === 'neg') return collectSamePeriodRefIds(formula.arg);
   if (formula.kind === 'bin') return [...collectSamePeriodRefIds(formula.left), ...collectSamePeriodRefIds(formula.right)];

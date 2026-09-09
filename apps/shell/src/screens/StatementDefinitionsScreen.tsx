@@ -14,6 +14,7 @@ function emptyLine(): StatementLine {
     sign: 'natural',
     aggregation: 'sum',
     formula: null,
+    projection: null,
     aliases: [],
   };
 }

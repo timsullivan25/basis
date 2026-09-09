@@ -12,6 +12,7 @@ function line(id: string, formula: ResolvedFormula | null = null): StatementLine
     sign: 'natural',
     aggregation: 'sum',
     formula,
+    projection: null,
     aliases: [],
   };
 }
@@ -28,12 +29,19 @@ function bin(op: '+' | '-' | '*' | '/' | '^', left: ResolvedFormula, right: Reso
 function call(fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear', args: ResolvedFormula[]): ResolvedFormula {
   return { kind: 'call', fn, args };
 }
-
-function schema(lines: StatementLine[]): StatementSchema {
-  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }] };
+function driverRef(driverId: string): ResolvedFormula {
+  return { kind: 'driverRef', driverId };
 }
 
-function modelWithTimeline(timeline: TimelinePeriod[], historicals: Record<string, (number | null)[]>): Model {
+function schema(lines: StatementLine[]): StatementSchema {
+  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers: [] };
+}
+
+function modelWithTimeline(
+  timeline: TimelinePeriod[],
+  historicals: Record<string, (number | null)[]>,
+  driverValues: Record<string, (number | null)[]> = {},
+): Model {
   return {
     id: 'm1',
     companyId: 'c1',
@@ -43,11 +51,16 @@ function modelWithTimeline(timeline: TimelinePeriod[], historicals: Record<strin
     mappingId: 'map1',
     timeline,
     historicals,
+    driverValues,
     createdAt: '',
   };
 }
 
-function model(periodCount: number, historicals: Record<string, (number | null)[]>): Model {
+function model(
+  periodCount: number,
+  historicals: Record<string, (number | null)[]>,
+  driverValues: Record<string, (number | null)[]> = {},
+): Model {
   const timeline: TimelinePeriod[] = Array.from({ length: periodCount }, (_, i) => ({
     id: `p${i}`,
     type: 'FY',
@@ -55,7 +68,7 @@ function model(periodCount: number, historicals: Record<string, (number | null)[
     label: `FY 202${i}`,
     kind: 'actual',
   }));
-  return modelWithTimeline(timeline, historicals);
+  return modelWithTimeline(timeline, historicals, driverValues);
 }
 
 describe('evaluateModel', () => {
@@ -247,5 +260,92 @@ describe('priorPeriod / priorYear', () => {
     const result = evaluateModel(s, m);
     // q1's date is exactly one year after fy1's, but they're different types — must not match.
     expect(result.getValue('py', 1)).toBeNull();
+  });
+});
+
+describe('driverRef and the mapped-value-first priority', () => {
+  it('an explicit mapped value wins over the formula for that period', () => {
+    const s = schema([line('a'), line('b'), line('total', bin('+', ref('a'), ref('b')))]);
+    const m = model(1, { a: [10], b: [20], total: [999] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('total', 0)).toBe(999);
+  });
+
+  it('falls back to the formula for a period with no mapped value', () => {
+    const s = schema([line('a'), line('b'), line('total', bin('+', ref('a'), ref('b')))]);
+    const m = model(2, { a: [10, 15], b: [20, 25], total: [999] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('total', 0)).toBe(999);
+    expect(result.getValue('total', 1)).toBe(40);
+  });
+
+  it('flat (priorPeriod(self), no driver) carries the last actual value forward indefinitely', () => {
+    const s = schema([line('revenue', call('priorPeriod', [ref('revenue')]))]);
+    const m = model(3, { revenue: [100] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('revenue', 0)).toBe(100);
+    expect(result.getValue('revenue', 1)).toBe(100);
+    expect(result.getValue('revenue', 2)).toBe(100);
+  });
+
+  it('growth compounds off the last actual value and off an earlier projected value', () => {
+    // revenue = priorPeriod(revenue) * (1 + growth driver)
+    const s = schema([line('revenue', bin('*', call('priorPeriod', [ref('revenue')]), bin('+', num(1), driverRef('g'))))]);
+    const m = model(3, { revenue: [100] }, { g: [null, 0.1, 0.2] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('revenue', 0)).toBe(100);
+    expect(result.getValue('revenue', 1)).toBeCloseTo(110, 6); // 100 * 1.1
+    expect(result.getValue('revenue', 2)).toBeCloseTo(132, 6); // 110 * 1.2, chained off the projected period
+  });
+
+  it('a missing driver value propagates null rather than a wrong number', () => {
+    const s = schema([line('revenue', bin('*', call('priorPeriod', [ref('revenue')]), bin('+', num(1), driverRef('g'))))]);
+    const m = model(2, { revenue: [100] }, { g: [] }); // no value at all for period 1
+    const result = evaluateModel(s, m);
+    expect(result.getValue('revenue', 1)).toBeNull();
+  });
+
+  it('percent-of resolves against a plain, non-driven basis line', () => {
+    const s = schema([line('revenue'), line('cogs', bin('*', ref('revenue'), driverRef('pct')))]);
+    const m = model(2, { revenue: [420, 470], cogs: [145] }, { pct: [null, 0.3] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('cogs', 0)).toBe(145); // mapped
+    expect(result.getValue('cogs', 1)).toBeCloseTo(141, 6); // 470 * 0.3, formula fallback
+  });
+
+  it('percent-of resolves correctly when its own basis line is itself growth-driven', () => {
+    const revenueFormula = bin('*', call('priorPeriod', [ref('revenue')]), bin('+', num(1), driverRef('g')));
+    const s = schema([line('revenue', revenueFormula), line('cogs', bin('*', ref('revenue'), driverRef('pct')))]);
+    const m = model(2, { revenue: [100] }, { g: [null, 0.1], pct: [null, 0.5] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('revenue', 1)).toBeCloseTo(110, 6);
+    expect(result.getValue('cogs', 1)).toBeCloseTo(55, 6); // 110 * 0.5, ordered correctly after revenue
+  });
+
+  it('a percent-of-style cycle between two lines converges via the same Gauss-Seidel path as a formula cycle', () => {
+    // a = b * d1 + 10, b = a * d2 — a real same-period mutual dependency through driverRefs.
+    const s = schema([
+      line('a', bin('+', bin('*', ref('b'), driverRef('d1')), num(10))),
+      line('b', bin('*', ref('a'), driverRef('d2'))),
+    ]);
+    const m = model(1, {}, { d1: [0.5], d2: [0.5] });
+    const result = evaluateModel(s, m);
+    // a = 0.5b + 10, b = 0.5a => a = 0.25a + 10 => a = 40/3, b = 20/3
+    expect(result.getValue('a', 0)).toBeCloseTo(40 / 3, 4);
+    expect(result.getValue('b', 0)).toBeCloseTo(20 / 3, 4);
+    expect(result.getError('a')).toBeUndefined();
+  });
+
+  it('days-of and multiple-of driverRef formulas evaluate like any other arithmetic', () => {
+    const s = schema([
+      line('revenue'),
+      line('cogs'),
+      line('ar', bin('*', bin('/', driverRef('dso'), num(365)), ref('revenue'))),
+      line('debt', bin('*', ref('cogs'), driverRef('multiple'))),
+    ]);
+    const m = model(1, { revenue: [365], cogs: [10] }, { dso: [30], multiple: [3] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('ar', 0)).toBeCloseTo(30, 6); // 30/365 * 365
+    expect(result.getValue('debt', 0)).toBe(30); // 10 * 3
   });
 });

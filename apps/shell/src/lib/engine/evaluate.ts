@@ -65,11 +65,10 @@ export interface EvaluationResult {
   getError(lineId: string): string | undefined;
 }
 
-/** Only the two fields evaluateModel actually reads — a saved Model satisfies this, but so does
- *  an in-progress mapping-screen draft that hasn't been saved as a Model yet (or, later, a
- *  projected timeline whose non-calculated periods are sourced from drivers instead of a
- *  mapped workbook — the evaluator doesn't care where a period's raw inputs came from). */
-export type EvaluationInput = Pick<Model, 'timeline' | 'historicals'>;
+/** Only the fields evaluateModel actually reads — a saved Model satisfies this, but so does an
+ *  in-progress mapping-screen draft that hasn't been saved as a Model yet. `driverValues` may be
+ *  omitted (e.g. a draft with no drivers yet) and is treated as empty. */
+export type EvaluationInput = Pick<Model, 'timeline' | 'historicals'> & { driverValues?: Model['driverValues'] };
 
 /** Non-finite (NaN/Infinity, e.g. from a division by zero elsewhere or 0^-1) collapses to null
  *  rather than leaking into the UI — a modeling engine should show a blank, not "NaN". */
@@ -113,6 +112,7 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
   ): number | null {
     if (node.kind === 'num') return node.value;
     if (node.kind === 'ref') return readLine(node.lineId, periodIndex, cycleValues);
+    if (node.kind === 'driverRef') return model.driverValues?.[node.driverId]?.[periodIndex] ?? null;
     if (node.kind === 'neg') {
       const v = evalNode(node.arg, periodIndex, cycleValues);
       return v === null ? null : -v;
@@ -159,10 +159,18 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
     }
   }
 
+  // An explicit mapped value always wins over a formula when one exists for this exact period —
+  // the formula (if any) is only ever the fallback. This is what lets a normally-sourced line
+  // (mapped for every actual period) carry a projection formula for its future periods without
+  // the two ever colliding: the mapped branch already covers every actual period, so the formula
+  // only fires where no mapped value could possibly exist. It's also what lets an issuer-reported
+  // subtotal (a line that also has a structural formula) prefer its as-reported figure over
+  // recomputing it, wherever the source actually states one.
   function computeLine(lineId: string, periodIndex: number, cycleValues: Map<string, number | null> | undefined): number | null {
+    const mapped = historicalValue(lineId, periodIndex);
+    if (mapped !== null) return mapped;
     const line = linesById.get(lineId);
-    if (!line?.formula) return historicalValue(lineId, periodIndex);
-    return evalNode(line.formula, periodIndex, cycleValues);
+    return line?.formula ? evalNode(line.formula, periodIndex, cycleValues) : null;
   }
 
   for (let p = 0; p < periodCount; p++) {
