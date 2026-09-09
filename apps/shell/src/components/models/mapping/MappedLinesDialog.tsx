@@ -13,14 +13,16 @@ const headStyle = {
 };
 
 function StatusCell({ line, mapping }: { line: StatementLine; mapping: LineMapping | undefined }) {
-  if (isCalculated(line)) {
-    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Calculated</span>;
-  }
+  // A real mapping (even on a calculated line — an issuer-reported subtotal) always wins the
+  // check first; "Calculated" is only the fallback label for a structural formula with none.
   if ((mapping?.sourceLineIds.length ?? 0) > 0) {
     return <Icon name="check" size={14} color="var(--text-positive)" />;
   }
   if (isMissingRequired(line, mapping)) {
     return <Icon name="x" size={14} color="var(--text-negative)" />;
+  }
+  if (isCalculated(line) && !line.projection) {
+    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Calculated</span>;
   }
   return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
 }

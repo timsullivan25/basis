@@ -28,9 +28,12 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
   return mapping.confidence < REVIEW_THRESHOLD;
 }
 
-/** Required and still unmapped — the red dot / save-blocking condition. */
+/** Required and still unmapped — the red dot / save-blocking condition. A purely structural
+ *  formula (no `projection`) is never "missing", same reasoning as getRequiredMeta — but a
+ *  projection-carrying line still needs a real mapped value for its actual periods, the
+ *  projection formula only ever covering periods without one. */
 export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined): boolean {
-  if (isCalculated(target)) return false; // calculated lines are never "missing"
+  if (isCalculated(target) && !target.projection) return false;
   if (!target.required) return false;
   return !mapping || mapping.sourceLineIds.length === 0;
 }
