@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Company, Mapping, Model, ModelImport, StatementSchema } from './types';
+import type { Company, Mapping, Model, ModelImport, Scenario, StatementSchema } from './types';
 
 export interface BasisDb extends DBSchema {
   companies: {
@@ -27,10 +27,15 @@ export interface BasisDb extends DBSchema {
     value: Mapping;
     indexes: { 'by-modelImportId': string };
   };
+  scenarios: {
+    key: string;
+    value: Scenario;
+    indexes: { 'by-modelId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -119,6 +124,10 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
               await importsStore.put(rest);
             }
           }
+        }
+        if (oldVersion < 6) {
+          const store = db.createObjectStore('scenarios', { keyPath: 'id' });
+          store.createIndex('by-modelId', 'modelId');
         }
       },
     });

@@ -255,9 +255,47 @@ export interface CreateModelInput {
 
 export interface ModelRepository {
   getForCompany(companyId: string): Promise<Model | undefined>;
-  /** Atomic replace: if the company already has a current model, its ModelImport/Mapping are deleted first. Callers confirm with the user before calling this — the repository itself never asks. */
+  /** Atomic replace: if the company already has a current model, its ModelImport/Mapping/Scenarios are deleted first. Callers confirm with the user before calling this — the repository itself never asks. */
   create(input: CreateModelInput): Promise<Model>;
   update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues'>>): Promise<Model>;
-  /** Cascades to the model's ModelImport and Mapping. */
+  /** Cascades to the model's ModelImport, Mapping and Scenarios. */
+  remove(id: string): Promise<void>;
+}
+
+/**
+ * A named fork of a model's driver assumptions — same lines and formulas as the model (scenarios
+ * never diverge structurally), only `driverValues` differ. `driverValues` is a SPARSE override
+ * layer, same shape as `Model.driverValues` and index-aligned to the same `timeline`: a `null` (or
+ * an entirely absent driverId/index) means "not overridden here", cascading down to the model's
+ * own `driverValues` at that cell (which may itself be explicit or fall further to the engine's
+ * computed default — see evaluate.ts's `defaultDriverValue`). There is deliberately no way to say
+ * "ignore the model's value here, use the pure computed default instead" — clearing a scenario
+ * cell always falls through to the model, never past it. A real but narrow gap (documented, not
+ * fixed): a scenario can't revert a single driver to trend while the model still assumes momentum.
+ * The implicit "Base case" (the model's own driverValues) is never itself a Scenario row — see
+ * lib/scenario.ts's mergeScenarioDriverValues, used to compute an effective driverValues map for
+ * evaluateModel without the engine ever needing to know scenarios exist.
+ */
+export interface Scenario {
+  id: string;
+  modelId: string;
+  name: string;
+  driverValues: Record<string, (number | null)[]>;
+  createdAt: string;
+}
+
+export interface CreateScenarioInput {
+  modelId: string;
+  name: string;
+  /** Defaults to `{}` (fully sparse — everything cascades to the model). Duplicating an existing
+   *  scenario or the implicit Base case passes a real snapshot here instead. */
+  driverValues?: Record<string, (number | null)[]>;
+}
+
+export interface ScenarioRepository {
+  list(modelId: string): Promise<Scenario[]>;
+  get(id: string): Promise<Scenario | undefined>;
+  create(input: CreateScenarioInput): Promise<Scenario>;
+  update(id: string, patch: Partial<Pick<Scenario, 'name' | 'driverValues'>>): Promise<Scenario>;
   remove(id: string): Promise<void>;
 }
