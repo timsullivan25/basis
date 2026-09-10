@@ -1,5 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, DataTable, Dialog, Field, Icon, IconButton, Input, SegmentedControl, Select, Tabs, Toast } from '@basis/design-system';
+import {
+  Button,
+  Card,
+  ChartLegend,
+  DataTable,
+  Dialog,
+  Field,
+  Icon,
+  IconButton,
+  Input,
+  LineChart,
+  SegmentedControl,
+  Select,
+  Tabs,
+  Toast,
+} from '@basis/design-system';
 import {
   modelRepository,
   scenarioRepository,
@@ -127,6 +142,11 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   // Compare tab's period picker — defaults to the last period whenever a different model loads;
   // clamped defensively wherever it's read, since the timeline can shrink after this is set.
   const [comparePeriodIndex, setComparePeriodIndex] = useState(0);
+  // Compare tab's chart — which single line to plot, and which scenario series are toggled off
+  // via the legend. Line defaults to the first "key metric" (same curated set as the table) once
+  // a model loads.
+  const [compareLineId, setCompareLineId] = useState<string | null>(null);
+  const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +161,9 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       setScenarios(existingScenarios);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
+      const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
+      setCompareLineId((allLines.find((l) => l.rowFormat === 'total') ?? allLines[0])?.id ?? null);
+      setHiddenCompareScenarios([]);
     })();
     return () => {
       cancelled = true;
@@ -383,6 +406,23 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     })),
   ];
 
+  // The chart plots one line across every period, one series per scenario — a different question
+  // from the table above (one period, every metric). Restricted to the same curated metric-line
+  // set for the picker, since those are the lines reliably populated across the whole timeline in
+  // practice; LineChart has no gap-rendering for a missing value, so a null here is shown as 0
+  // rather than a broken path — an accepted simplification, not a claim that 0 was actually mapped.
+  const compareLine = compareMetricLines.find((l) => l.id === compareLineId) ?? compareMetricLines[0] ?? null;
+  const compareChartSeries = compareEvaluations.map((c, i) => ({
+    key: c.id,
+    data: compareLine ? model.timeline.map((_, i2) => c.evaluation.getValue(compareLine.id, i2) ?? 0) : [],
+    color: `var(--chart-${(i % 12) + 1})`,
+  }));
+  const compareLegendSeries = compareEvaluations.map((c, i) => ({
+    key: c.id,
+    label: c.name,
+    color: `var(--chart-${(i % 12) + 1})`,
+  }));
+
   const rows: Array<{ id: string; __group?: string; line?: StatementLine }> = [];
   schema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
@@ -615,16 +655,50 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       />
 
       {tab === 'compare' ? (
-        <Card padding="none">
-          <DataTable
-            columns={compareColumns}
-            rows={compareMetricLines.map((line) => ({ id: line.id, line }))}
-            rowKey="id"
-            dense
-            stickyHeader
-            stickyFirstColumn
-          />
-        </Card>
+        <>
+          <Card padding="none">
+            <DataTable
+              columns={compareColumns}
+              rows={compareMetricLines.map((line) => ({ id: line.id, line }))}
+              rowKey="id"
+              dense
+              stickyHeader
+              stickyFirstColumn
+            />
+          </Card>
+
+          <Card
+            title="Trend"
+            padding="md"
+            actions={
+              <Select
+                size="sm"
+                options={compareMetricLines.map((l) => ({ value: l.id, label: l.name }))}
+                value={compareLine?.id ?? ''}
+                onChange={(e) => setCompareLineId(e.target.value)}
+                style={{ width: 200 }}
+              />
+            }
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+              <ChartLegend
+                size="sm"
+                series={compareLegendSeries}
+                hidden={hiddenCompareScenarios}
+                onToggle={(key) =>
+                  setHiddenCompareScenarios((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
+                }
+              />
+              <LineChart
+                series={compareChartSeries}
+                labels={model.timeline.map((p) => p.label)}
+                hidden={hiddenCompareScenarios}
+                zeroLine
+                formatY={(v) => formatPeriodValue(v, compareLine?.numberFormat)}
+              />
+            </div>
+          </Card>
+        </>
       ) : (
         <Card padding="none">
           <DataTable
