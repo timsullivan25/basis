@@ -4,6 +4,7 @@ import { IndexedDbMappingRepository } from './indexedDbMappingRepository';
 import { IndexedDbModelImportRepository } from './indexedDbModelImportRepository';
 import { IndexedDbModelRepository } from './indexedDbModelRepository';
 import { IndexedDbScenarioRepository } from './indexedDbScenarioRepository';
+import { IndexedDbSnapshotRepository } from './indexedDbSnapshotRepository';
 import { IndexedDbStatementSchemaRepository } from './indexedDbStatementSchemaRepository';
 import type {
   ComputedResultRepository,
@@ -12,6 +13,7 @@ import type {
   ModelImportRepository,
   ModelRepository,
   ScenarioRepository,
+  SnapshotRepository,
   StatementSchemaRepository,
 } from './types';
 
@@ -26,6 +28,7 @@ export type {
   CreateModelImportInput,
   CreateModelInput,
   CreateScenarioInput,
+  CreateSnapshotInput,
   DriverDefinition,
   LineAggregation,
   LineMapping,
@@ -50,6 +53,9 @@ export type {
   Scenario,
   ScenarioKey,
   ScenarioRepository,
+  Snapshot,
+  SnapshotRepository,
+  SnapshotScenario,
   StatementLine,
   StatementSchema,
   StatementSchemaRepository,
@@ -67,3 +73,4 @@ export const mappingRepository: MappingRepository = new IndexedDbMappingReposito
 export const modelRepository: ModelRepository = new IndexedDbModelRepository();
 export const scenarioRepository: ScenarioRepository = new IndexedDbScenarioRepository();
 export const computedResultRepository: ComputedResultRepository = new IndexedDbComputedResultRepository();
+export const snapshotRepository: SnapshotRepository = new IndexedDbSnapshotRepository();
