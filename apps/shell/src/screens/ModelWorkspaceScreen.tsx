@@ -16,6 +16,7 @@ import {
   Toast,
 } from '@basis/design-system';
 import {
+  computedResultRepository,
   modelRepository,
   scenarioRepository,
   statementSchemaRepository,
@@ -29,6 +30,7 @@ import {
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
+import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { evaluateModel } from '../lib/engine/evaluate';
@@ -227,6 +229,20 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       : (evaluatedModel.driverValues ?? {});
     return evaluateModel(schema, { ...evaluatedModel, driverValues });
   }, [schema, evaluatedModel, activeScenario]);
+
+  // Persists the active scenario's live evaluation as a ComputedResult — "computed state is a
+  // cache, not a source" from the architecture contract. Auto mode only: manual mode's frozen
+  // snapshot is deliberately not "the" cached truth (driver edits still save immediately either
+  // way, so the next auto recompute — on next open, or toggling back to auto — catches up). The
+  // issuer Dashboard tab (a later slice) reads this to show real numbers without loading the
+  // engine at all; this screen's own read-path benefit is minor by comparison, since evaluateModel
+  // is already synchronous and instant at this schema's scale.
+  useEffect(() => {
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation) return;
+    const materialized = materializeEvaluation(schema, model, evaluation);
+    const versionStamp = computeVersionStamp(model, activeScenario, schema);
+    void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not

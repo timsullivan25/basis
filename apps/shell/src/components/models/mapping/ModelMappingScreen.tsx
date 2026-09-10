@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Select, Tabs, Toast } from '@basis/design-system';
 import {
+  computedResultRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -15,6 +16,7 @@ import {
 } from '../../../data';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
+import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../../../lib/computedCache';
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
@@ -241,6 +243,15 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           historicals: resolvedHistoricals,
         });
       }
+
+      // Compute and cache the Base case immediately — so the issuer page (which reads this
+      // cache rather than re-running the engine itself) has real numbers right after a save,
+      // not just after someone happens to open the workspace next.
+      const savedEvaluation = evaluateModel(statementSchema!, savedModel);
+      const materialized = materializeEvaluation(statementSchema!, savedModel, savedEvaluation);
+      const versionStamp = computeVersionStamp(savedModel, null, statementSchema!);
+      await computedResultRepository.set(buildComputedResult(savedModel.id, 'base', versionStamp, materialized));
+
       setSavedToast(true);
       onSaved(savedModel);
     } finally {
