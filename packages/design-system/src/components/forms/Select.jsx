@@ -8,7 +8,7 @@ const FIELD_SIZES = {
 };
 
 /** Native select styled to match Input; chevron is ours. */
-export function Select({ options = [], size = 'md', iconLeft, disabled = false, invalid = false, fullWidth = true, style, ...rest }) {
+export function Select({ options = [], groups = [], size = 'md', iconLeft, disabled = false, invalid = false, fullWidth = true, style, ...rest }) {
   const [focus, setFocus] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const s = FIELD_SIZES[size] || FIELD_SIZES.md;
@@ -37,6 +37,13 @@ export function Select({ options = [], size = 'md', iconLeft, disabled = false, 
       >
         {options.map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+        ))}
+        {groups.map((g) => (
+          <optgroup key={g.label} label={g.label}>
+            {g.options.map((o) => (
+              <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+            ))}
+          </optgroup>
         ))}
       </select>
       <Icon name="chevron-down" size={s.icon} color="var(--text-tertiary)" style={{ position: 'absolute', right: s.px, pointerEvents: 'none' }} />

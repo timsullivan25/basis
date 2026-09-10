@@ -111,6 +111,7 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
                   mappingId,
                   timeline: [],
                   historicals: {},
+                  driverValues: {},
                   createdAt: imp.uploadedAt,
                 });
               }

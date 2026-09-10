@@ -1,8 +1,36 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Dialog, Field, IconButton, Input, Select, Toast } from '@basis/design-system';
-import { statementSchemaRepository, type StatementLine, type StatementSchema, type StatementSection } from '../data';
-import { SectionEditor } from '../components/statements/SectionEditor';
-import { buildNameIndex, collectRefIds, isCalculated } from '../lib/engine/resolve';
+import {
+  statementSchemaRepository,
+  type DriverDefinition,
+  type ProjectionMethod,
+  type StatementLine,
+  type StatementSchema,
+  type StatementSection,
+} from '../data';
+import { SectionEditor, type ProjectionSelection } from '../components/statements/SectionEditor';
+import {
+  buildDaysFormula,
+  buildFlatFormula,
+  buildGrowthFormula,
+  buildNameIndex,
+  buildRatioFormula,
+  collectRefIds,
+  isCalculated,
+} from '../lib/engine/resolve';
+
+const PROJECTION_METHOD_UNIT: Record<ProjectionMethod, string> = {
+  growth: '%',
+  'percent-of': '%',
+  'days-of': 'days',
+};
+/** Phrasing for an auto-generated driver name — distinct from the Select's option labels
+ *  ("Percent of…") so the two can read naturally in their own contexts: a dropdown option vs.
+ *  "Revenue % of Cost of Revenue" once a basis line is appended to it. */
+const DRIVER_NAME_PHRASE: Record<'percent-of' | 'days-of', string> = {
+  'percent-of': '% of',
+  'days-of': 'Days of',
+};
 
 function emptyLine(): StatementLine {
   return {
@@ -14,6 +42,7 @@ function emptyLine(): StatementLine {
     sign: 'natural',
     aggregation: 'sum',
     formula: null,
+    projection: null,
     aliases: [],
   };
 }
@@ -62,10 +91,17 @@ function NameDialog({
   );
 }
 
+/** Serializes the two pieces of schema content that get edited together, so the dirty-check and
+ *  the saved-snapshot comparison see a drivers-only change (no section/line edit) as dirty too. */
+function snapshotOf(sections: StatementSection[], drivers: DriverDefinition[]): string {
+  return JSON.stringify({ sections, drivers });
+}
+
 export function StatementDefinitionsScreen() {
   const [schemas, setSchemas] = useState<StatementSchema[]>([]);
   const [selectedSchemaId, setSelectedSchemaId] = useState<string | null>(null);
   const [sections, setSections] = useState<StatementSection[]>([]);
+  const [drivers, setDrivers] = useState<DriverDefinition[]>([]);
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -83,7 +119,8 @@ export function StatementDefinitionsScreen() {
       const first = list[0];
       setSelectedSchemaId(first?.id ?? null);
       setSections(first?.sections ?? []);
-      setSavedSnapshot(JSON.stringify(first?.sections ?? []));
+      setDrivers(first?.drivers ?? []);
+      setSavedSnapshot(snapshotOf(first?.sections ?? [], first?.drivers ?? []));
       setLoading(false);
     })();
     return () => {
@@ -98,7 +135,7 @@ export function StatementDefinitionsScreen() {
   }, [toast]);
 
   const selectedSchema = schemas.find((s) => s.id === selectedSchemaId) ?? null;
-  const isDirty = savedSnapshot !== null && JSON.stringify(sections) !== savedSnapshot;
+  const isDirty = savedSnapshot !== null && snapshotOf(sections, drivers) !== savedSnapshot;
 
   function selectSchema(id: string) {
     if (isDirty) return;
@@ -106,7 +143,8 @@ export function StatementDefinitionsScreen() {
     if (!schema) return;
     setSelectedSchemaId(id);
     setSections(schema.sections);
-    setSavedSnapshot(JSON.stringify(schema.sections));
+    setDrivers(schema.drivers);
+    setSavedSnapshot(snapshotOf(schema.sections, schema.drivers));
   }
 
   function openDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
@@ -120,7 +158,8 @@ export function StatementDefinitionsScreen() {
     setDialog(null);
     setSelectedSchemaId(created.id);
     setSections(created.sections);
-    setSavedSnapshot(JSON.stringify(created.sections));
+    setDrivers(created.drivers);
+    setSavedSnapshot(snapshotOf(created.sections, created.drivers));
   }
 
   async function handleDuplicate() {
@@ -130,12 +169,13 @@ export function StatementDefinitionsScreen() {
     setDialog(null);
     setSelectedSchemaId(copy.id);
     setSections(copy.sections);
-    setSavedSnapshot(JSON.stringify(copy.sections));
+    setDrivers(copy.drivers);
+    setSavedSnapshot(snapshotOf(copy.sections, copy.drivers));
   }
 
   async function handleRename() {
     if (!selectedSchema) return;
-    const renamed = { ...selectedSchema, name: pendingName.trim(), sections };
+    const renamed = { ...selectedSchema, name: pendingName.trim(), sections, drivers };
     await statementSchemaRepository.save(renamed);
     setSchemas((prev) => prev.map((s) => (s.id === renamed.id ? renamed : s)));
     setDialog(null);
@@ -151,7 +191,8 @@ export function StatementDefinitionsScreen() {
     const next = remaining[0];
     setSelectedSchemaId(next?.id ?? null);
     setSections(next?.sections ?? []);
-    setSavedSnapshot(JSON.stringify(next?.sections ?? []));
+    setDrivers(next?.drivers ?? []);
+    setSavedSnapshot(snapshotOf(next?.sections ?? [], next?.drivers ?? []));
     setToast('Schema deleted');
   }
 
@@ -167,12 +208,28 @@ export function StatementDefinitionsScreen() {
     setSections((prev) => moveWithinArray(prev, prev.findIndex((s) => s.id === sectionId), direction));
   }
 
+  /** Every driver targeting a line among `removedLineIds` is orphaned by the removal — drop it
+   *  too, rather than leaving a driver in schema.drivers with no line pointing back at it. */
+  function dropDriversForLines(removedLineIds: Set<string>) {
+    setDrivers((prev) => prev.filter((d) => !removedLineIds.has(d.targetLineId)));
+  }
+
   function deleteSection(sectionId: string) {
+    const removed = sections.find((s) => s.id === sectionId);
+    if (removed) dropDriversForLines(new Set(removed.lines.map((l) => l.id)));
     setSections((prev) => prev.filter((s) => s.id !== sectionId));
   }
 
   function addLine(sectionId: string) {
     setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, lines: [...s.lines, emptyLine()] } : s)));
+  }
+
+  function findLine(lineId: string): StatementLine | undefined {
+    for (const s of sections) {
+      const found = s.lines.find((l) => l.id === lineId);
+      if (found) return found;
+    }
+    return undefined;
   }
 
   function updateLine(lineId: string, patch: Partial<StatementLine>) {
@@ -186,7 +243,60 @@ export function StatementDefinitionsScreen() {
     );
   }
 
+  /** The single entry point for the "Projection method" control in SectionEditor — computes and
+   *  writes both the line's formula and (for the four driver-generating methods) a fresh
+   *  DriverDefinition, replacing any driver this line previously had. A method change always
+   *  discards the old driver rather than reinterpreting its per-model values under a new
+   *  method's semantics, which would be silent and easy to get subtly wrong. */
+  function setLineProjection(lineId: string, selection: ProjectionSelection) {
+    const line = findLine(lineId);
+    const existingDriverId = line?.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
+    const remainingDrivers = existingDriverId ? drivers.filter((d) => d.id !== existingDriverId) : drivers;
+
+    if (selection.method === 'none') {
+      setDrivers(remainingDrivers);
+      updateLine(lineId, { formula: null, projection: null });
+      return;
+    }
+    if (selection.method === 'flat') {
+      setDrivers(remainingDrivers);
+      updateLine(lineId, { formula: buildFlatFormula(lineId), projection: { method: 'flat' } });
+      return;
+    }
+    if (selection.method === 'growth') {
+      const driverId = crypto.randomUUID();
+      const driver: DriverDefinition = {
+        id: driverId,
+        name: `${line?.name || 'Line'} Growth Rate`,
+        unit: PROJECTION_METHOD_UNIT.growth,
+        targetLineId: lineId,
+        method: 'growth',
+      };
+      setDrivers([...remainingDrivers, driver]);
+      updateLine(lineId, { formula: buildGrowthFormula(lineId, driverId), projection: { method: 'growth', driverId } });
+      return;
+    }
+
+    const driverId = crypto.randomUUID();
+    const basisName = findLine(selection.basisLineId)?.name || 'basis';
+    const driver: DriverDefinition = {
+      id: driverId,
+      name: `${line?.name || 'Line'} ${DRIVER_NAME_PHRASE[selection.method]} ${basisName}`,
+      unit: PROJECTION_METHOD_UNIT[selection.method],
+      targetLineId: lineId,
+      method: selection.method,
+      basisLineId: selection.basisLineId,
+    };
+    setDrivers([...remainingDrivers, driver]);
+    const formula =
+      selection.method === 'days-of'
+        ? buildDaysFormula(selection.basisLineId, driverId)
+        : buildRatioFormula(selection.basisLineId, driverId);
+    updateLine(lineId, { formula, projection: { method: selection.method, driverId } });
+  }
+
   function deleteLine(sectionId: string, lineId: string) {
+    dropDriversForLines(new Set([lineId]));
     setSections((prev) =>
       prev.map((s) => (s.id === sectionId ? { ...s, lines: s.lines.filter((line) => line.id !== lineId) } : s)),
     );
@@ -219,17 +329,21 @@ export function StatementDefinitionsScreen() {
     if (!selectedSchema) return;
     setSaving(true);
     try {
-      const updated = { ...selectedSchema, sections };
+      const updated = { ...selectedSchema, sections, drivers };
       await statementSchemaRepository.save(updated);
       setSchemas((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-      setSavedSnapshot(JSON.stringify(sections));
+      setSavedSnapshot(snapshotOf(sections, drivers));
       setToast('Statement definitions saved');
     } finally {
       setSaving(false);
     }
   }
 
-  const nameIndex = useMemo(() => buildNameIndex({ sections }), [sections]);
+  const nameIndex = useMemo(() => buildNameIndex({ sections, drivers }), [sections, drivers]);
+  const lineGroups = useMemo(
+    () => sections.map((s) => ({ sectionName: s.name, lines: s.lines.map((l) => ({ id: l.id, name: l.name })) })),
+    [sections],
+  );
 
   // A stored formula is always valid when it's saved — the only way one can go stale afterward
   // is a reference to a line that's since been deleted, so that's what this counts.
@@ -317,6 +431,8 @@ export function StatementDefinitionsScreen() {
             isFirst={index === 0}
             isLast={index === sections.length - 1}
             otherSections={sections.filter((s) => s.id !== section.id).map((s) => ({ id: s.id, name: s.name }))}
+            lineGroups={lineGroups}
+            drivers={drivers}
             nameIndex={nameIndex}
             onRename={(name) => renameSection(section.id, name)}
             onMoveUp={() => moveSection(section.id, 'up')}
@@ -324,6 +440,7 @@ export function StatementDefinitionsScreen() {
             onDelete={() => deleteSection(section.id)}
             onAddLine={() => addLine(section.id)}
             onUpdateLine={updateLine}
+            onSetProjection={setLineProjection}
             onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
             onMoveLine={(lineId, direction) => moveLine(section.id, lineId, direction)}
             onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(section.id, lineId, toSectionId)}

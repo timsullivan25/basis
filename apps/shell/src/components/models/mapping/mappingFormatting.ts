@@ -1,4 +1,4 @@
-import type { LineMapping, MatchMethod, StatementLine } from '../../../data';
+import type { LineMapping, LineNumberFormat, MatchMethod, StatementLine } from '../../../data';
 import { isCalculated } from '../../../lib/engine/resolve';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
@@ -15,10 +15,14 @@ export const MATCH_METHOD_META: Record<MatchMethod, { label: string; tone: Badge
 
 export const REVIEW_THRESHOLD = 0.8;
 
-export function formatPeriodValue(value: number | null): string {
+/** Renders per the line's numberFormat — 'percentage' scales by 100 and appends "%", 'multiple'
+ *  appends "x"; plain 'number' (the default) is unchanged from before this had a format at all. */
+export function formatPeriodValue(value: number | null, numberFormat: LineNumberFormat = 'number'): string {
   if (value === null) return '—';
-  const abs = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return (value < 0 ? '−' : '') + abs;
+  const scaled = numberFormat === 'percentage' ? value * 100 : value;
+  const abs = Math.abs(scaled).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const suffix = numberFormat === 'percentage' ? '%' : numberFormat === 'multiple' ? 'x' : '';
+  return (scaled < 0 ? '−' : '') + abs + suffix;
 }
 
 /** Low-confidence, not-yet-approved match — the purple dot / review filter condition. */
@@ -28,9 +32,12 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
   return mapping.confidence < REVIEW_THRESHOLD;
 }
 
-/** Required and still unmapped — the red dot / save-blocking condition. */
+/** Required and still unmapped — the red dot / save-blocking condition. A purely structural
+ *  formula (no `projection`) is never "missing", same reasoning as getRequiredMeta — but a
+ *  projection-carrying line still needs a real mapped value for its actual periods, the
+ *  projection formula only ever covering periods without one. */
 export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined): boolean {
-  if (isCalculated(target)) return false; // calculated lines are never "missing"
+  if (isCalculated(target) && !target.projection) return false;
   if (!target.required) return false;
   return !mapping || mapping.sourceLineIds.length === 0;
 }

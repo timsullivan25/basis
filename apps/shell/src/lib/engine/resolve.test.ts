@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildDaysFormula,
+  buildFlatFormula,
+  buildGrowthFormula,
   buildNameIndex,
+  buildRatioFormula,
   collectRefIds,
   compileFormula,
   formatFormula,
@@ -21,6 +25,7 @@ function line(id: string, name: string, formula: ResolvedFormula | null = null):
     sign: 'natural',
     aggregation: 'sum',
     formula,
+    projection: null,
     aliases: [],
   };
 }
@@ -49,6 +54,7 @@ function fixtureSchema(): StatementSchema {
         lines: [line('da-cf', 'Depreciation & Amortization'), line('net-income', 'Net Income')],
       },
     ],
+    drivers: [],
   };
 }
 
@@ -245,5 +251,107 @@ describe('isCalculated', () => {
 
   it('is true for a resolved formula', () => {
     expect(isCalculated({ formula: { kind: 'num', value: 1 } })).toBe(true);
+  });
+});
+
+describe('driverRef', () => {
+  function schemaWithDriver(driverName: string) {
+    const schema = fixtureSchema();
+    schema.drivers = [{ id: 'd1', name: driverName, unit: '%', targetLineId: 'revenue', method: 'growth' }];
+    return schema;
+  }
+
+  it('describeDriver looks up a driver by id', () => {
+    const index = buildNameIndex(schemaWithDriver('Revenue Growth Rate'));
+    expect(index.describeDriver('d1')).toEqual({ name: 'Revenue Growth Rate' });
+    expect(index.describeDriver('unknown')).toBeUndefined();
+  });
+
+  it('formatFormula renders a driverRef by the driver\'s current name', () => {
+    const index = buildNameIndex(schemaWithDriver('Revenue Growth Rate'));
+    const formula: ResolvedFormula = { kind: 'driverRef', driverId: 'd1' };
+    expect(formatFormula(formula, index)).toBe('Revenue Growth Rate');
+  });
+
+  it('formatFormula reflects a driver rename immediately, same as it does for lines', () => {
+    const renamed = buildNameIndex(schemaWithDriver('Revenue Growth Rate 2026'));
+    const formula: ResolvedFormula = { kind: 'driverRef', driverId: 'd1' };
+    expect(formatFormula(formula, renamed)).toBe('Revenue Growth Rate 2026');
+  });
+
+  it('formatFormula renders a full driver-generated growth formula readably', () => {
+    const index = buildNameIndex(schemaWithDriver('Revenue Growth Rate'));
+    const formula = buildGrowthFormula('revenue', 'd1');
+    expect(formatFormula(formula, index)).toBe('priorPeriod(Revenue) * (1 + Revenue Growth Rate)');
+  });
+
+  it('collectRefIds does not collect a driverRef (line ids only, by contract)', () => {
+    const formula: ResolvedFormula = { kind: 'driverRef', driverId: 'd1' };
+    expect(collectRefIds(formula)).toEqual([]);
+  });
+
+  it('remapFormulaIds rewrites a driverRef through the id map, same as it does for a ref', () => {
+    const formula: ResolvedFormula = {
+      kind: 'bin',
+      op: '*',
+      left: { kind: 'ref', lineId: 'old-revenue' },
+      right: { kind: 'driverRef', driverId: 'old-driver' },
+    };
+    const idMap = new Map([
+      ['old-revenue', 'new-revenue'],
+      ['old-driver', 'new-driver'],
+    ]);
+    expect(remapFormulaIds(formula, idMap)).toEqual({
+      kind: 'bin',
+      op: '*',
+      left: { kind: 'ref', lineId: 'new-revenue' },
+      right: { kind: 'driverRef', driverId: 'new-driver' },
+    });
+  });
+});
+
+describe('projection-method formula builders', () => {
+  it('buildFlatFormula is a pure self-referencing carry-forward, no driver involved', () => {
+    expect(buildFlatFormula('revenue')).toEqual({
+      kind: 'call',
+      fn: 'priorPeriod',
+      args: [{ kind: 'ref', lineId: 'revenue' }],
+    });
+  });
+
+  it('buildGrowthFormula compounds the prior period by (1 + driver)', () => {
+    expect(buildGrowthFormula('revenue', 'd1')).toEqual({
+      kind: 'bin',
+      op: '*',
+      left: { kind: 'call', fn: 'priorPeriod', args: [{ kind: 'ref', lineId: 'revenue' }] },
+      right: { kind: 'bin', op: '+', left: { kind: 'num', value: 1 }, right: { kind: 'driverRef', driverId: 'd1' } },
+    });
+  });
+
+  it('buildRatioFormula is basis * driver — percent-of', () => {
+    expect(buildRatioFormula('revenue', 'd1')).toEqual({
+      kind: 'bin',
+      op: '*',
+      left: { kind: 'ref', lineId: 'revenue' },
+      right: { kind: 'driverRef', driverId: 'd1' },
+    });
+  });
+
+  it('buildDaysFormula is (driver / 365) * basis', () => {
+    expect(buildDaysFormula('revenue', 'd1')).toEqual({
+      kind: 'bin',
+      op: '*',
+      left: { kind: 'bin', op: '/', left: { kind: 'driverRef', driverId: 'd1' }, right: { kind: 'num', value: 365 } },
+      right: { kind: 'ref', lineId: 'revenue' },
+    });
+  });
+
+  it('every builder round-trips through formatFormula/compileFormula-free rendering without error', () => {
+    const schema = fixtureSchema();
+    schema.drivers = [{ id: 'd1', name: 'Test Driver', unit: '%', targetLineId: 'revenue', method: 'growth' }];
+    const index = buildNameIndex(schema);
+    expect(formatFormula(buildFlatFormula('revenue'), index)).toBe('priorPeriod(Revenue)');
+    expect(formatFormula(buildRatioFormula('revenue', 'd1'), index)).toBe('Revenue * Test Driver');
+    expect(formatFormula(buildDaysFormula('revenue', 'd1'), index)).toBe('Test Driver / 365 * Revenue');
   });
 });

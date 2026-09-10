@@ -1,5 +1,4 @@
 import type { LineMapping, ParsedSourceLine, StatementLine, StatementSection } from '../data';
-import { isCalculated } from './engine/resolve';
 
 const FUZZY_THRESHOLD = 0.6;
 
@@ -53,7 +52,9 @@ export function matchStatementLines(
 
   for (const section of sections) {
     for (const line of section.lines) {
-      if (isCalculated(line)) continue; // calculated lines are never matched to source data
+      // Every line gets a match attempt now, calculated or not — an explicit mapped value wins
+      // over a formula wherever one exists (see lib/engine/evaluate.ts's computeLine), so an
+      // issuer that reports a subtotal directly can be matched to it like any other line.
       result[line.id] = matchOne(line, sourceLines, additionalAliasesByLineId[line.id] ?? []);
     }
   }

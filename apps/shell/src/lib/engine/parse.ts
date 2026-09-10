@@ -1,7 +1,20 @@
 const OPERATORS = new Set(['+', '-', '*', '/', '^', '(', ')', ',']);
 
 /** Functions a formula may call without them being flagged as unknown line references. */
-const KNOWN_FUNCTIONS = new Set(['sum', 'min', 'max', 'avg', 'average', 'abs']);
+const KNOWN_FUNCTIONS = new Set(['sum', 'min', 'max', 'avg', 'average', 'abs', 'priorperiod', 'prioryear']);
+
+/** Canonical fn name for each recognized (lowercased) function keyword — handles the
+ *  'average' -> 'avg' alias and normalizes 'priorperiod'/'prioryear' to their camelCase form. */
+const FUNCTION_ALIASES: Record<string, 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear'> = {
+  sum: 'sum',
+  min: 'min',
+  max: 'max',
+  avg: 'avg',
+  average: 'avg',
+  abs: 'abs',
+  priorperiod: 'priorPeriod',
+  prioryear: 'priorYear',
+};
 
 function isWordChar(ch: string | undefined): boolean {
   return ch !== undefined && /[a-zA-Z0-9_]/.test(ch);
@@ -90,7 +103,7 @@ export type FormulaAst =
   | { kind: 'ref'; name: string }
   | { kind: 'neg'; arg: FormulaAst }
   | { kind: 'bin'; op: '+' | '-' | '*' | '/' | '^'; left: FormulaAst; right: FormulaAst }
-  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs'; args: FormulaAst[] };
+  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear'; args: FormulaAst[] };
 
 export type ParseResult = { ok: true; ast: FormulaAst } | { ok: false; errors: string[] };
 
@@ -188,14 +201,10 @@ export function parseFormula(formula: string, knownNames: string[]): ParseResult
       }
       if (!atOp(')')) throw new ParseError(`Expected ")" to close ${t.text}(...)`);
       advance();
-      const fn = (t.text.toLowerCase() === 'average' ? 'avg' : t.text.toLowerCase()) as
-        | 'sum'
-        | 'min'
-        | 'max'
-        | 'avg'
-        | 'abs';
-      if (fn === 'abs' && args.length !== 1) throw new ParseError('abs() takes exactly 1 argument');
-      if (fn !== 'abs' && args.length < 1) throw new ParseError(`${t.text}() takes at least 1 argument`);
+      const fn = FUNCTION_ALIASES[t.text.toLowerCase()];
+      const singleArgFns = fn === 'abs' || fn === 'priorPeriod' || fn === 'priorYear';
+      if (singleArgFns && args.length !== 1) throw new ParseError(`${t.text}() takes exactly 1 argument`);
+      if (!singleArgFns && args.length < 1) throw new ParseError(`${t.text}() takes at least 1 argument`);
       return { kind: 'call', fn, args };
     }
     if (t.kind === 'op' && t.text === '(') {

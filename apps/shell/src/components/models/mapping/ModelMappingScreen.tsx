@@ -99,7 +99,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       if (editing && selectedSchemaId === editing.model.statementSchemaId) {
         const savedMapping = await mappingRepository.get(editing.model.mappingId);
         if (!cancelled && savedMapping) {
-          setMapping(Object.fromEntries(savedMapping.lines.map((m) => [m.targetLineId, m])));
+          // A saved mapping can predate a schema line that's since become mappable (or just
+          // been added) — back those in with a fresh match rather than leaving them undefined,
+          // which MappingRowDetail (a required, non-optional prop) would otherwise crash on.
+          const fresh = matchStatementLines(statementSchema.sections, workbook.lines);
+          const saved = Object.fromEntries(savedMapping.lines.map((m) => [m.targetLineId, m]));
+          setMapping({ ...fresh, ...saved });
         }
         return;
       }
@@ -151,7 +156,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     () => statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))),
     [statementSchema],
   );
-  const mappableLines = useMemo(() => allLines.filter(({ line }) => !isCalculated(line)), [allLines]);
+  // Lines expected to carry a real mapped value — every non-calculated line, plus a
+  // projection-carrying calculated line (still needs one for its actual periods). A purely
+  // structural formula (no projection) never needs one, so it's excluded from this "must map"
+  // count — it's mappable too (an issuer-reported subtotal can still be matched), just not
+  // required to be.
+  const mappableLines = useMemo(() => allLines.filter(({ line }) => !isCalculated(line) || line.projection), [allLines]);
   const mappedCount = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) > 0).length;
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
@@ -283,7 +293,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       label: '',
       width: 24,
       render: (_: unknown, row: { line?: StatementLine }) =>
-        row.line && !isCalculated(row.line) ? (
+        row.line ? (
           <Icon name={expandedLineId === row.line.id ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
         ) : null,
     },
@@ -312,7 +322,11 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             >
               {row.line.name}
             </span>
-            {isCalculated(row.line) ? <Icon name="function-square" size={11} color="var(--text-tertiary)" /> : null}
+            {isCalculated(row.line) && !row.line.projection ? (
+              <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
+                <Icon name="function-square" size={11} color="var(--text-tertiary)" />
+              </span>
+            ) : null}
           </div>
         );
       },
@@ -323,20 +337,22 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 280,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (isCalculated(row.line)) {
-          return (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-              {formatFormula(row.line.formula, nameIndex)}
-            </span>
-          );
-        }
         const m = mapping[row.line.id];
         const empty = !m || m.sourceLineIds.length === 0;
-        const summary = empty
-          ? 'Not mapped'
-          : m.sourceLineIds.map((id) => workbook.lines.find((source) => source.id === id)?.name).join('  +  ');
+        // A structural formula (no projection) is never expected to be mapped — an empty cell
+        // for it is a non-event, not worth a "Not mapped" label competing for attention with a
+        // genuinely missing line.
+        const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
+        if (empty && !expectsMapping) return null;
+        const summary = empty ? 'Not mapped' : m.sourceLineIds.map((id) => workbook.lines.find((source) => source.id === id)?.name).join('  +  ');
         return (
-          <span style={{ fontSize: 'var(--text-xs)', color: empty ? 'var(--text-caution)' : 'var(--text-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span
+            style={{
+              fontSize: 'var(--text-xs)',
+              color: empty ? 'var(--text-caution)' : 'var(--text-body)',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}
+          >
             {summary}
             {m && m.sourceLineIds.length > 1 ? (
               <span style={{ marginLeft: 'var(--space-3)', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-3xs)', color: 'var(--text-tertiary)' }}>
@@ -367,10 +383,11 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 130,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (isCalculated(row.line)) {
-          return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Derived</span>;
-        }
         const m = mapping[row.line.id];
+        // No real match, and this line never needed one — a structural formula's fallback, not
+        // a genuinely unmapped line, so blank rather than the caution "Unmapped" badge.
+        const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
+        if ((!m || m.method === 'none') && !expectsMapping) return null;
         if (!m) return null;
         const meta = MATCH_METHOD_META[m.method];
         return (
@@ -394,31 +411,26 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 96,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if (isCalculated(row.line)) {
-          const error = evaluation.getError(row.line.id);
-          if (error) {
-            return (
-              <span title={error} style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
-                <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
-              </span>
-            );
-          }
-          const calculatedValue = evaluation.getValue(row.line.id, i);
+        const error = evaluation.getError(row.line.id);
+        if (error) {
           return (
-            <span
-              style={{
-                fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-                color: calculatedValue === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
-              }}
-            >
-              {formatPeriodValue(calculatedValue)}
+            <span title={error} style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
+              <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
             </span>
           );
         }
-        const value = historicals[row.line.id]?.[i] ?? null;
+        // evaluation already applies the mapped-value-wins-else-formula priority uniformly, so
+        // this is correct for every line — status/badge columns already say whether a line is
+        // calculated or mapped, so the value itself doesn't need a second, redundant color cue.
+        const value = evaluation.getValue(row.line.id, i);
         return (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)', color: value === null ? 'var(--text-disabled)' : 'var(--text-body)' }}>
-            {formatPeriodValue(value)}
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+              color: value === null ? 'var(--text-disabled)' : 'var(--text-body)',
+            }}
+          >
+            {formatPeriodValue(value, row.line.numberFormat)}
           </span>
         );
       },
@@ -558,7 +570,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           maxHeight="calc(100vh - 420px)"
           expandedKey={expandedLineId}
           onRowClick={(row) => {
-            if (row.line && !isCalculated(row.line)) setExpandedLineId(expandedLineId === row.line.id ? null : row.line.id);
+            if (row.line) setExpandedLineId(expandedLineId === row.line.id ? null : row.line.id);
           }}
           renderDetail={(row: { line?: StatementLine; sectionName?: string }) =>
             row.line ? (

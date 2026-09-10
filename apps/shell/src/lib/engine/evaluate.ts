@@ -1,8 +1,60 @@
-import type { Model, ResolvedFormula, StatementLine, StatementSchema } from '../../data';
+import type { DriverDefinition, Model, PeriodType, ResolvedFormula, StatementLine, StatementSchema, Timeline } from '../../data';
 import { buildLineGraph } from './graph';
 
 const TOLERANCE = 1e-6;
 const MAX_ITERATIONS = 100;
+
+/** How far a same-type period's end date may drift from exactly one year prior and still count
+ *  as "the prior year" — roughly 20% of the period's nominal length, generous enough to survive
+ *  a fiscal-year-end that moves by a few weeks year to year, tight enough to refuse a match
+ *  across a real gap in the data (e.g. only two FYs on file, three years apart). */
+const PRIOR_YEAR_TOLERANCE_DAYS: Record<PeriodType, number> = {
+  FY: 60,
+  'Semi-Annual': 35,
+  Quarter: 18,
+};
+const MS_PER_DAY = 86_400_000;
+
+/** Parses a plain "YYYY-MM-DD" endDate into UTC milliseconds without ever going through a Date
+ *  constructor's local-timezone interpretation — endDate is always a date-only ISO string, and
+ *  `new Date(s).getDate()` etc. can silently shift by a day depending on the runtime's timezone. */
+function toUTCMillis(endDate: string): number {
+  const [y, m, d] = endDate.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+/** One calendar year before `endDate`, in UTC milliseconds. Deliberately not "minus 365 days" —
+ *  calendar subtraction is what makes Feb 29 land on Mar 1 in a non-leap year rather than
+ *  drifting by a day, which is the normalization `Date.UTC` already does for an out-of-range day. */
+function oneYearBeforeMillis(endDate: string): number {
+  const [y, m, d] = endDate.split('-').map(Number);
+  return Date.UTC(y - 1, m - 1, d);
+}
+
+/** Finds the period one year before `timeline[periodIndex]`, matched by date rather than a fixed
+ *  index offset so it stays correct on a hybrid or non-annual timeline (a semi-annual model's
+ *  "one year back" is 2 periods, a quarterly model's is 4 — both fall out of this search for
+ *  free, no special-casing per PeriodType needed beyond the tolerance table above). Restricted to
+ *  periods of the same `type` so it never matches across a mixed-frequency timeline by accident;
+ *  only ever looks at indices before `periodIndex`, which periods are always built/extended in
+ *  order, so this is exactly the set already evaluated by the time this runs. */
+function findPriorYear(timeline: Timeline, periodIndex: number): number | null {
+  const period = timeline[periodIndex];
+  const target = oneYearBeforeMillis(period.endDate);
+  const tolerance = PRIOR_YEAR_TOLERANCE_DAYS[period.type] * MS_PER_DAY;
+
+  let bestIndex: number | null = null;
+  let bestDiff = Infinity;
+  for (let i = 0; i < periodIndex; i++) {
+    if (timeline[i].type !== period.type) continue;
+    const diff = Math.abs(toUTCMillis(timeline[i].endDate) - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestIndex = i;
+    }
+  }
+  return bestIndex !== null && bestDiff <= tolerance ? bestIndex : null;
+}
 
 export interface EvaluationResult {
   /** null means no value for that period — an uncalculated line with no mapped historical,
@@ -11,13 +63,17 @@ export interface EvaluationResult {
   /** Set only for a cyclic group of lines whose fixed-point iteration didn't converge — a
    *  correctness bug to surface as an error, per the engine's staleness design, not a badge. */
   getError(lineId: string): string | undefined;
+  /** The value a driverRef actually resolves to at this period — the stored value if one was
+   *  entered, otherwise the same default `evalNode`'s driverRef case falls back to (0% for
+   *  growth; the last actual period's own implied ratio for percent-of/days-of). Lets the
+   *  drivers panel show what's actually being assumed instead of a blank when nothing's typed. */
+  getDriverValue(driverId: string, periodIndex: number): number | null;
 }
 
-/** Only the two fields evaluateModel actually reads — a saved Model satisfies this, but so does
- *  an in-progress mapping-screen draft that hasn't been saved as a Model yet (or, later, a
- *  projected timeline whose non-calculated periods are sourced from drivers instead of a
- *  mapped workbook — the evaluator doesn't care where a period's raw inputs came from). */
-export type EvaluationInput = Pick<Model, 'timeline' | 'historicals'>;
+/** Only the fields evaluateModel actually reads — a saved Model satisfies this, but so does an
+ *  in-progress mapping-screen draft that hasn't been saved as a Model yet. `driverValues` may be
+ *  omitted (e.g. a draft with no drivers yet) and is treated as empty. */
+export type EvaluationInput = Pick<Model, 'timeline' | 'historicals'> & { driverValues?: Model['driverValues'] };
 
 /** Non-finite (NaN/Infinity, e.g. from a division by zero elsewhere or 0^-1) collapses to null
  *  rather than leaking into the UI — a modeling engine should show a blank, not "NaN". */
@@ -35,11 +91,22 @@ function finite(v: number): number | null {
 export function evaluateModel(schema: StatementSchema, model: EvaluationInput): EvaluationResult {
   const graph = buildLineGraph(schema);
   const linesById = new Map<string, StatementLine>(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l]));
+  const driversById = new Map<string, DriverDefinition>((schema.drivers ?? []).map((d) => [d.id, d]));
   const periodCount = model.timeline.length;
 
   const memo = new Map<string, Map<number, number | null>>();
   for (const id of graph.lineIds) memo.set(id, new Map());
   const errors = new Map<string, string>();
+
+  // The last period that isn't a projection — periods are always built/extended so actuals form
+  // a prefix and projected ones a suffix, but this scans defensively rather than assuming that.
+  let lastActualIndex = -1;
+  for (let i = model.timeline.length - 1; i >= 0; i--) {
+    if (model.timeline[i].kind === 'actual') {
+      lastActualIndex = i;
+      break;
+    }
+  }
 
   function historicalValue(lineId: string, periodIndex: number): number | null {
     return model.historicals[lineId]?.[periodIndex] ?? null;
@@ -54,6 +121,28 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
     return null;
   }
 
+  /** What an unfilled driver period falls back to: 0% growth (a flat carry-forward, same
+   *  assumption 'flat' itself makes) or, for percent-of/days-of, whatever ratio the last actual
+   *  period actually implies — an unfilled projection continues the recent trend rather than
+   *  going silently blank. Reads lastActualIndex, always strictly before any period a driver
+   *  default is ever needed for, so both lines are guaranteed already resolved in memo. */
+  function defaultDriverValue(driver: DriverDefinition): number | null {
+    if (driver.method === 'growth') return 0;
+    if (lastActualIndex < 0 || !driver.basisLineId) return null;
+    const targetValue = readLine(driver.targetLineId, lastActualIndex, undefined);
+    const basisValue = readLine(driver.basisLineId, lastActualIndex, undefined);
+    if (targetValue === null || basisValue === null || basisValue === 0) return null;
+    const ratio = targetValue / basisValue;
+    return driver.method === 'days-of' ? ratio * 365 : ratio;
+  }
+
+  function driverValue(driverId: string, periodIndex: number): number | null {
+    const explicit = model.driverValues?.[driverId]?.[periodIndex] ?? null;
+    if (explicit !== null) return explicit;
+    const driver = driversById.get(driverId);
+    return driver ? defaultDriverValue(driver) : null;
+  }
+
   function evalNode(
     node: ResolvedFormula,
     periodIndex: number,
@@ -61,6 +150,7 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
   ): number | null {
     if (node.kind === 'num') return node.value;
     if (node.kind === 'ref') return readLine(node.lineId, periodIndex, cycleValues);
+    if (node.kind === 'driverRef') return driverValue(node.driverId, periodIndex);
     if (node.kind === 'neg') {
       const v = evalNode(node.arg, periodIndex, cycleValues);
       return v === null ? null : -v;
@@ -82,6 +172,13 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
           return finite(Math.pow(l, r));
       }
     }
+    if (node.fn === 'priorPeriod' || node.fn === 'priorYear') {
+      const priorIndex = node.fn === 'priorPeriod' ? periodIndex - 1 : findPriorYear(model.timeline, periodIndex);
+      if (priorIndex === null || priorIndex < 0) return null;
+      // undefined, not cycleValues — this reads a DIFFERENT period, so the current period's
+      // in-flight Gauss-Seidel values (scoped to periodIndex) must never leak into it.
+      return evalNode(node.args[0], priorIndex, undefined);
+    }
     // call — abs takes exactly one arg and propagates null; sum/min/max/avg skip null args
     // (an Excel-like "ignore blanks"), and are null only when every arg is null.
     const args = node.args.map((a) => evalNode(a, periodIndex, cycleValues));
@@ -100,10 +197,18 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
     }
   }
 
+  // An explicit mapped value always wins over a formula when one exists for this exact period —
+  // the formula (if any) is only ever the fallback. This is what lets a normally-sourced line
+  // (mapped for every actual period) carry a projection formula for its future periods without
+  // the two ever colliding: the mapped branch already covers every actual period, so the formula
+  // only fires where no mapped value could possibly exist. It's also what lets an issuer-reported
+  // subtotal (a line that also has a structural formula) prefer its as-reported figure over
+  // recomputing it, wherever the source actually states one.
   function computeLine(lineId: string, periodIndex: number, cycleValues: Map<string, number | null> | undefined): number | null {
+    const mapped = historicalValue(lineId, periodIndex);
+    if (mapped !== null) return mapped;
     const line = linesById.get(lineId);
-    if (!line?.formula) return historicalValue(lineId, periodIndex);
-    return evalNode(line.formula, periodIndex, cycleValues);
+    return line?.formula ? evalNode(line.formula, periodIndex, cycleValues) : null;
   }
 
   for (let p = 0; p < periodCount; p++) {
@@ -145,5 +250,6 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
   return {
     getValue: (lineId, periodIndex) => memo.get(lineId)?.get(periodIndex) ?? null,
     getError: (lineId) => errors.get(lineId),
+    getDriverValue: (driverId, periodIndex) => driverValue(driverId, periodIndex),
   };
 }
