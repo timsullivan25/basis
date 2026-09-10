@@ -60,7 +60,14 @@ function formatDriverValue(value: number | null, unit: string): string {
  *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. Always
  *  seeded from the raw stored value (blank if unset), never the computed default — editing means
  *  setting an override, not accepting-then-resaving whatever was being assumed. */
-function DriverValueInput({ stored, unit, onCommit }: { stored: number | null; unit: string; onCommit: (value: number | null) => void }) {
+function DriverValueInput({
+  stored, unit, onCommit, wasEditCancelled,
+}: {
+  stored: number | null;
+  unit: string;
+  onCommit: (value: number | null) => void;
+  wasEditCancelled?: () => boolean;
+}) {
   const [text, setText] = useState(() => toDisplayValue(stored, unit));
   return (
     <Input
@@ -68,9 +75,13 @@ function DriverValueInput({ stored, unit, onCommit }: { stored: number | null; u
       mono
       type="number"
       autoFocus
+      selectOnFocus
       value={text}
       onChange={(e) => setText(e.target.value)}
-      onBlur={() => onCommit(fromDisplayValue(text, unit))}
+      onBlur={() => {
+        if (wasEditCancelled?.()) return;
+        onCommit(fromDisplayValue(text, unit));
+      }}
     />
   );
 }
@@ -106,7 +117,7 @@ function ScenarioNameDialog({
       }
     >
       <Field label="Name">
-        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus />
+        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus selectOnFocus />
       </Field>
     </Dialog>
   );
@@ -487,9 +498,10 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
 
   // The active level's OWN explicit values — a scenario's own overrides when one is active, the
   // model's (Base's) own values otherwise. Deliberately not the merged/effective map: "stored"
-  // marks what THIS level actually typed, distinct from whatever it falls back to (see `isDefault`
-  // below, unchanged from Phase 4 — a scenario inheriting Base's value looks the same as one
-  // falling to the computed default, both italicized as "not typed at this level").
+  // marks what THIS level actually typed, distinct from whatever it falls back to (see the render
+  // below, which now tells apart two different reasons a cell isn't explicit — inherited from
+  // Base vs. a computed default — after user feedback that collapsing them into one italic look
+  // made it impossible to tell which one you were looking at).
   const activeStoredDriverValues = activeScenario ? activeScenario.driverValues : (model.driverValues ?? {});
 
   const driverColumns = [
@@ -511,28 +523,40 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       render: (_: unknown, row: DriverDefinition) => {
         const stored = activeStoredDriverValues[row.id]?.[index] ?? null;
         const effective = evaluation?.getDriverValue(row.id, index) ?? null;
-        // No explicit value entered, but a default was computed (0% growth, or the last actual
-        // period's own implied ratio) — shown, not left blank, but italicized the same way a
-        // metric row already is elsewhere in this app, to mark it as an assumption rather than
-        // something actually typed.
-        const isDefault = stored === null && effective !== null;
+        const baseStored = model.driverValues?.[row.id]?.[index] ?? null;
+        // Two different reasons a cell can be non-explicit, not one — this scenario is tracking
+        // Base's own explicit number (will move if Base's does), or nothing at any level has an
+        // explicit number and the engine computed one (0% growth, or the last actual period's own
+        // implied ratio). Collapsing both into one italic look was the original design; feedback
+        // after real use was that it's impossible to tell which is happening without this.
+        const isInherited = stored === null && activeScenario !== null && baseStored !== null;
+        const isSoft = stored === null && effective !== null;
+        const title = isInherited
+          ? `Tracking Base case — enter a value here to override it for "${activeScenario!.name}"`
+          : isSoft
+            ? 'Computed default — no explicit value entered for this period'
+            : undefined;
         return (
           <span
+            title={title}
             style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
               fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-              fontStyle: isDefault ? 'italic' : 'normal',
-              color: effective === null ? 'var(--text-disabled)' : isDefault ? 'var(--text-tertiary)' : 'var(--text-body)',
+              fontStyle: isSoft ? 'italic' : 'normal',
+              color: effective === null ? 'var(--text-disabled)' : isSoft ? 'var(--text-tertiary)' : 'var(--text-body)',
             }}
           >
+            {isInherited ? <Icon name="corner-down-right" size={10} color="var(--text-tertiary)" /> : null}
             {formatDriverValue(effective, row.unit)}
           </span>
         );
       },
-      renderEdit: (_: unknown, row: DriverDefinition) => (
+      renderEdit: (_: unknown, row: DriverDefinition, wasEditCancelled: () => boolean) => (
         <DriverValueInput
           stored={activeStoredDriverValues[row.id]?.[index] ?? null}
           unit={row.unit}
           onCommit={(value) => updateDriverValue(row.id, index, value)}
+          wasEditCancelled={wasEditCancelled}
         />
       ),
     })),

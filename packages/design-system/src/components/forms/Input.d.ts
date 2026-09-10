@@ -14,6 +14,9 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
   /** Tabular mono figures — use for every numeric input. */
   mono?: boolean;
   fullWidth?: boolean;
+  /** Selects the full value on focus, so a click into a pre-filled field replaces it on the next
+   *  keystroke instead of appending. Use for any field seeded from an existing value. */
+  selectOnFocus?: boolean;
   /** Shows a clear affordance when value is non-empty. */
   onClear?: () => void;
   style?: React.CSSProperties;

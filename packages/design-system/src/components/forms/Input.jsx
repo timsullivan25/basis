@@ -8,7 +8,7 @@ const FIELD_SIZES = {
 };
 
 /** Single-line text/number input with optional icons, prefix and unit suffix. */
-export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, style, onClear, value, ...rest }, ref) {
+export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, selectOnFocus = false, style, onClear, value, onFocus, onBlur, ...rest }, ref) {
   const [focus, setFocus] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const s = FIELD_SIZES[size] || FIELD_SIZES.md;
@@ -30,7 +30,8 @@ export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, ic
       <input
         ref={ref}
         value={value} disabled={disabled}
-        onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+        onFocus={(e) => { setFocus(true); if (selectOnFocus) e.target.select(); onFocus?.(e); }}
+        onBlur={(e) => { setFocus(false); onBlur?.(e); }}
         style={{
           flex: '1 1 auto', minWidth: 0, width: '100%', height: '100%', padding: 0,
           border: 'none', outline: 'none', background: 'transparent',
