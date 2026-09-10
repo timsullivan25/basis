@@ -38,6 +38,7 @@ function fixtureSchema(): StatementSchema {
     id: 's1',
     name: 'Test',
     createdAt: '',
+    updatedAt: '',
     sections: [
       {
         id: 'income-statement',

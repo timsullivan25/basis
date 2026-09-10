@@ -101,6 +101,9 @@ export interface StatementSchema {
   /** Set when this schema was created via duplicate() — provenance only, no runtime merge with the source. */
   copiedFromSchemaId?: string;
   createdAt: string;
+  /** Bumped on every save() — part of a computed result's version stamp (see ComputedResult), so a
+   *  formula/driver edit invalidates any cached result for every model built on this schema. */
+  updatedAt: string;
   /** Array position is the display order of sections. */
   sections: StatementSection[];
   drivers: DriverDefinition[];
@@ -111,7 +114,9 @@ export interface StatementSchemaRepository {
   get(id: string): Promise<StatementSchema | undefined>;
   create(input: { name: string }): Promise<StatementSchema>;
   duplicate(id: string, name: string): Promise<StatementSchema>;
-  save(schema: StatementSchema): Promise<void>;
+  /** Returns the persisted record (its `updatedAt` is bumped on save) — use this, not the object
+   *  passed in, as the new source of truth for any local state tracking the schema. */
+  save(schema: StatementSchema): Promise<StatementSchema>;
   remove(id: string): Promise<void>;
 }
 
@@ -241,6 +246,8 @@ export interface Model {
    *  indices; edited via the drivers panel, never resolved from a workbook. */
   driverValues: Record<string, (number | null)[]>;
   createdAt: string;
+  /** Bumped on every update() — part of a computed result's version stamp (see ComputedResult). */
+  updatedAt: string;
 }
 
 export interface CreateModelInput {
@@ -282,6 +289,8 @@ export interface Scenario {
   name: string;
   driverValues: Record<string, (number | null)[]>;
   createdAt: string;
+  /** Bumped on every update() — part of a computed result's version stamp (see ComputedResult). */
+  updatedAt: string;
 }
 
 export interface CreateScenarioInput {
@@ -298,4 +307,44 @@ export interface ScenarioRepository {
   create(input: CreateScenarioInput): Promise<Scenario>;
   update(id: string, patch: Partial<Pick<Scenario, 'name' | 'driverValues'>>): Promise<Scenario>;
   remove(id: string): Promise<void>;
+}
+
+/** 'base' sentinel or a real Scenario.id — mirrors ModelWorkspaceScreen's activeScenarioId
+ *  convention (the implicit Base case is never itself a stored Scenario row). */
+export type ScenarioKey = 'base' | string;
+
+/** The three fields a computed result's freshness depends on — compared against the CURRENT live
+ *  `updatedAt` values on read (see lib/computedCache.ts's versionStampMatches). A mismatch means
+ *  outputs may no longer agree with the inputs that produced them — the architecture contract's
+ *  "calculation desync" — and is always treated as a silent cache miss (recompute, overwrite),
+ *  never surfaced as a user-facing staleness badge; that's a different concept (see the modeling
+ *  plan's Phase 6 notes on temporal staleness, deliberately not built yet). */
+export interface ComputedResultVersionStamp {
+  modelUpdatedAt: string;
+  /** null when scenarioId is 'base' — Base has no Scenario row to stamp. */
+  scenarioUpdatedAt: string | null;
+  schemaUpdatedAt: string;
+}
+
+/**
+ * A materialized, plain-data snapshot of an EvaluationResult (see lib/engine/evaluate.ts) for one
+ * (model, scenario) pair — "computed state is a cache, not a source" per the architecture
+ * contract. EvaluationResult itself is a set of closures over Maps and can't be persisted directly;
+ * `values`/`errors` are the same data flattened to plain records via lib/computedCache.ts's
+ * materializeEvaluation, keyed by lineId and index-aligned to the model's timeline.
+ */
+export interface ComputedResult {
+  /** `${modelId}:${scenarioId}` — also the natural primary key, so `set()` is a plain upsert. */
+  id: string;
+  modelId: string;
+  scenarioId: ScenarioKey;
+  values: Record<string, (number | null)[]>;
+  errors: Record<string, string>;
+  versionStamp: ComputedResultVersionStamp;
+  computedAt: string;
+}
+
+export interface ComputedResultRepository {
+  get(modelId: string, scenarioId: ScenarioKey): Promise<ComputedResult | undefined>;
+  set(result: ComputedResult): Promise<void>;
 }

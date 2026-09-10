@@ -193,10 +193,12 @@ export function createDefaultStatementSchema(): StatementSchema {
     creditMetrics(),
   ];
   const index = buildNameIndex({ sections: draftSections });
+  const now = new Date().toISOString();
   return {
     id: DEFAULT_SCHEMA_ID,
     name: 'Basis Default',
-    createdAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
     sections: draftSections.map((s) => compileSection(s, index)),
     drivers: [],
   };

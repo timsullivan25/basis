@@ -183,8 +183,7 @@ export function StatementDefinitionsScreen() {
 
   async function handleRename() {
     if (!selectedSchema) return;
-    const renamed = { ...selectedSchema, name: pendingName.trim(), sections, drivers };
-    await statementSchemaRepository.save(renamed);
+    const renamed = await statementSchemaRepository.save({ ...selectedSchema, name: pendingName.trim(), sections, drivers });
     setSchemas((prev) => prev.map((s) => (s.id === renamed.id ? renamed : s)));
     setDialog(null);
     setToast('Schema renamed');
@@ -337,8 +336,7 @@ export function StatementDefinitionsScreen() {
     if (!selectedSchema) return;
     setSaving(true);
     try {
-      const updated = { ...selectedSchema, sections, drivers };
-      await statementSchemaRepository.save(updated);
+      const updated = await statementSchemaRepository.save({ ...selectedSchema, sections, drivers });
       setSchemas((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setSavedSnapshot(snapshotOf(sections, drivers));
       setToast('Statement definitions saved');

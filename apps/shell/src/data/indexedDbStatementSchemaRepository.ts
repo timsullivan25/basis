@@ -69,10 +69,12 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
 
   async create(input: { name: string }): Promise<StatementSchema> {
     const db = await openBasisDb();
+    const now = new Date().toISOString();
     const schema: StatementSchema = {
       id: crypto.randomUUID(),
       name: input.name,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       sections: [],
       drivers: [],
     };
@@ -88,11 +90,13 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     const idMap = new Map<string, string>();
     const clonedSections = source.sections.map((s) => cloneSectionShallow(s, idMap));
     const clonedDrivers = cloneDriversShallow(source.drivers ?? [], idMap);
+    const now = new Date().toISOString();
     const copy: StatementSchema = {
       id: crypto.randomUUID(),
       name,
       copiedFromSchemaId: source.id,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       sections: clonedSections.map((s) => remapSectionFormulas(s, idMap)),
       drivers: remapDriverLineRefs(clonedDrivers, idMap),
     };
@@ -100,9 +104,11 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     return copy;
   }
 
-  async save(schema: StatementSchema): Promise<void> {
+  async save(schema: StatementSchema): Promise<StatementSchema> {
     const db = await openBasisDb();
-    await db.put('statementSchema', schema);
+    const updated: StatementSchema = { ...schema, updatedAt: new Date().toISOString() };
+    await db.put('statementSchema', updated);
+    return updated;
   }
 
   async remove(id: string): Promise<void> {

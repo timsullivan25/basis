@@ -34,7 +34,7 @@ function driverRef(driverId: string): ResolvedFormula {
 }
 
 function schema(lines: StatementLine[], drivers: DriverDefinition[] = []): StatementSchema {
-  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers };
+  return { id: 's1', name: 'Test', createdAt: '', updatedAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers };
 }
 
 function driver(id: string, method: ProjectionMethod, targetLineId: string, basisLineId?: string): DriverDefinition {
@@ -57,6 +57,7 @@ function modelWithTimeline(
     historicals,
     driverValues,
     createdAt: '',
+    updatedAt: '',
   };
 }
 

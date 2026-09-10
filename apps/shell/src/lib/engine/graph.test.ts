@@ -30,7 +30,7 @@ function driverRef(driverId: string): ResolvedFormula {
 }
 
 function schema(lines: StatementLine[]): StatementSchema {
-  return { id: 's1', name: 'Test', createdAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers: [] };
+  return { id: 's1', name: 'Test', createdAt: '', updatedAt: '', sections: [{ id: 'sec', name: 'Section', lines }], drivers: [] };
 }
 
 describe('buildLineGraph', () => {
