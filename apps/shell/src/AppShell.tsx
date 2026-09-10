@@ -108,6 +108,7 @@ export function AppShell() {
       if (viewingSnapshotId) {
         return (
           <SnapshotViewScreen
+            key={viewingSnapshotId}
             company={selectedCompany}
             snapshotId={viewingSnapshotId}
             onReturnToLive={() => setViewingSnapshotId(null)}
