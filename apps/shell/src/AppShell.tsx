@@ -7,6 +7,7 @@ import { ModelWorkspaceScreen } from './screens/ModelWorkspaceScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
 import { SettingsIndexScreen } from './screens/SettingsIndexScreen';
+import { SnapshotViewScreen } from './screens/SnapshotViewScreen';
 import { StatementDefinitionsScreen } from './screens/StatementDefinitionsScreen';
 
 const NAV_ITEMS: SideNavItem[] = [
@@ -33,11 +34,13 @@ const SCREENS: Record<string, { section: string; title: string; parent?: string 
 
 const PORTFOLIO_CRUMB = 'portfolio-root';
 const COMPANY_CRUMB = 'company-root';
+const WORKSPACE_CRUMB = 'workspace-root';
 
 export function AppShell() {
   const [active, setActive] = useState('overview');
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   const [viewingModelWorkspace, setViewingModelWorkspace] = useState(false);
+  const [viewingSnapshotId, setViewingSnapshotId] = useState<string | null>(null);
   const [mappingSession, setMappingSession] = useState<ModelMappingScreenProps | null>(null);
   const screen = SCREENS[active] ?? SCREENS.overview;
   const parentScreen = screen.parent ? SCREENS[screen.parent] : null;
@@ -63,6 +66,7 @@ export function AppShell() {
     setActive(value);
     setSelectedCompany(null);
     setViewingModelWorkspace(false);
+    setViewingSnapshotId(null);
   }
 
   const breadcrumbItems = parentScreen
@@ -72,8 +76,9 @@ export function AppShell() {
         { value: PORTFOLIO_CRUMB, label: screen.title },
         ...(active === 'portfolio' && selectedCompany
           ? [
-              { value: viewingModelWorkspace ? COMPANY_CRUMB : undefined, label: selectedCompany.name },
-              ...(viewingModelWorkspace ? [{ label: 'Model' }] : []),
+              { value: viewingModelWorkspace || viewingSnapshotId ? COMPANY_CRUMB : undefined, label: selectedCompany.name },
+              ...(viewingModelWorkspace && !viewingSnapshotId ? [{ label: 'Model' }] : []),
+              ...(viewingSnapshotId ? [{ value: WORKSPACE_CRUMB, label: 'Model' }, { label: 'Snapshot' }] : []),
             ]
           : []),
       ];
@@ -82,8 +87,12 @@ export function AppShell() {
     if (value === PORTFOLIO_CRUMB && selectedCompany) {
       setSelectedCompany(null);
       setViewingModelWorkspace(false);
+      setViewingSnapshotId(null);
     } else if (value === COMPANY_CRUMB) {
       setViewingModelWorkspace(false);
+      setViewingSnapshotId(null);
+    } else if (value === WORKSPACE_CRUMB) {
+      setViewingSnapshotId(null);
     } else if (value && value === screen.parent) {
       setActive(value);
     }
@@ -91,13 +100,22 @@ export function AppShell() {
 
   const breadcrumbNavigable = Boolean(parentScreen) || (active === 'portfolio' && Boolean(selectedCompany));
 
-  const fullBleed = active === 'portfolio' && Boolean(selectedCompany) && viewingModelWorkspace;
+  const fullBleed = active === 'portfolio' && Boolean(selectedCompany) && (viewingModelWorkspace || Boolean(viewingSnapshotId));
 
   function renderScreen() {
     if (active === 'portfolio') {
       if (!selectedCompany) return <PortfolioScreen onSelectCompany={setSelectedCompany} />;
+      if (viewingSnapshotId) {
+        return (
+          <SnapshotViewScreen
+            company={selectedCompany}
+            snapshotId={viewingSnapshotId}
+            onReturnToLive={() => setViewingSnapshotId(null)}
+          />
+        );
+      }
       return viewingModelWorkspace ? (
-        <ModelWorkspaceScreen company={selectedCompany} />
+        <ModelWorkspaceScreen company={selectedCompany} onViewSnapshot={setViewingSnapshotId} />
       ) : (
         <CompanyDetailScreen
           company={selectedCompany}

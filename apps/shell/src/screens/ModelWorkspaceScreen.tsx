@@ -17,13 +17,19 @@ import {
 } from '@basis/design-system';
 import {
   computedResultRepository,
+  mappingRepository,
+  modelImportRepository,
   modelRepository,
   scenarioRepository,
+  snapshotRepository,
   statementSchemaRepository,
   type Company,
   type DriverDefinition,
+  type Mapping,
   type Model,
+  type ModelImport,
   type Scenario,
+  type Snapshot,
   type StatementLine,
   type StatementSchema,
 } from '../data';
@@ -33,10 +39,13 @@ import { SummaryPanel } from '../components/models/SummaryPanel';
 import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
+import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { evaluateModel } from '../lib/engine/evaluate';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
+  /** Navigates to the read-only snapshot viewer — a sibling screen, not nested here — see AppShell. */
+  onViewSnapshot: (snapshotId: string) => void;
 }
 
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
@@ -149,9 +158,17 @@ function ScenarioNameDialog({
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
-export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
+export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
+  const [mapping, setMapping] = useState<Mapping | null>(null);
+  const [modelImport, setModelImport] = useState<ModelImport | null>(null);
+  const [snapshotDialogOpen, setSnapshotDialogOpen] = useState(false);
+  const [pendingSnapshotLabel, setPendingSnapshotLabel] = useState('');
+  const [pendingSnapshotNote, setPendingSnapshotNote] = useState('');
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [tab, setTab] = useState('all');
   const [horizonInput, setHorizonInput] = useState('0');
   // Set only while confirming a reduction in projected periods — growing needs no confirmation
@@ -185,10 +202,14 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       if (cancelled) return;
       const existingSchema = existingModel ? await statementSchemaRepository.get(existingModel.statementSchemaId) : null;
       const existingScenarios = existingModel ? await scenarioRepository.list(existingModel.id) : [];
+      const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
+      const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
       setScenarios(existingScenarios);
+      setMapping(existingMapping ?? null);
+      setModelImport(existingModelImport ?? null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -399,6 +420,41 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     setManualSnapshot(model ?? null);
   }
 
+  function openSnapshotDialog() {
+    if (!model) return;
+    setPendingSnapshotLabel(defaultSnapshotLabel(model));
+    setPendingSnapshotNote('');
+    setSnapshotDialogOpen(true);
+  }
+
+  async function handleCreateSnapshot() {
+    if (!model || !schema || !mapping || !modelImport || !pendingSnapshotLabel.trim()) return;
+    setSavingSnapshot(true);
+    try {
+      const input = buildSnapshot({
+        company,
+        model,
+        schema,
+        mapping,
+        modelImport,
+        scenarios,
+        label: pendingSnapshotLabel.trim(),
+        note: pendingSnapshotNote.trim(),
+      });
+      await snapshotRepository.create(input);
+      setSnapshotDialogOpen(false);
+      setToast('Snapshot saved');
+    } finally {
+      setSavingSnapshot(false);
+    }
+  }
+
+  async function openHistory() {
+    const list = await snapshotRepository.list(company.id);
+    setSnapshots(list);
+    setHistoryOpen(true);
+  }
+
   if (model === undefined) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
@@ -598,9 +654,18 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', padding: 'var(--gutter)' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{company.name}</span>
-        <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{company.name}</span>
+          <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
+        </div>
+        <div style={{ flex: '1 1 auto' }} />
+        <Button variant="secondary" iconLeft="history" onClick={openHistory}>
+          History
+        </Button>
+        <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
+          Snapshot
+        </Button>
       </div>
 
       <Card
@@ -842,6 +907,111 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
           Every driver assumption entered for this scenario will be permanently removed. The Base case and every other
           scenario are unaffected. This cannot be undone.
         </p>
+      </Dialog>
+
+      <Dialog
+        open={snapshotDialogOpen}
+        onClose={() => setSnapshotDialogOpen(false)}
+        icon="camera"
+        title="Save a snapshot"
+        width={420}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setSnapshotDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              iconLeft="camera"
+              disabled={!pendingSnapshotLabel.trim()}
+              loading={savingSnapshot}
+              onClick={handleCreateSnapshot}
+            >
+              Save snapshot
+            </Button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <Field label="Label">
+            <Input
+              value={pendingSnapshotLabel}
+              onChange={(e) => setPendingSnapshotLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && pendingSnapshotLabel.trim()) handleCreateSnapshot();
+              }}
+              autoFocus
+              selectOnFocus
+            />
+          </Field>
+          <Field label="Note" hint="Optional — why this snapshot was taken.">
+            <Input
+              value={pendingSnapshotNote}
+              onChange={(e) => setPendingSnapshotNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && pendingSnapshotLabel.trim()) handleCreateSnapshot();
+              }}
+              placeholder="e.g. completed earnings update"
+            />
+          </Field>
+        </div>
+      </Dialog>
+
+      <Dialog open={historyOpen} onClose={() => setHistoryOpen(false)} icon="history" title="Snapshot history" width={640}>
+        {snapshots.length === 0 ? (
+          <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+            No snapshots yet. Use "Snapshot" to save one.
+          </p>
+        ) : (
+          <DataTable
+            columns={[
+              {
+                key: 'label',
+                label: 'Snapshot',
+                render: (_: unknown, row: Snapshot) => (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
+                      {row.label}
+                    </span>
+                    {row.note ? (
+                      <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{row.note}</span>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                key: 'createdAt',
+                label: 'Date',
+                width: 140,
+                render: (_: unknown, row: Snapshot) => (
+                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                    {new Date(row.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                ),
+              },
+              {
+                key: 'view',
+                label: '',
+                width: 80,
+                render: (_: unknown, row: Snapshot) => (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setHistoryOpen(false);
+                      onViewSnapshot(row.id);
+                    }}
+                  >
+                    View
+                  </Button>
+                ),
+              },
+            ]}
+            rows={snapshots}
+            rowKey="id"
+            dense
+          />
+        )}
       </Dialog>
 
       {toast ? (
