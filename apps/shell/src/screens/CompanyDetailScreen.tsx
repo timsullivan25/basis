@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Tabs } from '@basis/design-system';
 import type { Company } from '../data';
+import { DashboardTab } from '../components/models/DashboardTab';
 import { FinancialsTab } from '../components/models/FinancialsTab';
 import type { ModelMappingScreenProps } from '../components/models/mapping/ModelMappingScreen';
 import { PlaceholderScreen } from './PlaceholderScreen';
@@ -28,7 +29,9 @@ export function CompanyDetailScreen({ company, onOpenMapping, onOpenWorkspace }:
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
       <h1 style={{ fontSize: 'var(--text-2xl)' }}>{company.name}</h1>
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
-      {tab === 'financials' ? (
+      {tab === 'dashboard' ? (
+        <DashboardTab company={company} onOpenWorkspace={onOpenWorkspace} onGoToFinancials={() => setTab('financials')} />
+      ) : tab === 'financials' ? (
         <FinancialsTab company={company} onOpenMapping={onOpenMapping} onOpenWorkspace={onOpenWorkspace} />
       ) : (
         <PlaceholderScreen title={activeTab.label} />
