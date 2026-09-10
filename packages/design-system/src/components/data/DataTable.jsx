@@ -138,9 +138,14 @@ export function DataTable({
                           color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
                           whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
                           cursor: editable && !editing ? 'text' : undefined,
-                          ...(c.background ? { background: c.background } : null),
                           ...(stickyLeft ? { position: 'sticky', left: 0, zIndex: 1, background: rowBg, borderRight: '1px solid var(--border-default)' } : null),
                           ...rowOverrides,
+                          // Painted last, as a shadow rather than a background, so a column tint
+                          // (e.g. marking every projected-period column) stays visible as an overlay
+                          // on top of a row-level background (e.g. a total row) instead of being
+                          // replaced by it — the two would otherwise be indistinguishable whenever
+                          // both apply to the same cell.
+                          ...(c.background ? { boxShadow: `inset 0 0 0 999px ${c.background}` } : null),
                         }}
                       >
                         {editing ? c.renderEdit(r[c.key], r) : (c.render ? c.render(r[c.key], r) : r[c.key])}

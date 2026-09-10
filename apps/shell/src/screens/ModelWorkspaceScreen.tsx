@@ -206,9 +206,11 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       label: period.label,
       numeric: true,
       width: 110,
-      // A subtle tint marking every projected column, so the actual/projected boundary reads at
-      // a glance without needing a second color on the values themselves.
-      background: period.kind === 'projected' ? 'var(--surface-sunken)' : undefined,
+      // A faint blue tint marking every projected column, so the actual/projected boundary reads
+      // at a glance without needing a second color on the values themselves. Translucent (rather
+      // than the neutral --surface-sunken originally used here) so it stays visible as an overlay
+      // on top of a total row's own background instead of being swallowed by it.
+      background: period.kind === 'projected' ? 'var(--alpha-blue-12)' : undefined,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
         const error = evaluation?.getError(row.line.id);
