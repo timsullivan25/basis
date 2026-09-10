@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, DataTable, Dialog, Icon, Input, SegmentedControl, Tabs } from '@basis/design-system';
+import { Button, Card, DataTable, Dialog, Field, Icon, IconButton, Input, SegmentedControl, Select, Tabs, Toast } from '@basis/design-system';
 import {
   modelRepository,
+  scenarioRepository,
   statementSchemaRepository,
   type Company,
   type DriverDefinition,
   type Model,
+  type Scenario,
   type StatementLine,
   type StatementSchema,
 } from '../data';
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { extendTimeline } from '../lib/periodTimeline';
+import { mergeScenarioDriverValues } from '../lib/scenario';
 import { evaluateModel } from '../lib/engine/evaluate';
 
 interface ModelWorkspaceScreenProps {
@@ -57,6 +60,43 @@ function DriverValueInput({ stored, unit, onCommit }: { stored: number | null; u
   );
 }
 
+/** Shared, fully-controlled name-prompt dialog for "New scenario", "Duplicate" and "Rename" —
+ *  same shape as StatementDefinitionsScreen's NameDialog for statement schemas. */
+function ScenarioNameDialog({
+  open, title, name, confirmLabel, onChangeName, onClose, onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  name: string;
+  confirmLabel: string;
+  onChangeName: (name: string) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={title}
+      width={420}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" disabled={!name.trim()} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <Field label="Name">
+        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus />
+      </Field>
+    </Dialog>
+  );
+}
+
 /**
  * The current model's live view — a drivers panel over the projected periods, statement
  * sub-tabs over the full period grid, both reading the model's persisted historicals plus
@@ -77,6 +117,13 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   // save immediately either way, but in manual mode `evaluation` keeps reading this snapshot
   // instead of the live model until the next Recalculate.
   const [manualSnapshot, setManualSnapshot] = useState<Model | null>(null);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  // 'base' is a UI-level sentinel, never a stored Scenario row — see lib/scenario.ts.
+  const [activeScenarioId, setActiveScenarioId] = useState<string>('base');
+  const [scenarioDialog, setScenarioDialog] = useState<'new' | 'duplicate' | 'rename' | null>(null);
+  const [pendingScenarioName, setPendingScenarioName] = useState('');
+  const [deleteScenarioConfirmOpen, setDeleteScenarioConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,14 +131,23 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       const existingModel = await modelRepository.getForCompany(company.id);
       if (cancelled) return;
       const existingSchema = existingModel ? await statementSchemaRepository.get(existingModel.statementSchemaId) : null;
+      const existingScenarios = existingModel ? await scenarioRepository.list(existingModel.id) : [];
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
+      setScenarios(existingScenarios);
+      setActiveScenarioId('base');
     })();
     return () => {
       cancelled = true;
     };
   }, [company.id]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const currentProjectedCount = model ? model.timeline.filter((p) => p.kind === 'projected').length : 0;
 
@@ -103,14 +159,39 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model?.id]);
 
+  const activeScenario = activeScenarioId === 'base' ? null : (scenarios.find((s) => s.id === activeScenarioId) ?? null);
+
   const evaluatedModel = recalcMode === 'auto' ? model : (manualSnapshot ?? model);
-  const evaluation = useMemo(
-    () => (schema && evaluatedModel ? evaluateModel(schema, evaluatedModel) : null),
-    [schema, evaluatedModel],
-  );
+  const evaluation = useMemo(() => {
+    if (!schema || !evaluatedModel) return null;
+    // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
+    // layered on top via the same merge helper the compare view will batch-evaluate with —
+    // evaluateModel itself never learns scenarios exist, it just reads whichever map it's handed.
+    const driverValues = activeScenario
+      ? mergeScenarioDriverValues(evaluatedModel.driverValues ?? {}, activeScenario.driverValues)
+      : (evaluatedModel.driverValues ?? {});
+    return evaluateModel(schema, { ...evaluatedModel, driverValues });
+  }, [schema, evaluatedModel, activeScenario]);
+
+  function selectScenario(id: string) {
+    setActiveScenarioId(id);
+    // Manual mode freezes a snapshot the instant it's entered (see handleRecalcModeChange) —
+    // switching scenarios while already frozen should show that scenario's own current values,
+    // not the previously-viewed scenario's stale freeze, so re-freeze immediately on switch too.
+    if (recalcMode === 'manual') setManualSnapshot(model ?? null);
+  }
 
   async function updateDriverValue(driverId: string, periodIndex: number, value: number | null) {
     if (!model) return;
+    if (activeScenario) {
+      const current = activeScenario.driverValues;
+      const nextValues = [...(current[driverId] ?? [])];
+      while (nextValues.length <= periodIndex) nextValues.push(null);
+      nextValues[periodIndex] = value;
+      const updated = await scenarioRepository.update(activeScenario.id, { driverValues: { ...current, [driverId]: nextValues } });
+      setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      return;
+    }
     // A model created before driverValues existed on Model won't have the field at all yet —
     // normalize rather than assume it's always present.
     const currentDriverValues = model.driverValues ?? {};
@@ -119,6 +200,54 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     nextValues[periodIndex] = value;
     const updated = await modelRepository.update(model.id, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
     setModel(updated);
+  }
+
+  function openScenarioDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
+    setPendingScenarioName(initialName);
+    setScenarioDialog(kind);
+  }
+
+  async function handleCreateScenario() {
+    if (!model) return;
+    const created = await scenarioRepository.create({ modelId: model.id, name: pendingScenarioName.trim() });
+    setScenarios((prev) => [...prev, created]);
+    setScenarioDialog(null);
+    setActiveScenarioId(created.id);
+    setToast('Scenario created');
+  }
+
+  async function handleDuplicateScenario() {
+    if (!model) return;
+    // Duplicating Base takes a full snapshot of its current driver values — a real, independent
+    // fork. Duplicating a named scenario copies its own sparse overrides as-is, still cascading
+    // through Base beneath it, consistent with its origin.
+    const sourceDriverValues = activeScenario ? activeScenario.driverValues : (model.driverValues ?? {});
+    const created = await scenarioRepository.create({
+      modelId: model.id,
+      name: pendingScenarioName.trim(),
+      driverValues: structuredClone(sourceDriverValues),
+    });
+    setScenarios((prev) => [...prev, created]);
+    setScenarioDialog(null);
+    setActiveScenarioId(created.id);
+    setToast('Scenario duplicated');
+  }
+
+  async function handleRenameScenario() {
+    if (!activeScenario) return;
+    const updated = await scenarioRepository.update(activeScenario.id, { name: pendingScenarioName.trim() });
+    setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    setScenarioDialog(null);
+    setToast('Scenario renamed');
+  }
+
+  async function handleDeleteScenario() {
+    if (!activeScenario) return;
+    await scenarioRepository.remove(activeScenario.id);
+    setScenarios((prev) => prev.filter((s) => s.id !== activeScenario.id));
+    setDeleteScenarioConfirmOpen(false);
+    setActiveScenarioId('base');
+    setToast('Scenario deleted');
   }
 
   async function commitHorizonChange() {
@@ -150,6 +279,18 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     );
     const updated = await modelRepository.update(model.id, { timeline: nextTimeline, driverValues: nextDriverValues });
     setModel(updated);
+    // Every scenario's own driver arrays must stay aligned to the same, now-shorter timeline —
+    // otherwise a scenario's values silently drift out of index-correspondence with the periods
+    // they were entered for, and this dialog's "cannot be undone" warning would be false for
+    // scenario data specifically.
+    const updatedScenarios = await Promise.all(
+      scenarios.map((s) =>
+        scenarioRepository.update(s.id, {
+          driverValues: Object.fromEntries(Object.entries(s.driverValues).map(([id, values]) => [id, values.slice(0, newLength)])),
+        }),
+      ),
+    );
+    setScenarios(updatedScenarios);
     setHorizonInput(String(shrinkConfirm.nextCount));
     setShrinkConfirm(null);
   }
@@ -243,7 +384,12 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
     .map((period, index) => ({ period, index }))
     .filter(({ period }) => period.kind === 'projected');
 
-  const driverValues = model.driverValues ?? {};
+  // The active level's OWN explicit values — a scenario's own overrides when one is active, the
+  // model's (Base's) own values otherwise. Deliberately not the merged/effective map: "stored"
+  // marks what THIS level actually typed, distinct from whatever it falls back to (see `isDefault`
+  // below, unchanged from Phase 4 — a scenario inheriting Base's value looks the same as one
+  // falling to the computed default, both italicized as "not typed at this level").
+  const activeStoredDriverValues = activeScenario ? activeScenario.driverValues : (model.driverValues ?? {});
 
   const driverColumns = [
     {
@@ -262,7 +408,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       numeric: true,
       width: 110,
       render: (_: unknown, row: DriverDefinition) => {
-        const stored = driverValues[row.id]?.[index] ?? null;
+        const stored = activeStoredDriverValues[row.id]?.[index] ?? null;
         const effective = evaluation?.getDriverValue(row.id, index) ?? null;
         // No explicit value entered, but a default was computed (0% growth, or the last actual
         // period's own implied ratio) — shown, not left blank, but italicized the same way a
@@ -283,7 +429,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       },
       renderEdit: (_: unknown, row: DriverDefinition) => (
         <DriverValueInput
-          stored={driverValues[row.id]?.[index] ?? null}
+          stored={activeStoredDriverValues[row.id]?.[index] ?? null}
           unit={row.unit}
           onCommit={(value) => updateDriverValue(row.id, index, value)}
         />
@@ -304,6 +450,45 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
         padding="none"
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <Select
+                size="sm"
+                options={[{ value: 'base', label: 'Base case' }, ...scenarios.map((s) => ({ value: s.id, label: s.name }))]}
+                value={activeScenarioId}
+                onChange={(e) => selectScenario(e.target.value)}
+                style={{ width: 150 }}
+              />
+              <IconButton
+                icon="plus"
+                label="New scenario"
+                size="sm"
+                variant="ghost"
+                onClick={() => openScenarioDialog('new', '')}
+              />
+              <IconButton
+                icon="copy"
+                label="Duplicate scenario"
+                size="sm"
+                variant="ghost"
+                onClick={() => openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`)}
+              />
+              <IconButton
+                icon="pencil"
+                label="Rename scenario"
+                size="sm"
+                variant="ghost"
+                onClick={() => activeScenario && openScenarioDialog('rename', activeScenario.name)}
+                disabled={!activeScenario}
+              />
+              <IconButton
+                icon="trash-2"
+                label="Delete scenario"
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeleteScenarioConfirmOpen(true)}
+                disabled={!activeScenario}
+              />
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
               <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
               <Input
@@ -343,7 +528,10 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
             No projected periods yet — set how many above to start entering driver assumptions.
           </div>
         ) : (
-          <DataTable columns={driverColumns} rows={schema.drivers} rowKey="id" dense stickyFirstColumn />
+          // Keyed by the active scenario so switching forces a full remount — otherwise a
+          // mid-edit DriverValueInput's stale local text buffer would commit against whichever
+          // scenario is active by the time it blurs, silently writing to the wrong one.
+          <DataTable key={activeScenarioId} columns={driverColumns} rows={schema.drivers} rowKey="id" dense stickyFirstColumn />
         )}
       </Card>
 
@@ -382,6 +570,61 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
           assumptions entered for the dropped periods. This cannot be undone.
         </p>
       </Dialog>
+
+      <ScenarioNameDialog
+        open={scenarioDialog === 'new'}
+        title="New scenario"
+        name={pendingScenarioName}
+        confirmLabel="Create"
+        onChangeName={setPendingScenarioName}
+        onClose={() => setScenarioDialog(null)}
+        onConfirm={handleCreateScenario}
+      />
+      <ScenarioNameDialog
+        open={scenarioDialog === 'duplicate'}
+        title="Duplicate scenario"
+        name={pendingScenarioName}
+        confirmLabel="Duplicate"
+        onChangeName={setPendingScenarioName}
+        onClose={() => setScenarioDialog(null)}
+        onConfirm={handleDuplicateScenario}
+      />
+      <ScenarioNameDialog
+        open={scenarioDialog === 'rename'}
+        title="Rename scenario"
+        name={pendingScenarioName}
+        confirmLabel="Rename"
+        onChangeName={setPendingScenarioName}
+        onClose={() => setScenarioDialog(null)}
+        onConfirm={handleRenameScenario}
+      />
+
+      <Dialog
+        open={deleteScenarioConfirmOpen}
+        onClose={() => setDeleteScenarioConfirmOpen(false)}
+        icon="alert-triangle"
+        title="Delete this scenario?"
+        subtitle={activeScenario?.name}
+        footer={
+          <>
+            <Button onClick={() => setDeleteScenarioConfirmOpen(false)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={handleDeleteScenario}>
+              Delete scenario
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          Every driver assumption entered for this scenario will be permanently removed. The Base case and every other
+          scenario are unaffected. This cannot be undone.
+        </p>
+      </Dialog>
+
+      {toast ? (
+        <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
+          <Toast tone="positive" title={toast} onDismiss={() => setToast(null)} />
+        </div>
+      ) : null}
     </div>
   );
 }
