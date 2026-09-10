@@ -124,6 +124,9 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   const [pendingScenarioName, setPendingScenarioName] = useState('');
   const [deleteScenarioConfirmOpen, setDeleteScenarioConfirmOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Compare tab's period picker — defaults to the last period whenever a different model loads;
+  // clamped defensively wherever it's read, since the timeline can shrink after this is set.
+  const [comparePeriodIndex, setComparePeriodIndex] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +140,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       setSchema(existingSchema ?? null);
       setScenarios(existingScenarios);
       setActiveScenarioId('base');
+      setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
     })();
     return () => {
       cancelled = true;
@@ -172,6 +176,25 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
       : (evaluatedModel.driverValues ?? {});
     return evaluateModel(schema, { ...evaluatedModel, driverValues });
   }, [schema, evaluatedModel, activeScenario]);
+
+  // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
+  // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not
+  // recalculating the ACTIVE scenario's view on every driver edit; Compare is a separate view with
+  // no such concern. evaluateModel is just called once per scenario, same call every time — no new
+  // engine capability, no batch API, per the plan's own note that this is the exercise, not a
+  // reason to add one.
+  const compareEvaluations = useMemo(() => {
+    if (!schema || !model) return [];
+    const cases: Array<{ id: string; name: string; driverValues: Record<string, (number | null)[]> }> = [
+      { id: 'base', name: 'Base case', driverValues: model.driverValues ?? {} },
+      ...scenarios.map((s) => ({ id: s.id, name: s.name, driverValues: s.driverValues })),
+    ];
+    return cases.map((c) => ({
+      id: c.id,
+      name: c.name,
+      evaluation: evaluateModel(schema, { ...model, driverValues: mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues) }),
+    }));
+  }, [schema, model, scenarios]);
 
   function selectScenario(id: string) {
     setActiveScenarioId(id);
@@ -320,6 +343,44 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   const tabs = [
     { value: 'all', label: 'All' },
     ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
+    ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
+  ];
+
+  // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
+  // section (Gross Profit, EBITDA, Operating Income, etc.), rather than every single line, which
+  // would just be the full grid repeated once per scenario.
+  const compareMetricLines = schema.sections.flatMap((s) => s.lines).filter((l) => l.rowFormat === 'total');
+  const comparePeriod = Math.min(comparePeriodIndex, model.timeline.length - 1);
+  const compareColumns = [
+    {
+      key: 'name',
+      label: 'Metric',
+      width: 240,
+      render: (_: unknown, row: { line: StatementLine }) => (
+        <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
+          {row.line.name}
+        </span>
+      ),
+    },
+    ...compareEvaluations.map((c) => ({
+      key: c.id,
+      label: c.name,
+      numeric: true,
+      width: 130,
+      render: (_: unknown, row: { line: StatementLine }) => {
+        const value = c.evaluation.getValue(row.line.id, comparePeriod) ?? null;
+        return (
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+              color: value === null ? 'var(--text-disabled)' : 'var(--text-body)',
+            }}
+          >
+            {formatPeriodValue(value, row.line.numberFormat)}
+          </span>
+        );
+      },
+    })),
   ];
 
   const rows: Array<{ id: string; __group?: string; line?: StatementLine }> = [];
@@ -535,20 +596,49 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
         )}
       </Card>
 
-      <Tabs tabs={tabs} value={tab} onChange={setTab} size="sm" />
+      <Tabs
+        tabs={tabs}
+        value={tab}
+        onChange={setTab}
+        size="sm"
+        actions={
+          tab === 'compare' ? (
+            <Select
+              size="sm"
+              options={model.timeline.map((period, i) => ({ value: String(i), label: period.label }))}
+              value={String(comparePeriod)}
+              onChange={(e) => setComparePeriodIndex(Number(e.target.value))}
+              style={{ width: 120 }}
+            />
+          ) : null
+        }
+      />
 
-      <Card padding="none">
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey="id"
-          rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-          dense
-          stickyHeader
-          stickyFirstColumn
-          maxHeight="calc(100vh - 260px)"
-        />
-      </Card>
+      {tab === 'compare' ? (
+        <Card padding="none">
+          <DataTable
+            columns={compareColumns}
+            rows={compareMetricLines.map((line) => ({ id: line.id, line }))}
+            rowKey="id"
+            dense
+            stickyHeader
+            stickyFirstColumn
+          />
+        </Card>
+      ) : (
+        <Card padding="none">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey="id"
+            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+            dense
+            stickyHeader
+            stickyFirstColumn
+            maxHeight="calc(100vh - 260px)"
+          />
+        </Card>
+      )}
 
       <Dialog
         open={shrinkConfirm !== null}
