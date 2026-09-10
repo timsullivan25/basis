@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Company, Mapping, Model, ModelImport, Scenario, StatementSchema } from './types';
+import type { Company, ComputedResult, Mapping, Model, ModelImport, Scenario, StatementSchema } from './types';
 
 export interface BasisDb extends DBSchema {
   companies: {
@@ -32,10 +32,15 @@ export interface BasisDb extends DBSchema {
     value: Scenario;
     indexes: { 'by-modelId': string };
   };
+  computedResults: {
+    key: string;
+    value: ComputedResult;
+    indexes: { 'by-modelId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -118,6 +123,7 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
                   historicals: {},
                   driverValues: {},
                   createdAt: imp.uploadedAt,
+                  updatedAt: imp.uploadedAt,
                 });
               }
               const { mapping: _mapping, mappedAt: _mappedAt, ...rest } = imp;
@@ -127,6 +133,10 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         }
         if (oldVersion < 6) {
           const store = db.createObjectStore('scenarios', { keyPath: 'id' });
+          store.createIndex('by-modelId', 'modelId');
+        }
+        if (oldVersion < 7) {
+          const store = db.createObjectStore('computedResults', { keyPath: 'id' });
           store.createIndex('by-modelId', 'modelId');
         }
       },

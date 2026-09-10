@@ -1,10 +1,12 @@
 import { IndexedDbCompanyRepository } from './indexedDbCompanyRepository';
+import { IndexedDbComputedResultRepository } from './indexedDbComputedResultRepository';
 import { IndexedDbMappingRepository } from './indexedDbMappingRepository';
 import { IndexedDbModelImportRepository } from './indexedDbModelImportRepository';
 import { IndexedDbModelRepository } from './indexedDbModelRepository';
 import { IndexedDbScenarioRepository } from './indexedDbScenarioRepository';
 import { IndexedDbStatementSchemaRepository } from './indexedDbStatementSchemaRepository';
 import type {
+  ComputedResultRepository,
   CompanyRepository,
   MappingRepository,
   ModelImportRepository,
@@ -16,6 +18,9 @@ import type {
 export type {
   Company,
   CompanyRepository,
+  ComputedResult,
+  ComputedResultRepository,
+  ComputedResultVersionStamp,
   CreateCompanyInput,
   CreateMappingInput,
   CreateModelImportInput,
@@ -43,6 +48,7 @@ export type {
   ProjectionMethod,
   ResolvedFormula,
   Scenario,
+  ScenarioKey,
   ScenarioRepository,
   StatementLine,
   StatementSchema,
@@ -60,3 +66,4 @@ export const modelImportRepository: ModelImportRepository = new IndexedDbModelIm
 export const mappingRepository: MappingRepository = new IndexedDbMappingRepository();
 export const modelRepository: ModelRepository = new IndexedDbModelRepository();
 export const scenarioRepository: ScenarioRepository = new IndexedDbScenarioRepository();
+export const computedResultRepository: ComputedResultRepository = new IndexedDbComputedResultRepository();

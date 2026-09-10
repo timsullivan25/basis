@@ -14,11 +14,13 @@ export class IndexedDbModelRepository implements ModelRepository {
     const existing = await this.getForCompany(input.companyId);
     if (existing) {
       await this.removeScenarios(existing.id);
+      await this.removeComputedResults(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       await db.delete('models', existing.id);
     }
-    const model: Model = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), driverValues: {}, ...input };
+    const now = new Date().toISOString();
+    const model: Model = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, driverValues: {}, ...input };
     await db.add('models', model);
     return model;
   }
@@ -27,7 +29,7 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const existing = await db.get('models', id);
     if (!existing) throw new Error(`Model not found: ${id}`);
-    const updated: Model = { ...existing, ...patch };
+    const updated: Model = { ...existing, ...patch, updatedAt: new Date().toISOString() };
     await db.put('models', updated);
     return updated;
   }
@@ -37,6 +39,7 @@ export class IndexedDbModelRepository implements ModelRepository {
     const existing = await db.get('models', id);
     if (existing) {
       await this.removeScenarios(existing.id);
+      await this.removeComputedResults(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
     }
@@ -49,5 +52,13 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const scenarios = await db.getAllFromIndex('scenarios', 'by-modelId', modelId);
     await Promise.all(scenarios.map((s) => db.delete('scenarios', s.id)));
+  }
+
+  /** Same from-day-one invariant as removeScenarios — no computed result should ever outlive the
+   *  model it was computed for. */
+  private async removeComputedResults(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    const results = await db.getAllFromIndex('computedResults', 'by-modelId', modelId);
+    await Promise.all(results.map((r) => db.delete('computedResults', r.id)));
   }
 }

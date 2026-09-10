@@ -17,7 +17,8 @@ export class IndexedDbScenarioRepository implements ScenarioRepository {
 
   async create(input: CreateScenarioInput): Promise<Scenario> {
     const db = await openBasisDb();
-    const scenario: Scenario = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), driverValues: {}, ...input };
+    const now = new Date().toISOString();
+    const scenario: Scenario = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, driverValues: {}, ...input };
     await db.add('scenarios', scenario);
     return scenario;
   }
@@ -26,7 +27,7 @@ export class IndexedDbScenarioRepository implements ScenarioRepository {
     const db = await openBasisDb();
     const existing = await db.get('scenarios', id);
     if (!existing) throw new Error(`Scenario not found: ${id}`);
-    const updated: Scenario = { ...existing, ...patch };
+    const updated: Scenario = { ...existing, ...patch, updatedAt: new Date().toISOString() };
     await db.put('scenarios', updated);
     return updated;
   }
