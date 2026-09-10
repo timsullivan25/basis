@@ -28,6 +28,7 @@ import {
 } from '../data';
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
+import { SummaryPanel } from '../components/models/SummaryPanel';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { evaluateModel } from '../lib/engine/evaluate';
@@ -391,6 +392,7 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
   }
 
   const tabs = [
+    { value: 'summary', label: 'Summary' },
     { value: 'all', label: 'All' },
     ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
@@ -694,7 +696,9 @@ export function ModelWorkspaceScreen({ company }: ModelWorkspaceScreenProps) {
         }
       />
 
-      {tab === 'compare' ? (
+      {tab === 'summary' ? (
+        evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
+      ) : tab === 'compare' ? (
         <>
           <Card padding="none">
             <DataTable
