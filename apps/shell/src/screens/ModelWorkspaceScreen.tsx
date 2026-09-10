@@ -78,6 +78,14 @@ function DriverValueInput({
       selectOnFocus
       value={text}
       onChange={(e) => setText(e.target.value)}
+      // Enter commits directly rather than relying on the blur DataTable's document-level Enter
+      // handler triggers by deactivating the cell — removing a still-focused node via a state
+      // change, with nothing else taking real focus, doesn't reliably fire a synthetic blur in
+      // React (unlike a genuine click-away, which shifts focus for real and blurs reliably), so
+      // the commit has to happen here, not wait for one that may never come.
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit(fromDisplayValue(text, unit));
+      }}
       onBlur={() => {
         if (wasEditCancelled?.()) return;
         onCommit(fromDisplayValue(text, unit));
@@ -117,7 +125,15 @@ function ScenarioNameDialog({
       }
     >
       <Field label="Name">
-        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus selectOnFocus />
+        <Input
+          value={name}
+          onChange={(e) => onChangeName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && name.trim()) onConfirm();
+          }}
+          autoFocus
+          selectOnFocus
+        />
       </Field>
     </Dialog>
   );

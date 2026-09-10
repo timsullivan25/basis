@@ -28,8 +28,10 @@ export function DataTable({
     if (!activeCell) return undefined;
     const clear = () => setActiveCell(null);
     const onKeyDown = (e) => {
-      if (e.key !== 'Escape') return;
-      cancelledEditRef.current = true;
+      // Enter completes the edit the same way clicking away does (deactivate, let the removal's
+      // blur commit it) — Escape is the only path that discards instead, via cancelledEditRef.
+      if (e.key !== 'Escape' && e.key !== 'Enter') return;
+      if (e.key === 'Escape') cancelledEditRef.current = true;
       clear();
     };
     document.addEventListener('click', clear);
