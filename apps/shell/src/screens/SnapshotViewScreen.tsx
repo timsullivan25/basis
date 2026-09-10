@@ -3,6 +3,9 @@ import { Alert, Button, Card, DataTable, Icon, Select, Tabs } from '@basis/desig
 import { snapshotRepository, type Company, type ScenarioKey, type Snapshot, type StatementLine } from '../data';
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
+import { SummaryPanel } from '../components/models/SummaryPanel';
+import { buildNameIndex, formatFormula, isCalculated } from '../lib/engine/resolve';
+import { toSnapshotLineValues } from '../lib/snapshot';
 
 interface SnapshotViewScreenProps {
   company: Company;
@@ -43,8 +46,14 @@ export function SnapshotViewScreen({ company, snapshotId, onReturnToLive }: Snap
   }
 
   const activeCase = snapshot.scenarios.find((s) => s.scenarioId === activeScenarioId) ?? snapshot.scenarios[0];
+  // Built fresh against the snapshot's own EMBEDDED (frozen) schema, not the live one — this is
+  // what makes a formula tooltip below show the formula as it was at snapshot time. Not memoized —
+  // this only runs after the loading/not-found early returns, so there's no earlier render to
+  // memoize against, and the schema itself never changes for a given (already-loaded) snapshot.
+  const nameIndex = buildNameIndex(snapshot.schema);
 
   const tabs = [
+    { value: 'summary', label: 'Summary' },
     { value: 'all', label: 'All' },
     ...snapshot.schema.sections.map((section) => ({ value: section.id, label: section.name })),
   ];
@@ -64,9 +73,16 @@ export function SnapshotViewScreen({ company, snapshotId, onReturnToLive }: Snap
       width: 240,
       render: (_: unknown, row: { line?: StatementLine }) =>
         row.line ? (
-          <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
-            {row.line.name}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
+              {row.line.name}
+            </span>
+            {isCalculated(row.line) && !row.line.projection ? (
+              <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
+                <Icon name="function-square" size={11} color="var(--text-tertiary)" />
+              </span>
+            ) : null}
+          </div>
         ) : null,
     },
     ...snapshot.timeline.map((period, i) => ({
@@ -139,18 +155,24 @@ export function SnapshotViewScreen({ company, snapshotId, onReturnToLive }: Snap
         }
       />
 
-      <Card padding="none">
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey="id"
-          rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-          dense
-          stickyHeader
-          stickyFirstColumn
-          maxHeight="calc(100vh - 320px)"
-        />
-      </Card>
+      {tab === 'summary' ? (
+        activeCase ? (
+          <SummaryPanel schema={snapshot.schema} model={{ timeline: snapshot.timeline }} result={toSnapshotLineValues(activeCase)} />
+        ) : null
+      ) : (
+        <Card padding="none">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey="id"
+            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+            dense
+            stickyHeader
+            stickyFirstColumn
+            maxHeight="calc(100vh - 320px)"
+          />
+        </Card>
+      )}
     </div>
   );
 }

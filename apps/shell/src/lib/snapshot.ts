@@ -10,7 +10,7 @@ import type {
   StatementSchema,
 } from '../data';
 import { evaluateModel } from './engine/evaluate';
-import { materializeEvaluation } from './computedCache';
+import { materializeEvaluation, type LineValues } from './computedCache';
 import { mergeScenarioDriverValues } from './scenario';
 
 /** Mirrors evaluate.ts's own lastActualIndex scan (and SummaryPanel's copy of the same logic) —
@@ -78,5 +78,15 @@ export function buildSnapshot(params: BuildSnapshotParams): CreateSnapshotInput 
     sourceFileName: modelImport.fileName,
     sourceUploadedAt: modelImport.uploadedAt,
     scenarios: snapshotScenarios,
+  };
+}
+
+/** Adapts one frozen SnapshotScenario to the same LineValues shape a live EvaluationResult or a
+ *  cached ComputedResult already satisfy (see computedCache.ts's toLineValues) — so SummaryPanel
+ *  never has to know it's reading frozen data. */
+export function toSnapshotLineValues(scenario: SnapshotScenario): LineValues {
+  return {
+    getValue: (lineId, periodIndex) => scenario.values[lineId]?.[periodIndex] ?? null,
+    getError: (lineId) => scenario.errors[lineId],
   };
 }
