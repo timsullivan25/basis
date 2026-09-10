@@ -6,7 +6,10 @@ import type { LineValues } from '../../lib/computedCache';
 
 interface SummaryPanelProps {
   schema: StatementSchema;
-  model: Model;
+  /** Only `timeline` is actually read — widened to a Pick so a frozen Snapshot (which has no
+   *  live Model, just its own embedded timeline) can feed this panel too, via a plain
+   *  `{ timeline: snapshot.timeline }`. */
+  model: Pick<Model, 'timeline'>;
   /** The minimal shape both a live EvaluationResult and a materialized/cached ComputedResult
    *  satisfy — see lib/computedCache.ts. Callers never need to say which one this is. */
   result: LineValues;
@@ -19,7 +22,7 @@ interface SummaryPanelProps {
  *  prefix, but this scans defensively rather than assuming that (same convention evaluate.ts's
  *  own lastActualIndex scan uses). Falls back to the last period overall if the timeline somehow
  *  has no actuals at all. */
-function lastActualIndex(model: Model): number {
+function lastActualIndex(model: Pick<Model, 'timeline'>): number {
   for (let i = model.timeline.length - 1; i >= 0; i--) {
     if (model.timeline[i].kind === 'actual') return i;
   }
@@ -44,7 +47,7 @@ function periodOverPeriodDelta(result: LineValues, lineId: string, index: number
  *  rendering for a missing value, so a null is shown as 0 here — the same accepted simplification
  *  already used for the Compare tab's chart (see ModelWorkspaceScreen), not a claim that 0 was
  *  actually mapped for that period. */
-function trend(result: LineValues, lineId: string, model: Model): number[] {
+function trend(result: LineValues, lineId: string, model: Pick<Model, 'timeline'>): number[] {
   return model.timeline.map((_, i) => result.getValue(lineId, i) ?? 0);
 }
 

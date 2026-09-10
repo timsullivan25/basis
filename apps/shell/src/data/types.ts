@@ -348,3 +348,80 @@ export interface ComputedResultRepository {
   get(modelId: string, scenarioId: ScenarioKey): Promise<ComputedResult | undefined>;
   set(result: ComputedResult): Promise<void>;
 }
+
+/** One case's frozen state within a Snapshot — Base included as `scenarioId: 'base'` in the same
+ *  array as every named scenario, no special-casing, same convention ComputedResult/
+ *  ModelWorkspaceScreen already use. `driverValues` is the case's own sparse overrides as they
+ *  stood at snapshot time (Base's own values, verbatim, for the 'base' entry); `values`/`errors`
+ *  are the fully-resolved, already-merged computed output for that case — freshly evaluated at
+ *  snapshot time via evaluateModel + materializeEvaluation, never read from the ComputedResult
+ *  cache, since a snapshot must reflect truth at the instant of freezing regardless of whether the
+ *  cache happens to be fresh. */
+export interface SnapshotScenario {
+  scenarioId: ScenarioKey;
+  /** Frozen display name — survives the live scenario being renamed or deleted later. */
+  name: string;
+  driverValues: Record<string, (number | null)[]>;
+  values: Record<string, (number | null)[]>;
+  errors: Record<string, string>;
+}
+
+/**
+ * An immutable, fully self-contained copy of a model at one point in time — actuals, the mapping
+ * that produced them, driver values and computed outputs per case, and a full deep copy of the
+ * statement schema (so a formula shows exactly as it read then, even after the live schema is
+ * edited). Deliberately the one entity in this data model built to outlive its source: unlike
+ * Scenario/ComputedResult, nothing cascade-deletes a Snapshot when the model it came from is
+ * re-mapped or removed (see IndexedDbModelRepository) — it has zero live foreign-key dependencies
+ * left to go stale, everything meaningful is embedded here already. Queried by `companyId`, not
+ * `modelId`, for exactly this reason: re-mapping replaces the live model with a brand-new
+ * `modelId`, so a company's snapshot history has to survive that swap to stay reachable.
+ */
+export interface Snapshot {
+  id: string;
+  /** The model this was taken from — provenance only; never used to look this record up (see
+   *  companyId above) and never assumed to still exist. */
+  modelId: string;
+  companyId: string;
+  /** Short, editable identifier — defaults to a period+date string (see lib/snapshot.ts's
+   *  defaultSnapshotLabel) but is meant to be replaced with something meaningful ("Revised
+   *  thesis"), not just a timestamp. */
+  label: string;
+  /** Optional longer free-text context for why this snapshot was taken (e.g. "completed earnings
+   *  update"). Empty string, not undefined, when left blank — one shape to render, not two. */
+  note: string;
+  createdAt: string;
+  timeline: Timeline;
+  historicals: Record<string, (number | null)[]>;
+  /** A deep copy, not an id reference — this is what makes formula-as-it-was true even after the
+   *  live schema changes. */
+  schema: StatementSchema;
+  /** Only the reviewed content, not the live Mapping record's own id/foreign-keys, which would be
+   *  meaningless once frozen. */
+  mapping: { lines: LineMapping[]; mappedAt: string };
+  /** Display provenance from the ModelImport — never the file Blob itself, so a snapshot never
+   *  duplicates the uploaded workbook's bytes. */
+  sourceFileName: string;
+  sourceUploadedAt: string;
+  scenarios: SnapshotScenario[];
+}
+
+export interface CreateSnapshotInput {
+  modelId: string;
+  companyId: string;
+  label: string;
+  note: string;
+  timeline: Timeline;
+  historicals: Record<string, (number | null)[]>;
+  schema: StatementSchema;
+  mapping: { lines: LineMapping[]; mappedAt: string };
+  sourceFileName: string;
+  sourceUploadedAt: string;
+  scenarios: SnapshotScenario[];
+}
+
+export interface SnapshotRepository {
+  list(companyId: string): Promise<Snapshot[]>;
+  get(id: string): Promise<Snapshot | undefined>;
+  create(input: CreateSnapshotInput): Promise<Snapshot>;
+}
