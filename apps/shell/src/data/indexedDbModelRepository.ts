@@ -13,6 +13,7 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const existing = await this.getForCompany(input.companyId);
     if (existing) {
+      await this.removeScenarios(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       await db.delete('models', existing.id);
@@ -35,9 +36,18 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const existing = await db.get('models', id);
     if (existing) {
+      await this.removeScenarios(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
     }
     await db.delete('models', id);
+  }
+
+  /** No existing model had scenarios before this field existed, so this is a from-day-one
+   *  invariant, not a migration: nothing should ever orphan a model's scenarios in IndexedDB. */
+  private async removeScenarios(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    const scenarios = await db.getAllFromIndex('scenarios', 'by-modelId', modelId);
+    await Promise.all(scenarios.map((s) => db.delete('scenarios', s.id)));
   }
 }

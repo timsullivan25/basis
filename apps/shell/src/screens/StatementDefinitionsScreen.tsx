@@ -85,7 +85,15 @@ function NameDialog({
       }
     >
       <Field label="Name">
-        <Input value={name} onChange={(e) => onChangeName(e.target.value)} autoFocus />
+        <Input
+          value={name}
+          onChange={(e) => onChangeName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && name.trim()) onConfirm();
+          }}
+          autoFocus
+          selectOnFocus
+        />
       </Field>
     </Dialog>
   );

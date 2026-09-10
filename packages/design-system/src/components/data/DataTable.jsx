@@ -11,6 +11,14 @@ export function DataTable({
   const h = dense ? 'var(--row-h-dense)' : 'var(--row-h)';
   const [hoverRow, setHoverRow] = React.useState(null);
   const [activeCell, setActiveCell] = React.useState(null);
+  // Escape should discard an in-flight edit rather than commit it, but deactivating the cell
+  // unmounts its renderEdit'd Input — and a browser fires a native blur on an element removed
+  // from the DOM while focused, which would otherwise run the input's own onBlur-commit handler
+  // with whatever partial text is in its buffer. This ref, read via the 3rd (wasEditCancelled)
+  // arg to renderEdit, lets a buffered/commit-on-blur editor (unlike SectionEditor's commit-on-
+  // change ones, which have nothing to lose) skip that commit specifically for Escape — clicking
+  // away still commits, same as blurring any other field.
+  const cancelledEditRef = React.useRef(false);
   const allSel = selectable && rows.length > 0 && selected.length === rows.length;
   const toggleAll = () => onSelectedChange && onSelectedChange(allSel ? [] : rows.map((r) => r[rowKey]));
   const toggleRow = (k) => onSelectedChange && onSelectedChange(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
@@ -19,7 +27,13 @@ export function DataTable({
   React.useEffect(() => {
     if (!activeCell) return undefined;
     const clear = () => setActiveCell(null);
-    const onKeyDown = (e) => { if (e.key === 'Escape') clear(); };
+    const onKeyDown = (e) => {
+      // Enter completes the edit the same way clicking away does (deactivate, let the removal's
+      // blur commit it) — Escape is the only path that discards instead, via cancelledEditRef.
+      if (e.key !== 'Escape' && e.key !== 'Enter') return;
+      if (e.key === 'Escape') cancelledEditRef.current = true;
+      clear();
+    };
     document.addEventListener('click', clear);
     document.addEventListener('keydown', onKeyDown);
     return () => {
@@ -128,7 +142,7 @@ export function DataTable({
                     return (
                       <td
                         key={c.key}
-                        onClick={editable ? (e) => { e.stopPropagation(); setActiveCell(cellId); } : undefined}
+                        onClick={editable ? (e) => { e.stopPropagation(); cancelledEditRef.current = false; setActiveCell(cellId); } : undefined}
                         style={{
                           height: h, padding: '0 var(--space-6)', textAlign: align(c),
                           borderBottom: '1px solid var(--border-subtle)',
@@ -148,7 +162,9 @@ export function DataTable({
                           ...(c.background ? { boxShadow: `inset 0 0 0 999px ${c.background}` } : null),
                         }}
                       >
-                        {editing ? c.renderEdit(r[c.key], r) : (c.render ? c.render(r[c.key], r) : r[c.key])}
+                        {editing
+                          ? c.renderEdit(r[c.key], r, () => cancelledEditRef.current)
+                          : (c.render ? c.render(r[c.key], r) : r[c.key])}
                       </td>
                     );
                   })}

@@ -16,8 +16,12 @@ export interface DataTableColumn {
   /** Tooltip on the header + info glyph; explain the methodology here. */
   description?: string;
   render?: (value: any, row: any) => React.ReactNode;
-  /** If provided, clicking the cell swaps to this editor until the user clicks elsewhere or presses Escape. */
-  renderEdit?: (value: any, row: any) => React.ReactNode;
+  /** If provided, clicking the cell swaps to this editor until the user clicks elsewhere or presses
+   *  Escape. Clicking elsewhere (or losing the cell to a remount) behaves like a normal blur; Escape
+   *  is meant to discard instead. The 3rd arg is `wasEditCancelled`, readable from an editor's own
+   *  onBlur (which still fires on the DOM removal that follows either path) to skip committing when
+   *  it was Escape — see DataTable.jsx for why blur alone can't tell the two apart. */
+  renderEdit?: (value: any, row: any, wasEditCancelled: () => boolean) => React.ReactNode;
   /** Gate editability per row (e.g. a derived value shouldn't be clickable). Defaults to true whenever renderEdit is set. */
   canEdit?: (row: any) => boolean;
   /** Static tint for the whole column (header + every cell) — e.g. marking every projected-period

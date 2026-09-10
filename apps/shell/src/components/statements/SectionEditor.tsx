@@ -122,6 +122,7 @@ export function SectionEditor({
         <Input
           size="sm"
           autoFocus
+          selectOnFocus
           value={row.name}
           onChange={(e) => onUpdateLine(row.id, { name: e.target.value })}
           placeholder="Line name"
@@ -280,6 +281,7 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
       <Input
         size="sm"
         autoFocus
+        selectOnFocus
         value={name}
         onChange={(e) => onRename(e.target.value)}
         onBlur={() => setEditing(false)}
