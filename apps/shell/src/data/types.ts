@@ -425,3 +425,118 @@ export interface SnapshotRepository {
   get(id: string): Promise<Snapshot | undefined>;
   create(input: CreateSnapshotInput): Promise<Snapshot>;
 }
+
+/** WACC and terminal growth — the two DCF assumptions with no schema analog (unlike EBIT/D&A/
+ *  CapEx/NWC/tax rate, nothing about "the discount rate you're valuing the company at" is a
+ *  property of the financial statements themselves). `null` means "not set" (WACC/terminal
+ *  growth default to null — no schema-derivable default exists for either), or, on a named
+ *  scenario's entry, "not overridden here, cascade to Base" — see AnalysisSettings.dcfInputs. */
+export interface DcfInputs {
+  wacc: number | null;
+  terminalGrowth: number | null;
+}
+
+/**
+ * One row per model — which analyses (from the static ANALYSIS_CATALOG) are enabled, and DCF's
+ * own per-scenario WACC/terminal-growth assumptions. Required inputs that DO have a schema
+ * analog (EBIT, D&A, CapEx, Net Working Capital, tax rate) are deliberately NOT stored here —
+ * they resolve from the schema's own lines/aliases via lib/summaryLines.ts's findSummaryLine,
+ * the same mechanism mapping already uses, so resolving one is a real improvement to the
+ * schema's own definition rather than a DCF-local override.
+ */
+export interface AnalysisSettings {
+  /** == modelId — one settings row per model, so this doubles as the primary key. */
+  id: string;
+  modelId: string;
+  enabledAnalysisIds: string[];
+  /** Per-scenario DCF assumptions. 'base' is ground truth and never cascades further; a named
+   *  scenario's entry is SPARSE against it — a null field means "not overridden here, use
+   *  Base's value", same semantics and same reason as Scenario.driverValues' per-field cascade
+   *  (see lib/scenario.ts's mergeScenarioDriverValues) — just at 2-scalar-fields-not-N-periods
+   *  scale. A whole-record fallback was considered and rejected: it would force copying Base's
+   *  other field the instant only one field is first overridden, silently freezing it at that
+   *  moment even as Base's own assumption keeps evolving. */
+  dcfInputs: Record<ScenarioKey, DcfInputs>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalysisSettingsRepository {
+  get(modelId: string): Promise<AnalysisSettings | undefined>;
+  /** Seeds a fresh row: enabledAnalysisIds from the catalog's defaultEnabled entries,
+   *  dcfInputs: { base: { wacc: null, terminalGrowth: null } }. */
+  create(modelId: string): Promise<AnalysisSettings>;
+  update(modelId: string, patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs'>>): Promise<AnalysisSettings>;
+}
+
+/** The full computed DCF output for one (model, scenario) pair — a plain-data mirror of
+ *  lib/dcf.ts's working shapes (DcfUfcfRow/DcfOutputs/SensitivityGrid), same relationship
+ *  ComputedResult's flattened values/errors already have to the live EvaluationResult they're
+ *  materialized from. Deliberately DCF-shaped rather than generic: it's the only analysis today,
+ *  and a second one would get its own typed payload here rather than forcing a premature union. */
+export interface DcfOutput {
+  ufcfRows: Array<{
+    periodIndex: number;
+    ebit: number | null;
+    taxRate: number | null;
+    nopat: number | null;
+    da: number | null;
+    capex: number | null;
+    deltaNwc: number | null;
+    ufcf: number | null;
+  }>;
+  discountFactors: (number | null)[];
+  presentValueOfUfcf: number | null;
+  terminalValue: number | null;
+  presentValueOfTerminalValue: number | null;
+  enterpriseValue: number | null;
+  netDebt: number | null;
+  equityValue: number | null;
+  sensitivity: {
+    waccValues: number[];
+    terminalGrowthValues: number[];
+    rows: Array<Array<{ wacc: number; terminalGrowth: number; enterpriseValue: number | null }>>;
+  };
+}
+
+/** A SIBLING to ComputedResultVersionStamp, not a widening of it — computedCache.ts's existing
+ *  3-field consumers stay untouched. The 4th field DCF needs beyond the other three: WACC/
+ *  terminal-growth live in AnalysisSettings, whose own updatedAt must also match for the cache
+ *  to be considered fresh. */
+export interface AnalysisResultVersionStamp {
+  modelUpdatedAt: string;
+  scenarioUpdatedAt: string | null;
+  schemaUpdatedAt: string;
+  analysisSettingsUpdatedAt: string;
+}
+
+/**
+ * A materialized cache of one analysis's output for one (model, scenario) pair — "computed state
+ * is a cache, not a source" per the architecture contract, same pattern ComputedResult already
+ * establishes. The payoff isn't that DCF math is slow (it isn't, same as evaluateModel at this
+ * schema's scale) — it's what lets a cross-model reader (the "fetch analysis outputs for an
+ * arbitrary set of company/model/scenario/analysis tuples" access pattern this phase's plan asks
+ * for) read a number without loading that company's full model/schema/scenario and recomputing
+ * DCF live for each one.
+ */
+export interface AnalysisResult {
+  /** `${modelId}:${scenarioId}:${analysisId}` — also the natural primary key. */
+  id: string;
+  modelId: string;
+  scenarioId: ScenarioKey;
+  analysisId: string;
+  output: DcfOutput;
+  versionStamp: AnalysisResultVersionStamp;
+  computedAt: string;
+}
+
+export interface AnalysisResultRepository {
+  get(modelId: string, scenarioId: ScenarioKey, analysisId: string): Promise<AnalysisResult | undefined>;
+  set(result: AnalysisResult): Promise<void>;
+  /** Cache-only batch read for the cross-model access pattern ("fetch analysis outputs for an
+   *  arbitrary set of company/model/scenario/analysis tuples") — no live-compute fallback baked
+   *  in here, same as get() never falls back to evaluating on its own; a caller (e.g. a future
+   *  cross-issuer comparison view) decides what to do with a miss. Tuples not found are simply
+   *  omitted from the result, not represented as undefined placeholders. */
+  getMany(tuples: Array<{ modelId: string; scenarioId: ScenarioKey; analysisId: string }>): Promise<AnalysisResult[]>;
+}

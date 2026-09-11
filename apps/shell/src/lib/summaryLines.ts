@@ -7,9 +7,22 @@ function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/** The canonical concepts a Summary panel looks for — schema-independent, since schemas are
- *  fully user-editable and nothing guarantees a line named exactly "Revenue" exists. */
-export type SummaryConcept = 'revenue' | 'ebitda' | 'netDebt' | 'netLeverage' | 'interestCoverage' | 'totalDebt' | 'totalEquity';
+/** The canonical concepts a schema-independent consumer looks for — a Summary panel, or (from
+ *  Phase 8 on) an analysis catalog entry's `requiredConcepts` — since schemas are fully
+ *  user-editable and nothing guarantees a line named exactly "Revenue" exists. */
+export type SummaryConcept =
+  | 'revenue'
+  | 'ebitda'
+  | 'netDebt'
+  | 'netLeverage'
+  | 'interestCoverage'
+  | 'totalDebt'
+  | 'totalEquity'
+  | 'ebit'
+  | 'da'
+  | 'capex'
+  | 'nwc'
+  | 'taxRate';
 
 /** Candidate names per concept, tried in order — e.g. EBITDA prefers "Adjusted EBITDA" (the
  *  bridge's final line) and only falls back to a plain "EBITDA" line if no adjusted one exists. */
@@ -21,7 +34,19 @@ const CANDIDATES: Record<SummaryConcept, string[]> = {
   interestCoverage: ['Interest Coverage'],
   totalDebt: ['Total Debt'],
   totalEquity: ['Total Equity'],
+  ebit: ['EBIT'],
+  da: ['D&A'],
+  capex: ['Capex'],
+  nwc: ['Net Working Capital'],
+  taxRate: ['Effective Tax Rate', 'Tax Rate'],
 };
+
+/** The single canonical alias string to write when a user assigns a line to satisfy a concept
+ *  (see AnalysesPanel/DcfPanel's "resolve a required concept" flow) — the first, most-preferred
+ *  candidate name, same list findSummaryLine itself already tries in order. */
+export function canonicalAliasFor(concept: SummaryConcept): string {
+  return CANDIDATES[concept][0];
+}
 
 /** Finds the schema line matching a canonical concept, by name or alias, case-insensitively.
  *  Returns undefined (never throws) when the schema has no line for it — every Summary panel

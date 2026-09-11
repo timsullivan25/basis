@@ -47,4 +47,19 @@ describe('findSummaryLine', () => {
   it('resolves to undefined on a schema with no lines at all', () => {
     expect(findSummaryLine(schema([]), 'revenue')).toBeUndefined();
   });
+
+  it('resolves the Phase 8 DCF concepts (ebit/da/capex/nwc/taxRate) by alias or exact name', () => {
+    const s = schema([
+      line('op-income', 'Operating Income', ['EBIT']),
+      line('da', 'Depreciation & Amortization', ['D&A']),
+      line('capex', 'Capital Expenditures', ['Capex']),
+      line('nwc', 'Net Working Capital'),
+      line('tax-rate', 'Effective Tax Rate'),
+    ]);
+    expect(findSummaryLine(s, 'ebit')?.id).toBe('op-income');
+    expect(findSummaryLine(s, 'da')?.id).toBe('da');
+    expect(findSummaryLine(s, 'capex')?.id).toBe('capex');
+    expect(findSummaryLine(s, 'nwc')?.id).toBe('nwc');
+    expect(findSummaryLine(s, 'taxRate')?.id).toBe('tax-rate');
+  });
 });

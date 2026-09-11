@@ -16,6 +16,8 @@ import {
   Toast,
 } from '@basis/design-system';
 import {
+  analysisResultRepository,
+  analysisSettingsRepository,
   computedResultRepository,
   mappingRepository,
   modelImportRepository,
@@ -23,12 +25,16 @@ import {
   scenarioRepository,
   snapshotRepository,
   statementSchemaRepository,
+  type AnalysisSettings,
   type Company,
+  type DcfInputs,
+  type DcfOutput,
   type DriverDefinition,
   type Mapping,
   type Model,
   type ModelImport,
   type Scenario,
+  type ScenarioKey,
   type Snapshot,
   type StatementLine,
   type StatementSchema,
@@ -36,16 +42,32 @@ import {
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
+import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
+import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
+import { missingConceptsFor } from '../lib/analysisAvailability';
+import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
 import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
+import {
+  computeDcfOutputs,
+  computeSensitivityGrid,
+  computeUfcf,
+  effectiveDcfInputs,
+  lastActualIndex,
+} from '../lib/dcf';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
+import { findSummaryLine } from '../lib/summaryLines';
 import { evaluateModel } from '../lib/engine/evaluate';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
   /** Navigates to the read-only snapshot viewer — a sibling screen, not nested here — see AppShell. */
   onViewSnapshot: (snapshotId: string) => void;
+  /** Navigates to Financial Statement Definitions — used by the Analyses tab's "Add a new line…"
+   *  concept-assignment escape hatch, same top-level nav-switch shape as SettingsIndexScreen's own
+   *  onNavigate. */
+  onOpenStatementDefinitions: () => void;
 }
 
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
@@ -65,7 +87,7 @@ function fromDisplayValue(display: string, unit: string): number | null {
 }
 function formatDriverValue(value: number | null, unit: string): string {
   if (value === null) return '—';
-  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value} days`;
+  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value.toFixed(1)} days`;
 }
 
 /** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
@@ -158,7 +180,7 @@ function ScenarioNameDialog({
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
-export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspaceScreenProps) {
+export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
@@ -194,6 +216,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
   // a model loads.
   const [compareLineId, setCompareLineId] = useState<string | null>(null);
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,12 +227,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
       const existingScenarios = existingModel ? await scenarioRepository.list(existingModel.id) : [];
       const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
       const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
+      const existingAnalysisSettings = existingModel ? await analysisSettingsRepository.get(existingModel.id) : undefined;
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
       setScenarios(existingScenarios);
       setMapping(existingMapping ?? null);
       setModelImport(existingModelImport ?? null);
+      setAnalysisSettings(existingAnalysisSettings ?? null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -264,6 +289,38 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
     const versionStamp = computeVersionStamp(model, activeScenario, schema);
     void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
+
+  // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
+  // enabled and every required concept resolves (a partially-resolved DCF has nothing valid to
+  // cache). The payoff isn't recompute speed (DCF is as cheap as evaluateModel itself) — it's what
+  // lets a future cross-model reader fetch a number without loading this model/schema/scenario and
+  // recomputing DCF live for each one (see AnalysisResult's own doc comment).
+  useEffect(() => {
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation || !analysisSettings) return;
+    if (!analysisSettings.enabledAnalysisIds.includes('dcf')) return;
+    const dcfEntry = ANALYSIS_CATALOG.find((e) => e.id === 'dcf');
+    if (!dcfEntry || missingConceptsFor(schema, dcfEntry).length > 0) return;
+    const conceptLines = {
+      ebit: findSummaryLine(schema, 'ebit')!.id,
+      da: findSummaryLine(schema, 'da')!.id,
+      capex: findSummaryLine(schema, 'capex')!.id,
+      nwc: findSummaryLine(schema, 'nwc')!.id,
+      taxRate: findSummaryLine(schema, 'taxRate')!.id,
+    };
+    const ufcfRows = computeUfcf(evaluation, model.timeline, conceptLines);
+    if (ufcfRows.length === 0) return;
+    const netDebtLine = findSummaryLine(schema, 'netDebt');
+    const netDebt = netDebtLine ? evaluation.getValue(netDebtLine.id, lastActualIndex(model.timeline)) : null;
+    const inputs = effectiveDcfInputs(analysisSettings, activeScenarioId);
+    const outputs = computeDcfOutputs(ufcfRows, model.timeline, inputs, netDebt);
+    const sensitivity =
+      inputs.wacc !== null && inputs.terminalGrowth !== null && inputs.wacc > inputs.terminalGrowth
+        ? computeSensitivityGrid(ufcfRows, model.timeline, inputs.wacc, inputs.terminalGrowth)
+        : { waccValues: [], terminalGrowthValues: [], rows: [] };
+    const output: DcfOutput = { ufcfRows, ...outputs, sensitivity };
+    const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, analysisSettings);
+    void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'dcf', versionStamp, output));
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not
@@ -455,6 +512,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
     setHistoryOpen(true);
   }
 
+  async function toggleAnalysis(analysisId: string, enabled: boolean) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const nextIds = enabled
+      ? [...settings.enabledAnalysisIds, analysisId]
+      : settings.enabledAnalysisIds.filter((id) => id !== analysisId);
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { enabledAnalysisIds: nextIds }));
+  }
+
+  async function updateDcfInputs(scenarioId: ScenarioKey, patch: Partial<DcfInputs>) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const current = settings.dcfInputs[scenarioId] ?? { wacc: null, terminalGrowth: null };
+    const dcfInputs = { ...settings.dcfInputs, [scenarioId]: { ...current, ...patch } };
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { dcfInputs }));
+  }
+
   if (model === undefined) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
@@ -468,6 +542,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
     { value: 'all', label: 'All' },
     ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
+    { value: 'analyses', label: 'Analyses' },
   ];
 
   // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
@@ -779,6 +854,20 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
 
       {tab === 'summary' ? (
         evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
+      ) : tab === 'analyses' ? (
+        evaluation ? (
+          <AnalysesPanel
+            schema={schema}
+            model={model}
+            evaluation={evaluation}
+            analysisSettings={analysisSettings}
+            activeScenarioId={activeScenarioId}
+            onToggleAnalysis={toggleAnalysis}
+            onUpdateDcfInputs={updateDcfInputs}
+            onSchemaUpdated={setSchema}
+            onOpenStatementDefinitions={onOpenStatementDefinitions}
+          />
+        ) : null
       ) : tab === 'compare' ? (
         <>
           <Card padding="none">

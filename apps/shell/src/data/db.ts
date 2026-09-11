@@ -1,5 +1,16 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { Company, ComputedResult, Mapping, Model, ModelImport, Scenario, Snapshot, StatementSchema } from './types';
+import type {
+  AnalysisResult,
+  AnalysisSettings,
+  Company,
+  ComputedResult,
+  Mapping,
+  Model,
+  ModelImport,
+  Scenario,
+  Snapshot,
+  StatementSchema,
+} from './types';
 
 export interface BasisDb extends DBSchema {
   companies: {
@@ -44,10 +55,20 @@ export interface BasisDb extends DBSchema {
      *  stay reachable after a re-map replaces the live model with a brand-new modelId. */
     indexes: { 'by-companyId': string };
   };
+  analysisSettings: {
+    key: string;
+    value: AnalysisSettings;
+    // No index — id === modelId, so a direct get() is always the lookup.
+  };
+  analysisResults: {
+    key: string;
+    value: AnalysisResult;
+    indexes: { 'by-modelId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 8;
+const DB_VERSION = 10;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -149,6 +170,13 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         if (oldVersion < 8) {
           const store = db.createObjectStore('snapshots', { keyPath: 'id' });
           store.createIndex('by-companyId', 'companyId');
+        }
+        if (oldVersion < 9) {
+          db.createObjectStore('analysisSettings', { keyPath: 'id' });
+        }
+        if (oldVersion < 10) {
+          const store = db.createObjectStore('analysisResults', { keyPath: 'id' });
+          store.createIndex('by-modelId', 'modelId');
         }
       },
     });

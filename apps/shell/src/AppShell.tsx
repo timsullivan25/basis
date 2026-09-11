@@ -116,7 +116,11 @@ export function AppShell() {
         );
       }
       return viewingModelWorkspace ? (
-        <ModelWorkspaceScreen company={selectedCompany} onViewSnapshot={setViewingSnapshotId} />
+        <ModelWorkspaceScreen
+          company={selectedCompany}
+          onViewSnapshot={setViewingSnapshotId}
+          onOpenStatementDefinitions={() => setActive('settings-statements')}
+        />
       ) : (
         <CompanyDetailScreen
           company={selectedCompany}

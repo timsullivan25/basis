@@ -1,3 +1,5 @@
+import { IndexedDbAnalysisResultRepository } from './indexedDbAnalysisResultRepository';
+import { IndexedDbAnalysisSettingsRepository } from './indexedDbAnalysisSettingsRepository';
 import { IndexedDbCompanyRepository } from './indexedDbCompanyRepository';
 import { IndexedDbComputedResultRepository } from './indexedDbComputedResultRepository';
 import { IndexedDbMappingRepository } from './indexedDbMappingRepository';
@@ -7,6 +9,8 @@ import { IndexedDbScenarioRepository } from './indexedDbScenarioRepository';
 import { IndexedDbSnapshotRepository } from './indexedDbSnapshotRepository';
 import { IndexedDbStatementSchemaRepository } from './indexedDbStatementSchemaRepository';
 import type {
+  AnalysisResultRepository,
+  AnalysisSettingsRepository,
   ComputedResultRepository,
   CompanyRepository,
   MappingRepository,
@@ -18,6 +22,11 @@ import type {
 } from './types';
 
 export type {
+  AnalysisResult,
+  AnalysisResultRepository,
+  AnalysisResultVersionStamp,
+  AnalysisSettings,
+  AnalysisSettingsRepository,
   Company,
   CompanyRepository,
   ComputedResult,
@@ -29,6 +38,8 @@ export type {
   CreateModelInput,
   CreateScenarioInput,
   CreateSnapshotInput,
+  DcfInputs,
+  DcfOutput,
   DriverDefinition,
   LineAggregation,
   LineMapping,
@@ -74,3 +85,5 @@ export const modelRepository: ModelRepository = new IndexedDbModelRepository();
 export const scenarioRepository: ScenarioRepository = new IndexedDbScenarioRepository();
 export const computedResultRepository: ComputedResultRepository = new IndexedDbComputedResultRepository();
 export const snapshotRepository: SnapshotRepository = new IndexedDbSnapshotRepository();
+export const analysisSettingsRepository: AnalysisSettingsRepository = new IndexedDbAnalysisSettingsRepository();
+export const analysisResultRepository: AnalysisResultRepository = new IndexedDbAnalysisResultRepository();

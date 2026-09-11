@@ -15,6 +15,8 @@ export class IndexedDbModelRepository implements ModelRepository {
     if (existing) {
       await this.removeScenarios(existing.id);
       await this.removeComputedResults(existing.id);
+      await this.removeAnalysisSettings(existing.id);
+      await this.removeAnalysisResults(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       await db.delete('models', existing.id);
@@ -40,6 +42,8 @@ export class IndexedDbModelRepository implements ModelRepository {
     if (existing) {
       await this.removeScenarios(existing.id);
       await this.removeComputedResults(existing.id);
+      await this.removeAnalysisSettings(existing.id);
+      await this.removeAnalysisResults(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
     }
@@ -60,5 +64,20 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const results = await db.getAllFromIndex('computedResults', 'by-modelId', modelId);
     await Promise.all(results.map((r) => db.delete('computedResults', r.id)));
+  }
+
+  /** Same from-day-one invariant, at analysisSettings' own primary key (id === modelId, no index
+   *  scan needed). */
+  private async removeAnalysisSettings(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    await db.delete('analysisSettings', modelId);
+  }
+
+  /** Same from-day-one invariant as removeScenarios/removeComputedResults — no cached analysis
+   *  output should ever outlive the model it was computed for. */
+  private async removeAnalysisResults(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    const results = await db.getAllFromIndex('analysisResults', 'by-modelId', modelId);
+    await Promise.all(results.map((r) => db.delete('analysisResults', r.id)));
   }
 }
