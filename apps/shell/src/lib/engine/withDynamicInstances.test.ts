@@ -37,6 +37,7 @@ function instance(
     name: overrides.name ?? id,
     lineId: overrides.lineId,
     sectionId: overrides.sectionId,
+    sourceLineIds: [],
     projection: overrides.projection ?? { method: 'flat' },
     createdAt: 't0',
     updatedAt: 't0',

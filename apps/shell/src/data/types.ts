@@ -312,6 +312,15 @@ export interface LineInstance {
   /** The allowsFreeformLines section this is a freestanding row of. Omitted for a sub-line. */
   sectionId?: string;
   name: string;
+  /** The uploaded workbook's source line ids this instance's historicals are derived from —
+   *  persisted directly on the instance (unlike a schema line, which has no equivalent since its
+   *  mapping lives in a separate Mapping record) so re-opening the mapping screen can show and
+   *  edit what actually produced an existing instance's values, not just the resulting numbers.
+   *  Empty means "manual": this instance's historicals are typed in directly rather than derived
+   *  from any source line — the one-time-adjustment case. Absent on rows created before this
+   *  field existed; every read site treats that the same as empty (`?? []`), which is also
+   *  correct for them (their historicals were set once at creation and are otherwise untouched). */
+  sourceLineIds: string[];
   /** Same vocabulary StatementLine.projection already uses. driverId is a real key into the
    *  SAME Model.driverValues / Scenario.driverValues maps every other driver already lives in —
    *  deliberately not a separate instance-owned value bag, so scenario overrides and
@@ -326,6 +335,7 @@ export interface CreateLineInstanceInput {
   lineId?: string;
   sectionId?: string;
   name: string;
+  sourceLineIds: string[];
   projection: LineInstance['projection'];
 }
 
@@ -333,7 +343,7 @@ export interface LineInstanceRepository {
   list(modelId: string): Promise<LineInstance[]>;
   get(id: string): Promise<LineInstance | undefined>;
   create(input: CreateLineInstanceInput): Promise<LineInstance>;
-  update(id: string, patch: Partial<Pick<LineInstance, 'name' | 'projection'>>): Promise<LineInstance>;
+  update(id: string, patch: Partial<Pick<LineInstance, 'name' | 'projection' | 'sourceLineIds'>>): Promise<LineInstance>;
   remove(id: string): Promise<void>;
 }
 

@@ -126,7 +126,7 @@ describe('buildSnapshot', () => {
 
   it('deep-copies instances — mutating the live array afterward never changes the snapshot', () => {
     const liveInstances = [
-      { id: 'li1', modelId: 'm1', lineId: 'rev', name: 'Segment A', projection: { method: 'flat' as const }, createdAt: 't0', updatedAt: 't0' },
+      { id: 'li1', modelId: 'm1', lineId: 'rev', name: 'Segment A', sourceLineIds: [], projection: { method: 'flat' as const }, createdAt: 't0', updatedAt: 't0' },
     ];
     const input = buildSnapshot({
       company: company(), model: model(), schema: schema(), mapping: mapping(), modelImport: modelImport(),

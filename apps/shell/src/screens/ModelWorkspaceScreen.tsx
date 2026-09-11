@@ -62,7 +62,7 @@ import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
-import { InstancesPanel, type InstanceProjectionSelection, type InstanceTarget } from '../components/models/instances/InstancesPanel';
+import { InstancesPanel } from '../components/models/instances/InstancesPanel';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -328,41 +328,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     nextValues[periodIndex] = value;
     const updated = await modelRepository.update(model.id, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
     setModel(updated);
-  }
-
-  async function createInstance(target: InstanceTarget, name: string) {
-    if (!model) return;
-    const created = await lineInstanceRepository.create({
-      modelId: model.id,
-      ...(target.kind === 'line' ? { lineId: target.id } : { sectionId: target.id }),
-      name,
-      projection: { method: 'flat' },
-    });
-    setInstances((prev) => [...prev, created]);
-  }
-
-  async function renameInstance(instanceId: string, name: string) {
-    const updated = await lineInstanceRepository.update(instanceId, { name });
-    setInstances((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
-  }
-
-  async function deleteInstance(instanceId: string) {
-    await lineInstanceRepository.remove(instanceId);
-    setInstances((prev) => prev.filter((i) => i.id !== instanceId));
-  }
-
-  // Always mints a fresh driverId on commit, same rule setLineProjection uses in
-  // StatementDefinitionsScreen — re-interpreting an old driver's per-period values under a new
-  // method/basis would be silent and easy to get subtly wrong.
-  async function setInstanceProjection(instanceId: string, selection: InstanceProjectionSelection) {
-    const projection: LineInstance['projection'] =
-      selection.method === 'flat'
-        ? { method: 'flat' }
-        : selection.method === 'growth'
-          ? { method: 'growth', driverId: crypto.randomUUID() }
-          : { method: selection.method, driverId: crypto.randomUUID(), basisLineId: selection.basisLineId };
-    const updated = await lineInstanceRepository.update(instanceId, { projection });
-    setInstances((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
   }
 
   function openScenarioDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
@@ -836,10 +801,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         timeline={model.timeline}
         activeStoredDriverValues={activeStoredDriverValues}
         evaluation={evaluation}
-        onCreate={createInstance}
-        onRename={renameInstance}
-        onDelete={deleteInstance}
-        onSetProjection={setInstanceProjection}
         onUpdateDriverValue={updateDriverValue}
       />
 

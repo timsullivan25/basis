@@ -1,27 +1,8 @@
-import { useState } from 'react';
-import { Button, Card, DataTable, IconButton, Input, Select } from '@basis/design-system';
-import type { LineInstance, ProjectionMethod, StatementSchema, Timeline } from '../../../data';
+import { Card, DataTable } from '@basis/design-system';
+import type { LineInstance, StatementSchema, Timeline } from '../../../data';
 import type { EvaluationResult } from '../../../lib/engine/evaluate';
 import { DriverValueInput, formatDriverValue } from '../DriverValueInput';
-
-/** Mirrors SectionEditor's ProjectionSelection, minus 'none' — unlike a schema StatementLine, a
- *  LineInstance has no hand-authored-formula escape hatch (see LineInstance.projection's own
- *  type), so every instance always has SOME projection method. */
-export type InstanceProjectionSelection =
-  | { method: 'flat' }
-  | { method: 'growth' }
-  | { method: 'percent-of' | 'days-of'; basisLineId: string };
-
-const INSTANCE_PROJECTION_METHOD_OPTIONS: { value: 'flat' | ProjectionMethod; label: string }[] = [
-  { value: 'flat', label: 'Flat (holds last actual)' },
-  { value: 'growth', label: 'Growth Rate' },
-  { value: 'percent-of', label: 'Percent of…' },
-  { value: 'days-of', label: 'Days of…' },
-];
-
-function needsBasisLine(method: 'flat' | ProjectionMethod): method is 'percent-of' | 'days-of' {
-  return method === 'percent-of' || method === 'days-of';
-}
+import { basisLineLabel, INSTANCE_PROJECTION_METHOD_OPTIONS } from './projectionMethod';
 
 /** One line/section this model has (or could have) sub-lines against — the unit InstancesPanel
  *  renders a block for. A `lineId` target rolls its instances up (see StatementLine.allowsSubLines'
@@ -47,9 +28,10 @@ export function instanceTargetsOf(schema: StatementSchema): InstanceTarget[] {
 
 interface InstancesPanelProps {
   schema: StatementSchema;
-  /** Every instance for the current model — InstancesPanel derives each block's own rows, and
-   *  the sibling-instance basis-picker group (see "Sibling-instance basis" in the Phase 9 plan),
-   *  from this single list. */
+  /** Every instance for the current model — read-only structure display; see the mapping
+   *  screen's own instance editor for create/rename/delete/method/basis (Phase 9 revision:
+   *  structure is a mapping-time decision now, same as an ordinary line's projection method is a
+   *  schema-time decision — this panel only fills in driver values, like the Drivers card). */
   allInstances: LineInstance[];
   timeline: Timeline;
   /** This case's (Base or the active scenario's) own explicit driver values — same map
@@ -57,29 +39,21 @@ interface InstancesPanelProps {
    *  another key into it. */
   activeStoredDriverValues: Record<string, (number | null)[]>;
   evaluation: EvaluationResult | null;
-  onCreate: (target: InstanceTarget, name: string) => void;
-  onRename: (instanceId: string, name: string) => void;
-  onDelete: (instanceId: string) => void;
-  onSetProjection: (instanceId: string, selection: InstanceProjectionSelection) => void;
   onUpdateDriverValue: (driverId: string, periodIndex: number, value: number | null) => void;
 }
 
-export function InstancesPanel({
-  schema, allInstances, timeline, activeStoredDriverValues, evaluation,
-  onCreate, onRename, onDelete, onSetProjection, onUpdateDriverValue,
-}: InstancesPanelProps) {
+export function InstancesPanel({ schema, allInstances, timeline, activeStoredDriverValues, evaluation, onUpdateDriverValue }: InstancesPanelProps) {
   const targets = instanceTargetsOf(schema);
   if (targets.length === 0) return null;
 
   const lineNameById = new Map(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l.name]));
-  const schemaLineGroups = schema.sections.map((s) => ({
-    sectionName: s.name,
-    lines: s.lines.map((l) => ({ id: l.id, name: l.name })),
-  }));
   const projectedPeriods = timeline.map((period, index) => ({ period, index })).filter(({ period }) => period.kind === 'projected');
 
   return (
     <Card title="Segments, adjustments & KPIs" padding="none">
+      <p style={{ margin: 0, padding: 'var(--space-4) var(--space-6) 0', fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+        Structure (name, source mapping, method, basis) is managed from Edit mapping. Only driver values are edited here.
+      </p>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {targets.map((target) => (
           <InstanceTargetBlock
@@ -88,14 +62,9 @@ export function InstancesPanel({
             instances={allInstances.filter((i) => (target.kind === 'line' ? i.lineId === target.id : i.sectionId === target.id))}
             allInstances={allInstances}
             lineNameById={lineNameById}
-            schemaLineGroups={schemaLineGroups}
             projectedPeriods={projectedPeriods}
             activeStoredDriverValues={activeStoredDriverValues}
             evaluation={evaluation}
-            onCreate={(name) => onCreate(target, name)}
-            onRename={onRename}
-            onDelete={onDelete}
-            onSetProjection={onSetProjection}
             onUpdateDriverValue={onUpdateDriverValue}
           />
         ))}
@@ -105,32 +74,17 @@ export function InstancesPanel({
 }
 
 function InstanceTargetBlock({
-  target, instances, allInstances, lineNameById, schemaLineGroups, projectedPeriods,
-  activeStoredDriverValues, evaluation, onCreate, onRename, onDelete, onSetProjection, onUpdateDriverValue,
+  target, instances, allInstances, lineNameById, projectedPeriods, activeStoredDriverValues, evaluation, onUpdateDriverValue,
 }: {
   target: InstanceTarget;
   instances: LineInstance[];
   allInstances: LineInstance[];
   lineNameById: Map<string, string>;
-  schemaLineGroups: { sectionName: string; lines: { id: string; name: string }[] }[];
   projectedPeriods: { period: Timeline[number]; index: number }[];
   activeStoredDriverValues: Record<string, (number | null)[]>;
   evaluation: EvaluationResult | null;
-  onCreate: (name: string) => void;
-  onRename: (instanceId: string, name: string) => void;
-  onDelete: (instanceId: string) => void;
-  onSetProjection: (instanceId: string, selection: InstanceProjectionSelection) => void;
   onUpdateDriverValue: (driverId: string, periodIndex: number, value: number | null) => void;
 }) {
-  const [newName, setNewName] = useState('');
-
-  function submitCreate() {
-    const trimmed = newName.trim();
-    if (!trimmed) return;
-    onCreate(trimmed);
-    setNewName('');
-  }
-
   const columns = [
     {
       key: 'name',
@@ -138,9 +92,6 @@ function InstanceTargetBlock({
       width: 200,
       render: (_: unknown, row: LineInstance) => (
         <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{row.name}</span>
-      ),
-      renderEdit: (_: unknown, row: LineInstance) => (
-        <Input size="sm" autoFocus selectOnFocus value={row.name} onChange={(e) => onRename(row.id, e.target.value)} />
       ),
     },
     {
@@ -152,31 +103,14 @@ function InstanceTargetBlock({
           {INSTANCE_PROJECTION_METHOD_OPTIONS.find((o) => o.value === row.projection.method)?.label ?? row.projection.method}
         </span>
       ),
-      renderEdit: (_: unknown, row: LineInstance) => (
-        <MethodEditor
-          instance={row}
-          schemaLineGroups={schemaLineGroups}
-          allInstances={allInstances}
-          lineNameById={lineNameById}
-          onSetProjection={onSetProjection}
-        />
-      ),
     },
     {
       key: 'basis',
       label: 'Basis line',
       width: 200,
       render: (_: unknown, row: LineInstance) => {
-        if (!('basisLineId' in row.projection) || !row.projection.basisLineId) return null;
-        const basisId = row.projection.basisLineId;
-        const schemaName = lineNameById.get(basisId);
-        const instanceName = allInstances.find((i) => i.id === basisId)?.name;
-        const parentName = schemaName ?? (instanceName && lineNameById.get(allInstances.find((i) => i.id === basisId)?.lineId ?? ''));
-        return (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-            {instanceName ? `${parentName ?? '?'} → ${instanceName}` : (schemaName ?? '—')}
-          </span>
-        );
+        const label = 'basisLineId' in row.projection ? basisLineLabel(row.projection.basisLineId, allInstances, lineNameById) : null;
+        return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>{label ?? '—'}</span>;
       },
     },
     ...projectedPeriods.map(({ period, index }) => ({
@@ -210,17 +144,6 @@ function InstanceTargetBlock({
         );
       },
     })),
-    {
-      key: 'actions',
-      label: '',
-      width: 50,
-      align: 'right' as const,
-      render: (_: unknown, row: LineInstance) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <IconButton icon="trash-2" label="Delete instance" size="sm" variant="ghost" onClick={() => onDelete(row.id)} />
-        </div>
-      ),
-    },
   ];
 
   return (
@@ -231,89 +154,10 @@ function InstanceTargetBlock({
       {instances.length > 0 ? (
         <DataTable columns={columns} rows={instances} rowKey="id" dense />
       ) : (
-        <div style={{ padding: 'var(--space-3) var(--space-6)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-          No {target.kind === 'section' ? 'rows' : 'sub-lines'} yet.
+        <div style={{ padding: 'var(--space-3) var(--space-6) var(--space-5)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+          No {target.kind === 'section' ? 'rows' : 'sub-lines'} yet. Add one from Edit mapping.
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3) var(--space-6) var(--space-5)' }}>
-        <Input
-          size="sm"
-          fullWidth={false}
-          style={{ width: 200 }}
-          placeholder={target.kind === 'section' ? 'New KPI name' : 'New sub-line name'}
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submitCreate();
-          }}
-        />
-        <Button size="sm" variant="ghost" iconLeft="plus" onClick={submitCreate} disabled={!newName.trim()}>
-          Add
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function MethodEditor({
-  instance, schemaLineGroups, allInstances, lineNameById, onSetProjection,
-}: {
-  instance: LineInstance;
-  schemaLineGroups: { sectionName: string; lines: { id: string; name: string }[] }[];
-  allInstances: LineInstance[];
-  lineNameById: Map<string, string>;
-  onSetProjection: (instanceId: string, selection: InstanceProjectionSelection) => void;
-}) {
-  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
-  const currentMethod = pendingMethod ?? instance.projection.method;
-  const currentBasisLineId = pendingMethod ? '' : ('basisLineId' in instance.projection ? (instance.projection.basisLineId ?? '') : '');
-
-  function handleMethodChange(method: 'flat' | ProjectionMethod) {
-    if (needsBasisLine(method)) {
-      setPendingMethod(method);
-      return;
-    }
-    setPendingMethod(null);
-    onSetProjection(instance.id, method === 'flat' ? { method: 'flat' } : { method: 'growth' });
-  }
-
-  function handleBasisLineChange(basisLineId: string) {
-    if (!needsBasisLine(currentMethod) || !basisLineId) return;
-    onSetProjection(instance.id, { method: currentMethod, basisLineId });
-    setPendingMethod(null);
-  }
-
-  return (
-    <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-      <Select
-        size="sm"
-        fullWidth={false}
-        style={{ width: 140 }}
-        options={INSTANCE_PROJECTION_METHOD_OPTIONS}
-        value={currentMethod}
-        onChange={(e) => handleMethodChange(e.target.value as 'flat' | ProjectionMethod)}
-      />
-      {needsBasisLine(currentMethod) ? (
-        <Select
-          size="sm"
-          fullWidth={false}
-          style={{ width: 180 }}
-          value={currentBasisLineId}
-          options={[{ value: '', label: 'Select a line…' }]}
-          groups={[
-            ...schemaLineGroups
-              .map((g) => ({ label: g.sectionName, options: g.lines.map((l) => ({ value: l.id, label: l.name })) }))
-              .filter((g) => g.options.length > 0),
-            {
-              label: 'This model’s segments',
-              options: allInstances
-                .filter((i) => i.id !== instance.id && i.lineId !== undefined)
-                .map((i) => ({ value: i.id, label: `${lineNameById.get(i.lineId!) ?? '?'} → ${i.name}` })),
-            },
-          ].filter((g) => g.options.length > 0)}
-          onChange={(e) => handleBasisLineChange(e.target.value)}
-        />
-      ) : null}
     </div>
   );
 }
