@@ -16,6 +16,7 @@ import {
   Toast,
 } from '@basis/design-system';
 import {
+  analysisResultRepository,
   analysisSettingsRepository,
   computedResultRepository,
   mappingRepository,
@@ -27,6 +28,7 @@ import {
   type AnalysisSettings,
   type Company,
   type DcfInputs,
+  type DcfOutput,
   type DriverDefinition,
   type Mapping,
   type Model,
@@ -41,10 +43,21 @@ import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
+import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
+import { missingConceptsFor } from '../lib/analysisAvailability';
+import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
 import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
+import {
+  computeDcfOutputs,
+  computeSensitivityGrid,
+  computeUfcf,
+  effectiveDcfInputs,
+  lastActualIndex,
+} from '../lib/dcf';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
+import { findSummaryLine } from '../lib/summaryLines';
 import { evaluateModel } from '../lib/engine/evaluate';
 
 interface ModelWorkspaceScreenProps {
@@ -276,6 +289,38 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const versionStamp = computeVersionStamp(model, activeScenario, schema);
     void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
+
+  // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
+  // enabled and every required concept resolves (a partially-resolved DCF has nothing valid to
+  // cache). The payoff isn't recompute speed (DCF is as cheap as evaluateModel itself) — it's what
+  // lets a future cross-model reader fetch a number without loading this model/schema/scenario and
+  // recomputing DCF live for each one (see AnalysisResult's own doc comment).
+  useEffect(() => {
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation || !analysisSettings) return;
+    if (!analysisSettings.enabledAnalysisIds.includes('dcf')) return;
+    const dcfEntry = ANALYSIS_CATALOG.find((e) => e.id === 'dcf');
+    if (!dcfEntry || missingConceptsFor(schema, dcfEntry).length > 0) return;
+    const conceptLines = {
+      ebit: findSummaryLine(schema, 'ebit')!.id,
+      da: findSummaryLine(schema, 'da')!.id,
+      capex: findSummaryLine(schema, 'capex')!.id,
+      nwc: findSummaryLine(schema, 'nwc')!.id,
+      taxRate: findSummaryLine(schema, 'taxRate')!.id,
+    };
+    const ufcfRows = computeUfcf(evaluation, model.timeline, conceptLines);
+    if (ufcfRows.length === 0) return;
+    const netDebtLine = findSummaryLine(schema, 'netDebt');
+    const netDebt = netDebtLine ? evaluation.getValue(netDebtLine.id, lastActualIndex(model.timeline)) : null;
+    const inputs = effectiveDcfInputs(analysisSettings, activeScenarioId);
+    const outputs = computeDcfOutputs(ufcfRows, model.timeline, inputs, netDebt);
+    const sensitivity =
+      inputs.wacc !== null && inputs.terminalGrowth !== null && inputs.wacc > inputs.terminalGrowth
+        ? computeSensitivityGrid(ufcfRows, model.timeline, inputs.wacc, inputs.terminalGrowth)
+        : { waccValues: [], terminalGrowthValues: [], rows: [] };
+    const output: DcfOutput = { ufcfRows, ...outputs, sensitivity };
+    const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, analysisSettings);
+    void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'dcf', versionStamp, output));
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not

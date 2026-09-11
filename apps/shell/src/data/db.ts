@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type {
+  AnalysisResult,
   AnalysisSettings,
   Company,
   ComputedResult,
@@ -59,10 +60,15 @@ export interface BasisDb extends DBSchema {
     value: AnalysisSettings;
     // No index — id === modelId, so a direct get() is always the lookup.
   };
+  analysisResults: {
+    key: string;
+    value: AnalysisResult;
+    indexes: { 'by-modelId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 9;
+const DB_VERSION = 10;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -167,6 +173,10 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         }
         if (oldVersion < 9) {
           db.createObjectStore('analysisSettings', { keyPath: 'id' });
+        }
+        if (oldVersion < 10) {
+          const store = db.createObjectStore('analysisResults', { keyPath: 'id' });
+          store.createIndex('by-modelId', 'modelId');
         }
       },
     });

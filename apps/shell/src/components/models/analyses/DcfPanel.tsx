@@ -1,11 +1,19 @@
 import { useState } from 'react';
-import { Card, DataTable, Field, Icon, Input, Select } from '@basis/design-system';
+import { Alert, Card, DataTable, Field, Icon, Input, MetricCard, Select } from '@basis/design-system';
 import { statementSchemaRepository, type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import type { LineValues } from '../../../lib/computedCache';
-import { computeUfcf, effectiveDcfInputs, type DcfConceptLines, type DcfUfcfRow } from '../../../lib/dcf';
+import {
+  computeDcfOutputs,
+  computeSensitivityGrid,
+  computeUfcf,
+  effectiveDcfInputs,
+  lastActualIndex,
+  type DcfConceptLines,
+  type DcfUfcfRow,
+} from '../../../lib/dcf';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 
 interface DcfPanelProps {
@@ -116,6 +124,18 @@ export function DcfPanel({
 
   const ufcfRows = conceptLines ? computeUfcf(evaluation, model.timeline, conceptLines) : [];
 
+  const netDebtLine = findSummaryLine(schema, 'netDebt');
+  const netDebt = netDebtLine ? evaluation.getValue(netDebtLine.id, lastActualIndex(model.timeline)) : null;
+
+  const dcfOutputs = ufcfRows.length > 0 ? computeDcfOutputs(ufcfRows, model.timeline, inputs, netDebt) : null;
+
+  const waccExceedsGrowth = inputs.wacc !== null && inputs.terminalGrowth !== null && inputs.wacc <= inputs.terminalGrowth;
+
+  const sensitivity =
+    dcfOutputs && inputs.wacc !== null && inputs.terminalGrowth !== null && !waccExceedsGrowth
+      ? computeSensitivityGrid(ufcfRows, model.timeline, inputs.wacc, inputs.terminalGrowth)
+      : null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       {missing.length > 0 ? (
@@ -224,6 +244,78 @@ export function DcfPanel({
             }
           />
         </Card>
+      ) : null}
+
+      {waccExceedsGrowth ? (
+        <Alert tone="negative" title="WACC must exceed the terminal growth rate">
+          Enterprise value, the equity bridge and the sensitivity grid can't compute until WACC is higher than terminal growth.
+        </Alert>
+      ) : null}
+
+      {dcfOutputs && dcfOutputs.enterpriseValue !== null ? (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--space-5)' }}>
+            <MetricCard label="Enterprise Value" value={formatPeriodValue(dcfOutputs.enterpriseValue, 'number')} />
+            <MetricCard label="Equity Value" value={formatPeriodValue(dcfOutputs.equityValue, 'number')} />
+          </div>
+
+          <Card title="Valuation bridge" padding="none">
+            <DataTable
+              dense
+              columns={[
+                { key: 'name', label: 'Line', width: 220, render: (_: unknown, row: { label: string }) => row.label },
+                {
+                  key: 'value',
+                  label: 'Value',
+                  numeric: true,
+                  render: (_: unknown, row: { value: number | null }) => formatPeriodValue(row.value, 'number'),
+                },
+              ]}
+              rows={[
+                { key: 'pvUfcf', label: 'PV of Unlevered FCF', value: dcfOutputs.presentValueOfUfcf },
+                { key: 'pvTv', label: 'PV of Terminal Value', value: dcfOutputs.presentValueOfTerminalValue },
+                { key: 'ev', label: 'Enterprise Value', value: dcfOutputs.enterpriseValue },
+                { key: 'netDebt', label: 'Less: Net Debt', value: dcfOutputs.netDebt === null ? null : -dcfOutputs.netDebt },
+                { key: 'equity', label: 'Equity Value', value: dcfOutputs.equityValue },
+              ]}
+              rowKey="key"
+              rowStyle={(row: { key: string }) =>
+                row.key === 'ev' || row.key === 'equity'
+                  ? { fontWeight: 'var(--weight-semibold)', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' }
+                  : {}
+              }
+            />
+          </Card>
+
+          {sensitivity ? (
+            <Card title="Sensitivity — Enterprise Value" padding="none">
+              <DataTable
+                dense
+                stickyFirstColumn
+                columns={[
+                  {
+                    key: 'wacc',
+                    label: 'WACC',
+                    width: 100,
+                    render: (_: unknown, row: { rowIndex: number }) => `${(sensitivity.waccValues[row.rowIndex] * 100).toFixed(2)}%`,
+                  },
+                  ...sensitivity.terminalGrowthValues.map((g, colIndex) => ({
+                    key: `g${colIndex}`,
+                    label: `${(g * 100).toFixed(2)}%`,
+                    numeric: true,
+                    width: 100,
+                    background: colIndex === 2 ? 'var(--alpha-blue-06)' : undefined,
+                    render: (_: unknown, row: { rowIndex: number }) =>
+                      formatPeriodValue(sensitivity.rows[row.rowIndex][colIndex].enterpriseValue, 'number'),
+                  })),
+                ]}
+                rows={sensitivity.waccValues.map((_, rowIndex) => ({ key: `r${rowIndex}`, rowIndex }))}
+                rowKey="key"
+                rowStyle={(row: { rowIndex: number }) => (row.rowIndex === 2 ? { background: 'var(--alpha-blue-06)' } : {})}
+              />
+            </Card>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
