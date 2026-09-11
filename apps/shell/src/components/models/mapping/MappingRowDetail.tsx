@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Button, Checkbox, Input } from '@basis/design-system';
+import { Button } from '@basis/design-system';
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
-import { formatPeriodValue, isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
+import { isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
+import { SourceLineChecklist } from './SourceLineChecklist';
 
 const METHOD_DESCRIPTIONS: Record<string, string> = {
   exact: 'Exact name match',
@@ -11,10 +11,6 @@ const METHOD_DESCRIPTIONS: Record<string, string> = {
   manual: 'Manual override',
   none: 'No match',
 };
-
-function normalizeSection(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 interface MappingRowDetailProps {
   target: StatementLine;
@@ -32,8 +28,6 @@ interface MappingRowDetailProps {
 export function MappingRowDetail({
   target, sectionName, mapping, workbook, onSetSourceLines, onApprove, supersededByInstanceCount,
 }: MappingRowDetailProps) {
-  const [search, setSearch] = useState('');
-
   if (supersededByInstanceCount) {
     return (
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', maxWidth: 480 }}>
@@ -45,87 +39,18 @@ export function MappingRowDetail({
   }
 
   const sourceById = (id: string): ParsedSourceLine | undefined => workbook.lines.find((line) => line.id === id);
-  const query = search.trim().toLowerCase();
-  const sameSection = normalizeSection(sectionName);
-  const pool = (query ? workbook.lines : workbook.lines.filter((line) => normalizeSection(line.section) === sameSection)).filter(
-    (line) => !query || line.name.toLowerCase().includes(query),
-  );
-
-  function toggle(line: ParsedSourceLine) {
-    const next = mapping.sourceLineIds.includes(line.id)
-      ? mapping.sourceLineIds.filter((id) => id !== line.id)
-      : [...mapping.sourceLineIds, line.id];
-    onSetSourceLines(next);
-  }
-
-  const lastPeriodIndex = workbook.periods.length - 1;
-  const aggregatedTotal =
-    mapping.sourceLineIds.length > 1
-      ? mapping.sourceLineIds.reduce((sum, id) => sum + (sourceById(id)?.values[lastPeriodIndex] ?? 0), 0)
-      : null;
-
   const methodMeta = MATCH_METHOD_META[mapping.method];
   const showApprove = isLowConfidence(mapping);
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 'var(--space-9)' }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>
-          Map {target.name} from · {sectionName}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-4)' }}>
-          <Input
-            size="sm"
-            iconLeft="search"
-            placeholder={`Search all ${workbook.lines.length} parsed lines`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 260 }}
-          />
-          {mapping.sourceLineIds.length > 0 ? (
-            <Button size="sm" variant="ghost" iconLeft="x" onClick={() => onSetSourceLines([])}>
-              Clear
-            </Button>
-          ) : null}
-        </div>
-
-        <div style={{ maxHeight: 200, overflow: 'auto', paddingRight: 'var(--space-3)' }}>
-          {pool.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-              No parsed line matches “{search}”.
-            </p>
-          ) : (
-            pool.map((line) => (
-              <div
-                key={line.id}
-                onClick={() => toggle(line)}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-6)',
-                  padding: 'var(--space-3) 0', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)',
-                }}
-              >
-                <Checkbox
-                  checked={mapping.sourceLineIds.includes(line.id)}
-                  label={line.name}
-                  description={query && normalizeSection(line.section) !== sameSection ? line.section : undefined}
-                  onChange={() => toggle(line)}
-                />
-                <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-secondary)' }}>
-                  {formatPeriodValue(line.values[lastPeriodIndex] ?? null)}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-
-        {aggregatedTotal !== null ? (
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-6)', paddingTop: 'var(--space-4)', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
-            <span>Aggregated total · {workbook.periods[lastPeriodIndex]?.name}</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)' }}>{formatPeriodValue(aggregatedTotal)}</span>
-          </div>
-        ) : null}
-      </div>
+      <SourceLineChecklist
+        title={`Map ${target.name} from`}
+        sectionName={sectionName}
+        workbook={workbook}
+        sourceLineIds={mapping.sourceLineIds}
+        onSetSourceLines={onSetSourceLines}
+      />
 
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>

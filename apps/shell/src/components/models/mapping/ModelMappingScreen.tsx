@@ -16,6 +16,7 @@ import {
   type StatementLine,
   type StatementSchema,
 } from '../../../data';
+import { DEFAULT_ADJUSTMENT_INSTANCE_SEEDS, DEFAULT_ADJUSTMENT_TARGET_LINE_NAME, DEFAULT_SCHEMA_ID } from '../../../data/defaultStatementSchema';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
 import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../../../lib/computedCache';
@@ -24,6 +25,8 @@ import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
 import { applyDynamicInstances } from '../../../lib/engine/withDynamicInstances';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
+import type { InstanceTarget } from '../instances/InstancesPanel';
+import { AddInstanceRowDetail } from './AddInstanceRowDetail';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
@@ -75,10 +78,17 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
-  // Empty for a fresh (non-editing) draft — no model id exists yet to own any instances. A
-  // re-review of an already-saved model may already have some (created via the workspace's
-  // InstancesPanel), and the live preview below needs them to show correct rollup values.
+  // Already-persisted instances (created via the workspace's InstancesPanel, for an `editing`
+  // re-review) — the live preview below needs them to show correct rollup values.
   const [instances, setInstances] = useState<LineInstance[]>([]);
+  // Sub-lines/KPIs created via this screen's own "+ Add" rows — held locally and only actually
+  // persisted in handleSave(), same deferred-until-Save convention `mapping` itself already
+  // follows (nothing here writes to IndexedDB before Save). `id` is a local-only key used to
+  // thread this draft's own historicals through the live preview below; it's discarded once the
+  // real LineInstance is created (see handleSave's own comment).
+  const [draftInstances, setDraftInstances] = useState<
+    Array<{ id: string; lineId?: string; sectionId?: string; name: string; sourceLineIds: string[] }>
+  >([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +100,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         if (!cancelled) setParseError(err instanceof TemplateParseError ? err.message : 'Could not parse the uploaded file.');
       }
       const existingInstances = editing ? await lineInstanceRepository.list(editing.model.id) : [];
-      if (!cancelled) setInstances(existingInstances);
+      if (!cancelled) {
+        setInstances(existingInstances);
+        setDraftInstances([]);
+      }
     })();
     return () => {
       cancelled = true;
@@ -144,6 +157,44 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         }
       }
       if (!cancelled) setMapping(matchStatementLines(statementSchema.sections, workbook.lines, hints));
+
+      // A brand-new model built on the unmodified default schema gets a few common EBITDA
+      // adjustments seeded automatically, each trying to auto-match the uploaded file exactly
+      // like any other line's aliases would (see DEFAULT_ADJUSTMENT_INSTANCE_SEEDS' own doc
+      // comment) — the "upload and it just works" case, with zero effect on a re-review or a
+      // custom/duplicated schema.
+      if (!cancelled && selectedSchemaId === DEFAULT_SCHEMA_ID) {
+        const targetLine = statementSchema.sections.flatMap((s) => s.lines).find((l) => l.name === DEFAULT_ADJUSTMENT_TARGET_LINE_NAME);
+        if (targetLine) {
+          const seedSections: StatementSchema['sections'] = [
+            {
+              id: 'seed-adjustments',
+              name: targetLine.name,
+              lines: DEFAULT_ADJUSTMENT_INSTANCE_SEEDS.map((seed) => ({
+                id: crypto.randomUUID(),
+                name: seed.name,
+                required: false,
+                rowFormat: 'normal',
+                numberFormat: 'number',
+                sign: 'natural',
+                aggregation: 'sum',
+                formula: null,
+                projection: null,
+                aliases: seed.aliases,
+              })),
+            },
+          ];
+          const seedMatches = matchStatementLines(seedSections, workbook.lines);
+          setDraftInstances(
+            seedSections[0].lines.map((seedLine) => ({
+              id: crypto.randomUUID(),
+              lineId: targetLine.id,
+              name: seedLine.name,
+              sourceLineIds: seedMatches[seedLine.id]?.sourceLineIds ?? [],
+            })),
+          );
+        }
+      }
     })();
     return () => {
       cancelled = true;
@@ -161,17 +212,34 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     setPendingSchemaId(null);
   }
 
-  // How many live sub-line instances currently roll up into each allowsSubLines line — a
-  // non-zero count here means that line's direct mapping is superseded (see
+  // Draft instances shaped as LineInstance for evaluation purposes only (modelId/timestamps are
+  // irrelevant here) — a draft's own "actual" value comes from its own sourceLineIds below, the
+  // same way any other mapped line's does, so 'flat' is the only projection it ever needs at
+  // this stage.
+  const previewInstances = useMemo(
+    () => [
+      ...instances,
+      ...draftInstances.map(
+        (d): LineInstance => ({
+          id: d.id, modelId: '', lineId: d.lineId, sectionId: d.sectionId, name: d.name,
+          projection: { method: 'flat' }, createdAt: '', updatedAt: '',
+        }),
+      ),
+    ],
+    [instances, draftInstances],
+  );
+
+  // How many live-or-drafted sub-line instances currently roll up into each allowsSubLines line
+  // — a non-zero count here means that line's direct mapping is superseded (see
   // MappingRowDetail's own doc comment).
   const instanceCountByLineId = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const instance of instances) {
+    for (const instance of previewInstances) {
       if (instance.lineId === undefined) continue;
       counts.set(instance.lineId, (counts.get(instance.lineId) ?? 0) + 1);
     }
     return counts;
-  }, [instances]);
+  }, [previewInstances]);
 
   const nameIndex = useMemo(() => buildNameIndex(statementSchema), [statementSchema]);
   const allLines = useMemo(
@@ -189,15 +257,19 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
 
   const timeline = useMemo(() => (workbook ? buildTimeline(workbook.periods) : []), [workbook]);
-  const historicals = useMemo(
-    () => (workbook ? resolveActuals(Object.values(mapping), workbook, timeline) : {}),
-    [mapping, workbook, timeline],
-  );
+  const historicals = useMemo(() => {
+    if (!workbook) return {};
+    const draftAsMappings: LineMapping[] = draftInstances.map((d) => ({
+      targetLineId: d.id, sourceLineIds: d.sourceLineIds, method: 'manual', confidence: 1, note: '', approved: true,
+    }));
+    return resolveActuals([...Object.values(mapping), ...draftAsMappings], workbook, timeline);
+  }, [mapping, draftInstances, workbook, timeline]);
   // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
-  // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals.
+  // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals
+  // (including any not-yet-persisted sub-line/KPI instances, via previewInstances above).
   const evaluation = useMemo(
-    () => applyDynamicInstances(statementSchema, { timeline, historicals }, instances).evaluation,
-    [statementSchema, timeline, historicals, instances],
+    () => applyDynamicInstances(statementSchema, { timeline, historicals }, previewInstances).evaluation,
+    [statementSchema, timeline, historicals, previewInstances],
   );
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
@@ -264,10 +336,40 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         });
       }
 
+      // Persist any sub-lines/KPIs drafted during this mapping session — deferred the same way
+      // `mapping` itself already is (nothing here writes until Save). Each draft's temp id only
+      // ever existed for this screen's own live preview; the real LineInstance gets a fresh id
+      // from the repository, so its historicals have to be written under THAT id, not the draft's.
+      let persistedInstances = instances;
+      if (draftInstances.length > 0) {
+        const created = await Promise.all(
+          draftInstances.map((d) =>
+            lineInstanceRepository.create({
+              modelId: savedModel.id,
+              lineId: d.lineId,
+              sectionId: d.sectionId,
+              name: d.name,
+              projection: { method: 'flat' },
+            }),
+          ),
+        );
+        const draftHistoricals = resolveActuals(
+          draftInstances.map((d, i) => ({
+            targetLineId: created[i].id, sourceLineIds: d.sourceLineIds, method: 'manual' as const, confidence: 1, note: '', approved: true,
+          })),
+          workbook,
+          resolvedTimeline,
+        );
+        savedModel = await modelRepository.update(savedModel.id, {
+          historicals: { ...savedModel.historicals, ...draftHistoricals },
+        });
+        persistedInstances = [...instances, ...created];
+      }
+
       // Compute and cache the Base case immediately — so the issuer page (which reads this
       // cache rather than re-running the engine itself) has real numbers right after a save,
       // not just after someone happens to open the workspace next.
-      const { schema: savedInstancedSchema, evaluation: savedEvaluation } = applyDynamicInstances(statementSchema!, savedModel, instances);
+      const { schema: savedInstancedSchema, evaluation: savedEvaluation } = applyDynamicInstances(statementSchema!, savedModel, persistedInstances);
       const materialized = materializeEvaluation(savedInstancedSchema, savedModel, savedEvaluation);
       const versionStamp = computeVersionStamp(savedModel, null, statementSchema!);
       await computedResultRepository.set(buildComputedResult(savedModel.id, 'base', versionStamp, materialized));
@@ -309,13 +411,21 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     return true;
   }
 
-  const rows: Array<{ id: string; __group?: string; line?: StatementLine; sectionName?: string }> = [];
+  const rows: Array<{ id: string; __group?: string; line?: StatementLine; sectionName?: string; addInstanceTarget?: InstanceTarget }> = [];
   statementSchema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
     const visible = section.lines.filter(passes);
-    if (!visible.length) return;
+    if (!visible.length && !section.allowsFreeformLines) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
-    visible.forEach((line) => rows.push({ id: line.id, line, sectionName: section.name }));
+    visible.forEach((line) => {
+      rows.push({ id: line.id, line, sectionName: section.name });
+      if (line.allowsSubLines) {
+        rows.push({ id: `add-line-${line.id}`, addInstanceTarget: { id: line.id, name: line.name, kind: 'line' }, sectionName: section.name });
+      }
+    });
+    if (section.allowsFreeformLines) {
+      rows.push({ id: `add-section-${section.id}`, addInstanceTarget: { id: section.id, name: section.name, kind: 'section' }, sectionName: section.name });
+    }
   });
 
   const columns = [
@@ -323,16 +433,24 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       key: 'expand',
       label: '',
       width: 24,
-      render: (_: unknown, row: { line?: StatementLine }) =>
-        row.line ? (
-          <Icon name={expandedLineId === row.line.id ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
+      render: (_: unknown, row: { id: string; line?: StatementLine; addInstanceTarget?: InstanceTarget }) =>
+        row.line || row.addInstanceTarget ? (
+          <Icon name={expandedLineId === row.id ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
         ) : null,
     },
     {
       key: 'target',
       label: 'Target line',
       width: 220,
-      render: (_: unknown, row: { line?: StatementLine }) => {
+      render: (_: unknown, row: { line?: StatementLine; addInstanceTarget?: InstanceTarget }) => {
+        if (row.addInstanceTarget) {
+          return (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-brand)' }}>
+              <Icon name="plus" size={12} color="var(--text-brand)" />
+              Add {row.addInstanceTarget.kind === 'section' ? 'KPI' : 'sub-line'}
+            </span>
+          );
+        }
         if (!row.line) return null;
         const m = mapping[row.line.id];
         const instanceCount = instanceCountByLineId.get(row.line.id);
@@ -606,10 +724,30 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           maxHeight="calc(100vh - 420px)"
           expandedKey={expandedLineId}
           onRowClick={(row) => {
-            if (row.line) setExpandedLineId(expandedLineId === row.line.id ? null : row.line.id);
+            if (row.line || row.addInstanceTarget) setExpandedLineId(expandedLineId === row.id ? null : row.id);
           }}
-          renderDetail={(row: { line?: StatementLine; sectionName?: string }) =>
-            row.line ? (
+          renderDetail={(row: { id: string; line?: StatementLine; sectionName?: string; addInstanceTarget?: InstanceTarget }) =>
+            row.addInstanceTarget ? (
+              <AddInstanceRowDetail
+                target={row.addInstanceTarget}
+                sectionName={row.sectionName ?? ''}
+                workbook={workbook}
+                onCreate={({ name, sourceLineIds }) => {
+                  const target = row.addInstanceTarget!;
+                  setDraftInstances((prev) => [
+                    ...prev,
+                    {
+                      id: crypto.randomUUID(),
+                      lineId: target.kind === 'line' ? target.id : undefined,
+                      sectionId: target.kind === 'section' ? target.id : undefined,
+                      name,
+                      sourceLineIds,
+                    },
+                  ]);
+                  setExpandedLineId(null);
+                }}
+              />
+            ) : row.line ? (
               <MappingRowDetail
                 target={row.line}
                 sectionName={row.sectionName ?? ''}

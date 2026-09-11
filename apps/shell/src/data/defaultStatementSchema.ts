@@ -173,6 +173,37 @@ function creditMetrics(): DraftSection {
 /** Fixed (not random) so concurrent seed attempts on an empty store converge on one row instead of racing to create duplicates — see IndexedDbStatementSchemaRepository.list(). */
 export const DEFAULT_SCHEMA_ID = 'seed-basis-default';
 
+/** A handful of common EBITDA adjustments the mapping screen tries to auto-populate as
+ *  sub-line instances under "Adjusted EBITDA Delta" for a brand-new model built on this
+ *  default schema — reusing matchStatementLines' own exact/alias/fuzzy matching (see
+ *  ModelMappingScreen's auto-seed effect), the same mechanism any ordinary schema line's
+ *  aliases already get matched by, so a common adjustment can auto-populate from an upload
+ *  with no manual mapping step. Each stays at zero (unmatched, but still present, still
+ *  editable) when a company's file doesn't have it — the "smart defaults, full power still
+ *  there for the rest" case this seed list exists for. */
+export interface DefaultAdjustmentInstanceSeed {
+  name: string;
+  aliases: string[];
+}
+export const DEFAULT_ADJUSTMENT_INSTANCE_SEEDS: DefaultAdjustmentInstanceSeed[] = [
+  {
+    name: 'Stock-Based Compensation Addback',
+    aliases: ['Stock Based Compensation', 'Stock-based compensation expense', 'Stock Comp Expense', 'SBC'],
+  },
+  {
+    name: 'Restructuring & Severance',
+    aliases: ['Restructuring', 'Restructuring Costs', 'Severance', 'Severance Expense'],
+  },
+  {
+    name: 'Transaction & Integration Costs',
+    aliases: ['Transaction Costs', 'Integration Costs', 'M&A Costs', 'Deal Costs'],
+  },
+];
+/** The default schema line the seeds above roll up into — matched by name at the mapping
+ *  screen's use site rather than hardcoded here, since every fresh seed of this schema mints
+ *  new line ids (see createDefaultStatementSchema). */
+export const DEFAULT_ADJUSTMENT_TARGET_LINE_NAME = 'Adjusted EBITDA Delta';
+
 /** Resolves every draft line's raw formula string against a NameIndex built from the whole
  *  draft schema (every line's id already exists by now, even though formulas haven't been
  *  compiled yet — buildNameIndex only needs id/name/section, not formula). */
