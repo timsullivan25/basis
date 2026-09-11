@@ -41,6 +41,13 @@ const CANDIDATES: Record<SummaryConcept, string[]> = {
   taxRate: ['Effective Tax Rate', 'Tax Rate'],
 };
 
+/** The single canonical alias string to write when a user assigns a line to satisfy a concept
+ *  (see AnalysesPanel/DcfPanel's "resolve a required concept" flow) — the first, most-preferred
+ *  candidate name, same list findSummaryLine itself already tries in order. */
+export function canonicalAliasFor(concept: SummaryConcept): string {
+  return CANDIDATES[concept][0];
+}
+
 /** Finds the schema line matching a canonical concept, by name or alias, case-insensitively.
  *  Returns undefined (never throws) when the schema has no line for it — every Summary panel
  *  tile/row built on this must handle that by omitting itself, not fabricating a value. */

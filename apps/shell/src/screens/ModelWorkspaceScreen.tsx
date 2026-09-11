@@ -16,6 +16,7 @@ import {
   Toast,
 } from '@basis/design-system';
 import {
+  analysisSettingsRepository,
   computedResultRepository,
   mappingRepository,
   modelImportRepository,
@@ -23,12 +24,15 @@ import {
   scenarioRepository,
   snapshotRepository,
   statementSchemaRepository,
+  type AnalysisSettings,
   type Company,
+  type DcfInputs,
   type DriverDefinition,
   type Mapping,
   type Model,
   type ModelImport,
   type Scenario,
+  type ScenarioKey,
   type Snapshot,
   type StatementLine,
   type StatementSchema,
@@ -36,6 +40,7 @@ import {
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
+import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
@@ -46,6 +51,10 @@ interface ModelWorkspaceScreenProps {
   company: Company;
   /** Navigates to the read-only snapshot viewer — a sibling screen, not nested here — see AppShell. */
   onViewSnapshot: (snapshotId: string) => void;
+  /** Navigates to Financial Statement Definitions — used by the Analyses tab's "Add a new line…"
+   *  concept-assignment escape hatch, same top-level nav-switch shape as SettingsIndexScreen's own
+   *  onNavigate. */
+  onOpenStatementDefinitions: () => void;
 }
 
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
@@ -158,7 +167,7 @@ function ScenarioNameDialog({
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
-export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspaceScreenProps) {
+export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
@@ -194,6 +203,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
   // a model loads.
   const [compareLineId, setCompareLineId] = useState<string | null>(null);
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,12 +214,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
       const existingScenarios = existingModel ? await scenarioRepository.list(existingModel.id) : [];
       const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
       const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
+      const existingAnalysisSettings = existingModel ? await analysisSettingsRepository.get(existingModel.id) : undefined;
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
       setScenarios(existingScenarios);
       setMapping(existingMapping ?? null);
       setModelImport(existingModelImport ?? null);
+      setAnalysisSettings(existingAnalysisSettings ?? null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -455,6 +467,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
     setHistoryOpen(true);
   }
 
+  async function toggleAnalysis(analysisId: string, enabled: boolean) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const nextIds = enabled
+      ? [...settings.enabledAnalysisIds, analysisId]
+      : settings.enabledAnalysisIds.filter((id) => id !== analysisId);
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { enabledAnalysisIds: nextIds }));
+  }
+
+  async function updateDcfInputs(scenarioId: ScenarioKey, patch: Partial<DcfInputs>) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const current = settings.dcfInputs[scenarioId] ?? { wacc: null, terminalGrowth: null };
+    const dcfInputs = { ...settings.dcfInputs, [scenarioId]: { ...current, ...patch } };
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { dcfInputs }));
+  }
+
   if (model === undefined) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
@@ -468,6 +497,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
     { value: 'all', label: 'All' },
     ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
+    { value: 'analyses', label: 'Analyses' },
   ];
 
   // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
@@ -779,6 +809,20 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot }: ModelWorkspace
 
       {tab === 'summary' ? (
         evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
+      ) : tab === 'analyses' ? (
+        evaluation ? (
+          <AnalysesPanel
+            schema={schema}
+            model={model}
+            evaluation={evaluation}
+            analysisSettings={analysisSettings}
+            activeScenarioId={activeScenarioId}
+            onToggleAnalysis={toggleAnalysis}
+            onUpdateDcfInputs={updateDcfInputs}
+            onSchemaUpdated={setSchema}
+            onOpenStatementDefinitions={onOpenStatementDefinitions}
+          />
+        ) : null
       ) : tab === 'compare' ? (
         <>
           <Card padding="none">
