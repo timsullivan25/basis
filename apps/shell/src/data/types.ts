@@ -425,3 +425,46 @@ export interface SnapshotRepository {
   get(id: string): Promise<Snapshot | undefined>;
   create(input: CreateSnapshotInput): Promise<Snapshot>;
 }
+
+/** WACC and terminal growth — the two DCF assumptions with no schema analog (unlike EBIT/D&A/
+ *  CapEx/NWC/tax rate, nothing about "the discount rate you're valuing the company at" is a
+ *  property of the financial statements themselves). `null` means "not set" (WACC/terminal
+ *  growth default to null — no schema-derivable default exists for either), or, on a named
+ *  scenario's entry, "not overridden here, cascade to Base" — see AnalysisSettings.dcfInputs. */
+export interface DcfInputs {
+  wacc: number | null;
+  terminalGrowth: number | null;
+}
+
+/**
+ * One row per model — which analyses (from the static ANALYSIS_CATALOG) are enabled, and DCF's
+ * own per-scenario WACC/terminal-growth assumptions. Required inputs that DO have a schema
+ * analog (EBIT, D&A, CapEx, Net Working Capital, tax rate) are deliberately NOT stored here —
+ * they resolve from the schema's own lines/aliases via lib/summaryLines.ts's findSummaryLine,
+ * the same mechanism mapping already uses, so resolving one is a real improvement to the
+ * schema's own definition rather than a DCF-local override.
+ */
+export interface AnalysisSettings {
+  /** == modelId — one settings row per model, so this doubles as the primary key. */
+  id: string;
+  modelId: string;
+  enabledAnalysisIds: string[];
+  /** Per-scenario DCF assumptions. 'base' is ground truth and never cascades further; a named
+   *  scenario's entry is SPARSE against it — a null field means "not overridden here, use
+   *  Base's value", same semantics and same reason as Scenario.driverValues' per-field cascade
+   *  (see lib/scenario.ts's mergeScenarioDriverValues) — just at 2-scalar-fields-not-N-periods
+   *  scale. A whole-record fallback was considered and rejected: it would force copying Base's
+   *  other field the instant only one field is first overridden, silently freezing it at that
+   *  moment even as Base's own assumption keeps evolving. */
+  dcfInputs: Record<ScenarioKey, DcfInputs>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalysisSettingsRepository {
+  get(modelId: string): Promise<AnalysisSettings | undefined>;
+  /** Seeds a fresh row: enabledAnalysisIds from the catalog's defaultEnabled entries,
+   *  dcfInputs: { base: { wacc: null, terminalGrowth: null } }. */
+  create(modelId: string): Promise<AnalysisSettings>;
+  update(modelId: string, patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs'>>): Promise<AnalysisSettings>;
+}
