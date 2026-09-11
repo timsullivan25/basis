@@ -40,7 +40,7 @@ interface InstanceRowDetailProps {
  *  unmapped), and projection method/basis, all in one place. Used for both a brand-new instance
  *  (added via the "+ Add sub-line/KPI" row, held as a draft until Save) and an already-persisted
  *  one being revisited — mapping is the sole place instance structure is edited now; the model
- *  workspace's InstancesPanel only fills in driver values (see the Phase 9 revision plan). */
+ *  workspace's Drivers card only fills in driver values (see the Phase 9 revision plan). */
 export function InstanceRowDetail({
   instance, sectionName, workbook, manualValues, schemaLineGroups, allInstances, lineNameById,
   onChangeName, onChangeSourceLines, onChangeProjection, onChangeManualValue, onDelete,

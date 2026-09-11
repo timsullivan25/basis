@@ -4,8 +4,9 @@ import { Input } from '@basis/design-system';
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
  *  rate) — these two convert to/from the units a person actually wants to type ("10" for 10%,
  *  a plain day count for "days"). Only two units exist ('%' and 'days'), 'multiple-of' having
- *  been dropped as redundant with 'percent-of'. Shared by the workspace's main Drivers card and
- *  InstancesPanel (a sub-line's driver reuses the exact same value bag and vocabulary). */
+ *  been dropped as redundant with 'percent-of'. Shared by the workspace's Drivers card for both
+ *  a schema line's own driver and a sub-line instance's (the latter reuses the exact same value
+ *  bag and vocabulary — see LineInstance.projection's own doc comment). */
 export function toDisplayValue(stored: number | null, unit: string): string {
   if (stored === null) return '';
   return unit === '%' ? String(stored * 100) : String(stored);

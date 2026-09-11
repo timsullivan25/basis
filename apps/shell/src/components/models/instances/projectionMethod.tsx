@@ -21,6 +21,16 @@ export function needsBasisLine(method: 'flat' | ProjectionMethod): method is 'pe
   return method === 'percent-of' || method === 'days-of';
 }
 
+/** One line/section a model has (or could have) sub-lines against — a `lineId` target rolls its
+ *  instances up into that line (see StatementLine.allowsSubLines' own doc comment); a `sectionId`
+ *  target is freeform (KPIs) and has no rollup. Used by the mapping screen's "+ Add sub-line/KPI"
+ *  row builder. */
+export interface InstanceTarget {
+  id: string;
+  name: string;
+  kind: 'line' | 'section';
+}
+
 export interface SchemaLineGroup {
   sectionName: string;
   lines: { id: string; name: string }[];
@@ -94,20 +104,4 @@ export function ProjectionMethodEditor({
       ) : null}
     </div>
   );
-}
-
-/** Display label for an instance's current basis line, given either a schema line id or a
- *  sibling instance id — shared read-only rendering for InstancesPanel and mapping. */
-export function basisLineLabel(
-  basisLineId: string | undefined,
-  allInstances: LineInstance[],
-  lineNameById: Map<string, string>,
-): string | null {
-  if (!basisLineId) return null;
-  const schemaName = lineNameById.get(basisLineId);
-  if (schemaName) return schemaName;
-  const instance = allInstances.find((i) => i.id === basisLineId);
-  if (!instance) return null;
-  const parentName = instance.lineId ? lineNameById.get(instance.lineId) : undefined;
-  return `${parentName ?? '?'} → ${instance.name}`;
 }

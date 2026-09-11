@@ -30,7 +30,6 @@ import {
   type Company,
   type DcfInputs,
   type DcfOutput,
-  type DriverDefinition,
   type LineInstance,
   type Mapping,
   type Model,
@@ -62,7 +61,6 @@ import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
-import { InstancesPanel } from '../components/models/instances/InstancesPanel';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -141,6 +139,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Lines whose sub-line instances are hidden — collapsed via the chevron on a parent row in the
   // main grid below. Keyed by the parent StatementLine's id, not the instance's.
   const [collapsedParentIds, setCollapsedParentIds] = useState<Set<string>>(new Set());
+  // Same idea as collapsedParentIds above, but for the Drivers card below — independent so
+  // collapsing a line's children in one table doesn't affect the other.
+  const [collapsedDriverParentIds, setCollapsedDriverParentIds] = useState<Set<string>>(new Set());
   const [horizonInput, setHorizonInput] = useState('0');
   // Set only while confirming a reduction in projected periods — growing needs no confirmation
   // (purely additive), but shrinking permanently drops driver values entered for the removed tail.
@@ -689,15 +690,107 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // made it impossible to tell which one you were looking at).
   const activeStoredDriverValues = activeScenario ? activeScenario.driverValues : (model.driverValues ?? {});
 
+  // The Drivers card below is now the combined "Drivers + Segments/adjustments/KPIs" view —
+  // structure (name, source mapping, method, basis) is owned by mapping now (see the Phase 9
+  // revision), so the only thing left to show here is a name and, where one exists, an editable
+  // driver value — exactly the same shape as an ordinary driver row. An instance nests under its
+  // parent line's row the same way its financials do in the grid above (indent + corner-down-
+  // right icon, parent gets a collapse chevron). A parent line with no driver of its own (a pure
+  // aggregation line like an EBITDA Delta) still gets a row once it has ≥1 instance to hold, but
+  // never as an empty placeholder — an allowsSubLines line with nothing under it and no driver of
+  // its own simply doesn't appear, same as today.
+  interface DriverRow {
+    id: string;
+    name: string;
+    isChild: boolean;
+    hasChildren: boolean;
+    driverId?: string;
+    unit?: string;
+  }
+
+  const schemaDriverByLineId = new Map(schema.drivers.map((d) => [d.targetLineId, d]));
+  const childInstancesByLineId = new Map<string, LineInstance[]>();
+  for (const instance of instances) {
+    if (instance.lineId === undefined) continue;
+    const group = childInstancesByLineId.get(instance.lineId) ?? [];
+    group.push(instance);
+    childInstancesByLineId.set(instance.lineId, group);
+  }
+
+  const driverRows: DriverRow[] = [];
+  for (const section of schema.sections) {
+    for (const line of section.lines) {
+      const ownDriver = schemaDriverByLineId.get(line.id);
+      const children = line.allowsSubLines ? (childInstancesByLineId.get(line.id) ?? []) : [];
+      if (!ownDriver && children.length === 0) continue;
+      driverRows.push({ id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0, driverId: ownDriver?.id, unit: ownDriver?.unit });
+      if (collapsedDriverParentIds.has(line.id)) continue;
+      for (const child of children) {
+        driverRows.push({
+          id: child.id, name: child.name, isChild: true, hasChildren: false,
+          driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
+          unit: child.projection.method === 'days-of' ? 'days' : '%',
+        });
+      }
+    }
+    if (section.allowsFreeformLines) {
+      for (const child of instances.filter((i) => i.sectionId === section.id)) {
+        driverRows.push({
+          id: child.id, name: child.name, isChild: false, hasChildren: false,
+          driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
+          unit: child.projection.method === 'days-of' ? 'days' : '%',
+        });
+      }
+    }
+  }
+
+  function toggleDriverParentCollapsed(lineId: string) {
+    setCollapsedDriverParentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  }
+
   const driverColumns = [
     {
       key: 'name',
       label: 'Driver',
       width: 240,
-      render: (_: unknown, row: DriverDefinition) => (
-        <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
-          {row.name}
-        </span>
+      render: (_: unknown, row: DriverRow) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          {row.hasChildren ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleDriverParentCollapsed(row.id);
+              }}
+              style={{ display: 'flex', cursor: 'pointer', flex: '0 0 auto' }}
+            >
+              <Icon
+                name={collapsedDriverParentIds.has(row.id) ? 'chevron-right' : 'chevron-down'}
+                size={12}
+                color="var(--text-tertiary)"
+              />
+            </span>
+          ) : row.isChild ? (
+            <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
+          ) : (
+            <span style={{ width: 12, flex: '0 0 auto' }} />
+          )}
+          <span
+            style={{
+              fontSize: 'var(--text-sm)',
+              fontWeight: row.isChild ? 'var(--weight-regular)' : 'var(--weight-medium)',
+              color: row.isChild ? 'var(--text-secondary)' : 'var(--text-primary)',
+            }}
+          >
+            {row.name}
+          </span>
+        </div>
       ),
     },
     ...projectedPeriods.map(({ period, index }) => ({
@@ -705,10 +798,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       label: period.label,
       numeric: true,
       width: 110,
-      render: (_: unknown, row: DriverDefinition) => {
-        const stored = activeStoredDriverValues[row.id]?.[index] ?? null;
-        const effective = evaluation?.getDriverValue(row.id, index) ?? null;
-        const baseStored = model.driverValues?.[row.id]?.[index] ?? null;
+      render: (_: unknown, row: DriverRow) => {
+        if (!row.driverId) {
+          return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+        }
+        const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
+        const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
+        const baseStored = model.driverValues?.[row.driverId]?.[index] ?? null;
         // Two different reasons a cell can be non-explicit, not one — this scenario is tracking
         // Base's own explicit number (will move if Base's does), or nothing at any level has an
         // explicit number and the engine computed one (0% growth, or the last actual period's own
@@ -732,18 +828,20 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             }}
           >
             {isInherited ? <Icon name="corner-down-right" size={10} color="var(--text-tertiary)" /> : null}
-            {formatDriverValue(effective, row.unit)}
+            {formatDriverValue(effective, row.unit!)}
           </span>
         );
       },
-      renderEdit: (_: unknown, row: DriverDefinition, wasEditCancelled: () => boolean) => (
-        <DriverValueInput
-          stored={activeStoredDriverValues[row.id]?.[index] ?? null}
-          unit={row.unit}
-          onCommit={(value) => updateDriverValue(row.id, index, value)}
-          wasEditCancelled={wasEditCancelled}
-        />
-      ),
+      canEdit: (row: DriverRow) => Boolean(row.driverId),
+      renderEdit: (_: unknown, row: DriverRow, wasEditCancelled: () => boolean) =>
+        row.driverId ? (
+          <DriverValueInput
+            stored={activeStoredDriverValues[row.driverId]?.[index] ?? null}
+            unit={row.unit!}
+            onCommit={(value) => updateDriverValue(row.driverId!, index, value)}
+            wasEditCancelled={wasEditCancelled}
+          />
+        ) : null,
     })),
   ];
 
@@ -838,7 +936,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </div>
         }
       >
-        {schema.drivers.length === 0 ? (
+        {driverRows.length === 0 ? (
           <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
             No projection drivers defined yet — set a line's projection method in Financial Statement Definitions to add one.
           </div>
@@ -850,18 +948,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           // Keyed by the active scenario so switching forces a full remount — otherwise a
           // mid-edit DriverValueInput's stale local text buffer would commit against whichever
           // scenario is active by the time it blurs, silently writing to the wrong one.
-          <DataTable key={activeScenarioId} columns={driverColumns} rows={schema.drivers} rowKey="id" dense stickyFirstColumn />
+          <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
         )}
       </Card>
-
-      <InstancesPanel
-        schema={schema}
-        allInstances={instances}
-        timeline={model.timeline}
-        activeStoredDriverValues={activeStoredDriverValues}
-        evaluation={evaluation}
-        onUpdateDriverValue={updateDriverValue}
-      />
 
       <Tabs
         tabs={tabs}
