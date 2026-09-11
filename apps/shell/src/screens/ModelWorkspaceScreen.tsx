@@ -138,6 +138,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [tab, setTab] = useState('all');
+  // Lines whose sub-line instances are hidden — collapsed via the chevron on a parent row in the
+  // main grid below. Keyed by the parent StatementLine's id, not the instance's.
+  const [collapsedParentIds, setCollapsedParentIds] = useState<Set<string>>(new Set());
   const [horizonInput, setHorizonInput] = useState('0');
   // Set only while confirming a reduction in projected periods — growing needs no confirmation
   // (purely additive), but shrinking permanently drops driver values entered for the removed tail.
@@ -560,25 +563,81 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     color: `var(--chart-${(i % 12) + 1})`,
   }));
 
-  const rows: Array<{ id: string; __group?: string; line?: StatementLine }> = [];
+  // Every instance-backed line (spliced into instancedSchema right after its parent — see
+  // withDynamicInstances.ts) is otherwise indistinguishable from an ordinary schema line once
+  // it's in schema.sections[].lines; parentLineIdByInstanceId is what lets the grid below tell
+  // them apart and indent/nest them under their parent, matching the mapping screen's own
+  // parent/child row treatment for the same instances.
+  const parentLineIdByInstanceId = new Map(instances.filter((i) => i.lineId !== undefined).map((i) => [i.id, i.lineId!]));
+  const childCountByParentId = new Map<string, number>();
+  for (const parentId of parentLineIdByInstanceId.values()) {
+    childCountByParentId.set(parentId, (childCountByParentId.get(parentId) ?? 0) + 1);
+  }
+
+  const rows: Array<{ id: string; __group?: string; line?: StatementLine; isChild?: boolean; childCount?: number }> = [];
   instancedSchema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
     if (!section.lines.length) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
-    section.lines.forEach((line) => rows.push({ id: line.id, line }));
+    section.lines.forEach((line) => {
+      const parentId = parentLineIdByInstanceId.get(line.id);
+      if (parentId !== undefined && collapsedParentIds.has(parentId)) return;
+      rows.push({ id: line.id, line, isChild: parentId !== undefined, childCount: childCountByParentId.get(line.id) });
+    });
   });
+
+  function toggleParentCollapsed(lineId: string) {
+    setCollapsedParentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  }
 
   const columns = [
     {
       key: 'name',
       label: 'Line',
       width: 240,
-      render: (_: unknown, row: { line?: StatementLine }) =>
-        row.line ? (
-          <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
-            {row.line.name}
-          </span>
-        ) : null,
+      render: (_: unknown, row: { line?: StatementLine; isChild?: boolean; childCount?: number }) => {
+        if (!row.line) return null;
+        const hasChildren = Boolean(row.childCount);
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            {hasChildren ? (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleParentCollapsed(row.line!.id);
+                }}
+                style={{ display: 'flex', cursor: 'pointer', flex: '0 0 auto' }}
+              >
+                <Icon
+                  name={collapsedParentIds.has(row.line.id) ? 'chevron-right' : 'chevron-down'}
+                  size={12}
+                  color="var(--text-tertiary)"
+                />
+              </span>
+            ) : row.isChild ? (
+              <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
+            ) : (
+              <span style={{ width: 12, flex: '0 0 auto' }} />
+            )}
+            <span
+              style={{
+                fontSize: 'var(--text-sm)',
+                fontWeight: row.isChild ? 'var(--weight-regular)' : 'var(--weight-medium)',
+                color: row.isChild ? 'var(--text-secondary)' : 'var(--text-primary)',
+              }}
+            >
+              {row.line.name}
+            </span>
+          </div>
+        );
+      },
     },
     ...model.timeline.map((period, i) => ({
       key: `p${i}`,
