@@ -533,4 +533,10 @@ export interface AnalysisResult {
 export interface AnalysisResultRepository {
   get(modelId: string, scenarioId: ScenarioKey, analysisId: string): Promise<AnalysisResult | undefined>;
   set(result: AnalysisResult): Promise<void>;
+  /** Cache-only batch read for the cross-model access pattern ("fetch analysis outputs for an
+   *  arbitrary set of company/model/scenario/analysis tuples") — no live-compute fallback baked
+   *  in here, same as get() never falls back to evaluating on its own; a caller (e.g. a future
+   *  cross-issuer comparison view) decides what to do with a miss. Tuples not found are simply
+   *  omitted from the result, not represented as undefined placeholders. */
+  getMany(tuples: Array<{ modelId: string; scenarioId: ScenarioKey; analysisId: string }>): Promise<AnalysisResult[]>;
 }

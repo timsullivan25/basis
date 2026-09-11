@@ -11,4 +11,12 @@ export class IndexedDbAnalysisResultRepository implements AnalysisResultReposito
     const db = await openBasisDb();
     await db.put('analysisResults', result);
   }
+
+  async getMany(tuples: Array<{ modelId: string; scenarioId: ScenarioKey; analysisId: string }>): Promise<AnalysisResult[]> {
+    const db = await openBasisDb();
+    const results = await Promise.all(
+      tuples.map((t) => db.get('analysisResults', `${t.modelId}:${t.scenarioId}:${t.analysisId}`)),
+    );
+    return results.filter((r): r is AnalysisResult => r !== undefined);
+  }
 }
