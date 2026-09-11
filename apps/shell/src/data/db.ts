@@ -4,6 +4,7 @@ import type {
   AnalysisSettings,
   Company,
   ComputedResult,
+  LineInstance,
   Mapping,
   Model,
   ModelImport,
@@ -65,10 +66,15 @@ export interface BasisDb extends DBSchema {
     value: AnalysisResult;
     indexes: { 'by-modelId': string };
   };
+  lineInstances: {
+    key: string;
+    value: LineInstance;
+    indexes: { 'by-modelId': string };
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 10;
+const DB_VERSION = 11;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -152,6 +158,7 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
                   driverValues: {},
                   createdAt: imp.uploadedAt,
                   updatedAt: imp.uploadedAt,
+                  instancesUpdatedAt: imp.uploadedAt,
                 });
               }
               const { mapping: _mapping, mappedAt: _mappedAt, ...rest } = imp;
@@ -176,6 +183,10 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         }
         if (oldVersion < 10) {
           const store = db.createObjectStore('analysisResults', { keyPath: 'id' });
+          store.createIndex('by-modelId', 'modelId');
+        }
+        if (oldVersion < 11) {
+          const store = db.createObjectStore('lineInstances', { keyPath: 'id' });
           store.createIndex('by-modelId', 'modelId');
         }
       },

@@ -8,8 +8,8 @@ import { remapFormulaIds } from '../lib/engine/resolve';
  *  the full old-id -> new-id map needs to exist before any of them are remapped. */
 function cloneSectionShallow(section: StatementSection, idMap: Map<string, string>): StatementSection {
   return {
+    ...section,
     id: crypto.randomUUID(),
-    name: section.name,
     lines: section.lines.map((l): StatementLine => {
       const newId = crypto.randomUUID();
       idMap.set(l.id, newId);

@@ -495,6 +495,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         mapping,
         modelImport,
         scenarios,
+        // TODO(Phase 9 Slice 4): pass the model's live LineInstance rows once this screen loads them.
+        instances: [],
         label: pendingSnapshotLabel.trim(),
         note: pendingSnapshotNote.trim(),
       });

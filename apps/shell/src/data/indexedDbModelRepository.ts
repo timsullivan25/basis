@@ -17,12 +17,13 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
+      await this.removeInstances(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       await db.delete('models', existing.id);
     }
     const now = new Date().toISOString();
-    const model: Model = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, driverValues: {}, ...input };
+    const model: Model = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, instancesUpdatedAt: now, driverValues: {}, ...input };
     await db.add('models', model);
     return model;
   }
@@ -44,6 +45,7 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
+      await this.removeInstances(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
     }
@@ -79,5 +81,13 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const results = await db.getAllFromIndex('analysisResults', 'by-modelId', modelId);
     await Promise.all(results.map((r) => db.delete('analysisResults', r.id)));
+  }
+
+  /** Same from-day-one invariant as the other four — no LineInstance row should ever outlive
+   *  the model it belongs to. */
+  private async removeInstances(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    const instances = await db.getAllFromIndex('lineInstances', 'by-modelId', modelId);
+    await Promise.all(instances.map((i) => db.delete('lineInstances', i.id)));
   }
 }

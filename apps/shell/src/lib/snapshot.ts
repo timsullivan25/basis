@@ -1,6 +1,7 @@
 import type {
   Company,
   CreateSnapshotInput,
+  LineInstance,
   Mapping,
   Model,
   ModelImport,
@@ -39,6 +40,11 @@ interface BuildSnapshotParams {
   mapping: Mapping;
   modelImport: ModelImport;
   scenarios: Scenario[];
+  /** The model's current LineInstance rows, frozen verbatim into the snapshot (see
+   *  Snapshot.instances' own doc comment). Evaluation doesn't yet splice these into `schema`
+   *  before materializing (see lib/engine/withDynamicInstances.ts, Phase 9 Slice 2/4) — this
+   *  param exists so the freeze-what-exists-now record is already correct once that lands. */
+  instances: LineInstance[];
   label: string;
   note: string;
 }
@@ -51,7 +57,7 @@ interface BuildSnapshotParams {
  *  and createdAt are the repository's to assign, same convention every other builder in this
  *  codebase follows (e.g. lib/computedCache.ts's buildComputedResult). */
 export function buildSnapshot(params: BuildSnapshotParams): CreateSnapshotInput {
-  const { company, model, schema, mapping, modelImport, scenarios, label, note } = params;
+  const { company, model, schema, mapping, modelImport, scenarios, instances, label, note } = params;
 
   const cases: Array<{ scenarioId: ScenarioKey; name: string; driverValues: Record<string, (number | null)[]> }> = [
     { scenarioId: 'base', name: 'Base case', driverValues: model.driverValues ?? {} },
@@ -78,6 +84,7 @@ export function buildSnapshot(params: BuildSnapshotParams): CreateSnapshotInput 
     sourceFileName: modelImport.fileName,
     sourceUploadedAt: modelImport.uploadedAt,
     scenarios: snapshotScenarios,
+    instances: structuredClone(instances),
   };
 }
 

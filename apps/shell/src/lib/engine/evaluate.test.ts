@@ -58,6 +58,7 @@ function modelWithTimeline(
     driverValues,
     createdAt: '',
     updatedAt: '',
+    instancesUpdatedAt: '',
   };
 }
 

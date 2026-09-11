@@ -84,6 +84,13 @@ export interface StatementLine {
    *  formula is a pure `priorPeriod(self)` carry-forward); every other method does. */
   projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string } | null;
   aliases: string[];
+  /** When true, a model may grow a list of LineInstance rows under this line (a revenue
+   *  segment, an EBITDA adjustment) — see LineInstance's own doc comment. Absent/false means
+   *  this line behaves exactly as it does today; most lines never set this. Once a model has
+   *  ≥1 instance here, this line's value is the sum of its instances for every period,
+   *  superseding (not blending with) any direct mapping — see
+   *  lib/engine/withDynamicInstances.ts. */
+  allowsSubLines?: boolean;
 }
 
 export interface StatementSection {
@@ -92,6 +99,11 @@ export interface StatementSection {
   name: string;
   /** Array position is the display order within the section. */
   lines: StatementLine[];
+  /** When true, a model may grow a list of freestanding LineInstance rows under this section
+   *  (KPIs) — each just a real spliced-in line with no rollup target, unlike a `lineId`-scoped
+   *  instance under an `allowsSubLines` line. Only meaningful for a section with no natural
+   *  parent line to attach sub-lines to. */
+  allowsFreeformLines?: boolean;
 }
 
 export interface StatementSchema {
@@ -248,6 +260,15 @@ export interface Model {
   createdAt: string;
   /** Bumped on every update() — part of a computed result's version stamp (see ComputedResult). */
   updatedAt: string;
+  /** Bumped by IndexedDbLineInstanceRepository on every create/update/remove of one of this
+   *  model's LineInstance rows — deliberately NOT part of ModelRepository.update()'s patch, since
+   *  nothing but that repository ever touches it (the same cross-store-write pattern
+   *  IndexedDbModelRepository's own cascade deletes already use). A stored aggregate, not derived
+   *  from the current instances' own updatedAt fields, so that REMOVING an instance still bumps
+   *  it — the max-of-survivors would otherwise miss exactly that case. Part of a computed
+   *  result's version stamp (see ComputedResult) so removing/editing an instance correctly
+   *  invalidates any cached result. */
+  instancesUpdatedAt: string;
 }
 
 export interface CreateModelInput {
@@ -266,6 +287,53 @@ export interface ModelRepository {
   create(input: CreateModelInput): Promise<Model>;
   update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues'>>): Promise<Model>;
   /** Cascades to the model's ModelImport, Mapping and Scenarios. */
+  remove(id: string): Promise<void>;
+}
+
+/**
+ * A user-added row under one model — either a sub-line rolling up into a `StatementLine` whose
+ * `allowsSubLines` is true (a revenue segment, an EBITDA adjustment), via `lineId`; or a
+ * freestanding row under a `StatementSection` whose `allowsFreeformLines` is true (a KPI), via
+ * `sectionId`. Exactly one of the two is ever set. Deliberately its own top-level entity, not an
+ * array embedded in `Model` — same reasoning as `Scenario`/`ComputedResult`/`AnalysisSettings`:
+ * `Model`'s only per-model assumption bag is `driverValues`.
+ *
+ * At evaluation time, every instance is spliced into a COPY of the schema as an ordinary, real
+ * `StatementLine` (id = instance.id) and evaluated through the completely unmodified engine —
+ * see lib/engine/withDynamicInstances.ts. This is also what makes a sibling-instance basis work:
+ * `projection.basisLineId` may point at either a schema line's id or another instance's id,
+ * since after splicing both are just ordinary line ids in the same schema copy.
+ */
+export interface LineInstance {
+  id: string;
+  modelId: string;
+  /** The allowsSubLines line this rolls up into. Omitted for a freeform (KPI-style) instance. */
+  lineId?: string;
+  /** The allowsFreeformLines section this is a freestanding row of. Omitted for a sub-line. */
+  sectionId?: string;
+  name: string;
+  /** Same vocabulary StatementLine.projection already uses. driverId is a real key into the
+   *  SAME Model.driverValues / Scenario.driverValues maps every other driver already lives in —
+   *  deliberately not a separate instance-owned value bag, so scenario overrides and
+   *  mergeScenarioDriverValues work completely unchanged. */
+  projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string; basisLineId?: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLineInstanceInput {
+  modelId: string;
+  lineId?: string;
+  sectionId?: string;
+  name: string;
+  projection: LineInstance['projection'];
+}
+
+export interface LineInstanceRepository {
+  list(modelId: string): Promise<LineInstance[]>;
+  get(id: string): Promise<LineInstance | undefined>;
+  create(input: CreateLineInstanceInput): Promise<LineInstance>;
+  update(id: string, patch: Partial<Pick<LineInstance, 'name' | 'projection'>>): Promise<LineInstance>;
   remove(id: string): Promise<void>;
 }
 
@@ -324,6 +392,9 @@ export interface ComputedResultVersionStamp {
   /** null when scenarioId is 'base' — Base has no Scenario row to stamp. */
   scenarioUpdatedAt: string | null;
   schemaUpdatedAt: string;
+  /** Mirrors Model.instancesUpdatedAt — never null, since every model has one from creation,
+   *  even with zero LineInstance rows. */
+  instancesUpdatedAt: string;
 }
 
 /**
@@ -404,6 +475,11 @@ export interface Snapshot {
   sourceFileName: string;
   sourceUploadedAt: string;
   scenarios: SnapshotScenario[];
+  /** A frozen deep copy of the model's LineInstance rows at snapshot time — same convention as
+   *  `scenarios` above. Without this, an old snapshot's NUMBERS would still be correct (they're
+   *  fully materialized at freeze time regardless), but there'd be no record of which instances
+   *  produced them or how they were configured. */
+  instances: LineInstance[];
 }
 
 export interface CreateSnapshotInput {
@@ -418,6 +494,7 @@ export interface CreateSnapshotInput {
   sourceFileName: string;
   sourceUploadedAt: string;
   scenarios: SnapshotScenario[];
+  instances: LineInstance[];
 }
 
 export interface SnapshotRepository {
