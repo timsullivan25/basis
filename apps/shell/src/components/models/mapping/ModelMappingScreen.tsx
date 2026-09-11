@@ -262,8 +262,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     const draftAsMappings: LineMapping[] = draftInstances.map((d) => ({
       targetLineId: d.id, sourceLineIds: d.sourceLineIds, method: 'manual', confidence: 1, note: '', approved: true,
     }));
-    return resolveActuals([...Object.values(mapping), ...draftAsMappings], workbook, timeline);
-  }, [mapping, draftInstances, workbook, timeline]);
+    // A pre-existing instance (re-reviewing an already-saved model) has no LineMapping of its
+    // own — only a draft, freshly created this session, does — so resolveActuals alone can
+    // never reproduce its historicals. Seed from the live model's own historicals first so a
+    // re-review doesn't preview it as blank.
+    return { ...(editing?.model.historicals ?? {}), ...resolveActuals([...Object.values(mapping), ...draftAsMappings], workbook, timeline) };
+  }, [editing?.model.historicals, mapping, draftInstances, workbook, timeline]);
   // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
   // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals
   // (including any not-yet-persisted sub-line/KPI instances, via previewInstances above).
@@ -304,7 +308,15 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     setSaving(true);
     try {
       const resolvedTimeline = buildTimeline(workbook.periods);
-      const resolvedHistoricals = resolveActuals(Object.values(mapping), workbook, resolvedTimeline);
+      // Seeded from the live model's own historicals (when re-reviewing) so a save never wipes
+      // an already-persisted instance's values — resolveActuals only ever produces entries for
+      // this mapping's own SCHEMA target lines, never touching an instance id, so without this
+      // seed a bare resolveActuals result would silently drop every pre-existing instance's data
+      // the instant modelRepository.update() below replaces `historicals` wholesale.
+      const resolvedHistoricals = {
+        ...(editing?.model.historicals ?? {}),
+        ...resolveActuals(Object.values(mapping), workbook, resolvedTimeline),
+      };
 
       let savedModel: Model;
       if (editing) {
