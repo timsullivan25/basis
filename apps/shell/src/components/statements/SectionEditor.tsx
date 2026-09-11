@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Tag } from '@basis/design-system';
+import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Switch, Tag } from '@basis/design-system';
 import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { FormulaInput } from './FormulaInput';
@@ -45,6 +45,10 @@ interface SectionEditorProps {
   drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onRename: (name: string) => void;
+  /** KPI-style sections only — see StatementSection.allowsFreeformLines' own doc comment. A
+   *  section with real lines rarely needs this; it exists for a section holding nothing BUT
+   *  freestanding, model-level instance rows. */
+  onSetAllowsFreeformLines: (next: boolean) => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
   onDelete: () => void;
@@ -58,7 +62,7 @@ interface SectionEditorProps {
 
 export function SectionEditor({
   section, isFirst, isLast, otherSections, lineGroups, drivers, nameIndex,
-  onRename, onMoveUp, onMoveDown, onDelete,
+  onRename, onSetAllowsFreeformLines, onMoveUp, onMoveDown, onDelete,
   onAddLine, onUpdateLine, onSetProjection, onDeleteLine, onMoveLine, onMoveLineToSection,
 }: SectionEditorProps) {
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
@@ -231,6 +235,12 @@ export function SectionEditor({
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', minHeight: 40, padding: '0 var(--space-8)', borderBottom: '1px solid var(--border-subtle)' }}>
         <SectionName name={section.name} onRename={onRename} />
         <div style={{ flex: '1 1 auto' }} />
+        <Switch
+          size="sm"
+          label="Freeform lines (KPIs)"
+          checked={section.allowsFreeformLines ?? false}
+          onChange={onSetAllowsFreeformLines}
+        />
         <IconButton icon="arrow-up" label="Move section up" size="sm" variant="ghost" onClick={onMoveUp} disabled={isFirst} />
         <IconButton icon="arrow-down" label="Move section down" size="sm" variant="ghost" onClick={onMoveDown} disabled={isLast} />
         <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />
@@ -383,6 +393,18 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
             options={PROJECTION_METHOD_OPTIONS}
             value={currentMethod}
             onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
+          />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+            Sub-lines
+          </span>
+          <Switch
+            size="sm"
+            label="Allow sub-lines"
+            checked={line.allowsSubLines ?? false}
+            onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
           />
         </div>
 

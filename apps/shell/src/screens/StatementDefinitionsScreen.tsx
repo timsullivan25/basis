@@ -211,6 +211,10 @@ export function StatementDefinitionsScreen() {
     setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, name } : s)));
   }
 
+  function setSectionAllowsFreeformLines(sectionId: string, next: boolean) {
+    setSections((prev) => prev.map((s) => (s.id === sectionId ? { ...s, allowsFreeformLines: next } : s)));
+  }
+
   function moveSection(sectionId: string, direction: 'up' | 'down') {
     setSections((prev) => moveWithinArray(prev, prev.findIndex((s) => s.id === sectionId), direction));
   }
@@ -441,6 +445,7 @@ export function StatementDefinitionsScreen() {
             drivers={drivers}
             nameIndex={nameIndex}
             onRename={(name) => renameSection(section.id, name)}
+            onSetAllowsFreeformLines={(next) => setSectionAllowsFreeformLines(section.id, next)}
             onMoveUp={() => moveSection(section.id, 'up')}
             onMoveDown={() => moveSection(section.id, 'down')}
             onDelete={() => deleteSection(section.id)}

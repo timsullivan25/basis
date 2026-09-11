@@ -23,10 +23,26 @@ interface MappingRowDetailProps {
   workbook: ParsedWorkbook;
   onSetSourceLines: (sourceLineIds: string[]) => void;
   onApprove: () => void;
+  /** Set once this line has ≥1 LineInstance summing into it — its value is superseded by that
+   *  sum for every period (see StatementLine.allowsSubLines' own doc comment), so direct mapping
+   *  here would silently be ignored. Disables the checklist below in favor of an explanation. */
+  supersededByInstanceCount?: number;
 }
 
-export function MappingRowDetail({ target, sectionName, mapping, workbook, onSetSourceLines, onApprove }: MappingRowDetailProps) {
+export function MappingRowDetail({
+  target, sectionName, mapping, workbook, onSetSourceLines, onApprove, supersededByInstanceCount,
+}: MappingRowDetailProps) {
   const [search, setSearch] = useState('');
+
+  if (supersededByInstanceCount) {
+    return (
+      <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', maxWidth: 480 }}>
+        {target.name} is broken into {supersededByInstanceCount} sub-line{supersededByInstanceCount > 1 ? 's' : ''} — its value
+        is the sum of those for every period, so direct mapping here is disabled. Manage its sub-lines from the Segments,
+        adjustments &amp; KPIs panel in the model workspace.
+      </div>
+    );
+  }
 
   const sourceById = (id: string): ParsedSourceLine | undefined => workbook.lines.find((line) => line.id === id);
   const query = search.trim().toLowerCase();

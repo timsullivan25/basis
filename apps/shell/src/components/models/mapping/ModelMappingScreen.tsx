@@ -161,6 +161,18 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     setPendingSchemaId(null);
   }
 
+  // How many live sub-line instances currently roll up into each allowsSubLines line — a
+  // non-zero count here means that line's direct mapping is superseded (see
+  // MappingRowDetail's own doc comment).
+  const instanceCountByLineId = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const instance of instances) {
+      if (instance.lineId === undefined) continue;
+      counts.set(instance.lineId, (counts.get(instance.lineId) ?? 0) + 1);
+    }
+    return counts;
+  }, [instances]);
+
   const nameIndex = useMemo(() => buildNameIndex(statementSchema), [statementSchema]);
   const allLines = useMemo(
     () => statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))),
@@ -323,8 +335,9 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
         const m = mapping[row.line.id];
-        const missing = isMissingRequired(row.line, m);
-        const low = isLowConfidence(m);
+        const instanceCount = instanceCountByLineId.get(row.line.id);
+        const missing = !instanceCount && isMissingRequired(row.line, m);
+        const low = !instanceCount && isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
         const rowLineStyle = getLineRowStyle(row.line);
         return (
@@ -336,12 +349,16 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             <span
               style={{
                 fontSize: 'var(--text-sm)', whiteSpace: 'nowrap', fontWeight: 'var(--weight-medium)',
-                color: 'var(--text-primary)', ...rowLineStyle, background: undefined, borderTop: undefined,
+                color: instanceCount ? 'var(--text-tertiary)' : 'var(--text-primary)', ...rowLineStyle, background: undefined, borderTop: undefined,
               }}
             >
               {row.line.name}
             </span>
-            {isCalculated(row.line) && !row.line.projection ? (
+            {instanceCount ? (
+              <span title={`Superseded by ${instanceCount} sub-line instance${instanceCount > 1 ? 's' : ''} — direct mapping disabled`}>
+                <Icon name="git-branch" size={11} color="var(--text-tertiary)" />
+              </span>
+            ) : isCalculated(row.line) && !row.line.projection ? (
               <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="function-square" size={11} color="var(--text-tertiary)" />
               </span>
@@ -600,6 +617,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 workbook={workbook}
                 onSetSourceLines={(ids) => setSourceLines(row.line as StatementLine, ids)}
                 onApprove={() => updateMapping((row.line as StatementLine).id, { approved: true })}
+                supersededByInstanceCount={instanceCountByLineId.get(row.line.id)}
               />
             ) : null
           }

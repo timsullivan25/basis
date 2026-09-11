@@ -61,6 +61,8 @@ import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
+import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
+import { InstancesPanel, type InstanceProjectionSelection, type InstanceTarget } from '../components/models/instances/InstancesPanel';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -70,64 +72,6 @@ interface ModelWorkspaceScreenProps {
    *  concept-assignment escape hatch, same top-level nav-switch shape as SettingsIndexScreen's own
    *  onNavigate. */
   onOpenStatementDefinitions: () => void;
-}
-
-/** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
- *  rate) — these two convert to/from the units a person actually wants to type ("10" for 10%,
- *  a plain day count for "days"). Only two units exist ('%' and 'days'), 'multiple-of' having
- *  been dropped as redundant with 'percent-of'. */
-function toDisplayValue(stored: number | null, unit: string): string {
-  if (stored === null) return '';
-  return unit === '%' ? String(stored * 100) : String(stored);
-}
-function fromDisplayValue(display: string, unit: string): number | null {
-  const trimmed = display.trim();
-  if (trimmed === '') return null;
-  const n = Number(trimmed);
-  if (Number.isNaN(n)) return null;
-  return unit === '%' ? n / 100 : n;
-}
-function formatDriverValue(value: number | null, unit: string): string {
-  if (value === null) return '—';
-  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value.toFixed(1)} days`;
-}
-
-/** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
- *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. Always
- *  seeded from the raw stored value (blank if unset), never the computed default — editing means
- *  setting an override, not accepting-then-resaving whatever was being assumed. */
-function DriverValueInput({
-  stored, unit, onCommit, wasEditCancelled,
-}: {
-  stored: number | null;
-  unit: string;
-  onCommit: (value: number | null) => void;
-  wasEditCancelled?: () => boolean;
-}) {
-  const [text, setText] = useState(() => toDisplayValue(stored, unit));
-  return (
-    <Input
-      size="sm"
-      mono
-      type="number"
-      autoFocus
-      selectOnFocus
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      // Enter commits directly rather than relying on the blur DataTable's document-level Enter
-      // handler triggers by deactivating the cell — removing a still-focused node via a state
-      // change, with nothing else taking real focus, doesn't reliably fire a synthetic blur in
-      // React (unlike a genuine click-away, which shifts focus for real and blurs reliably), so
-      // the commit has to happen here, not wait for one that may never come.
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onCommit(fromDisplayValue(text, unit));
-      }}
-      onBlur={() => {
-        if (wasEditCancelled?.()) return;
-        onCommit(fromDisplayValue(text, unit));
-      }}
-    />
-  );
 }
 
 /** Shared, fully-controlled name-prompt dialog for "New scenario", "Duplicate" and "Rename" —
@@ -384,6 +328,41 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     nextValues[periodIndex] = value;
     const updated = await modelRepository.update(model.id, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
     setModel(updated);
+  }
+
+  async function createInstance(target: InstanceTarget, name: string) {
+    if (!model) return;
+    const created = await lineInstanceRepository.create({
+      modelId: model.id,
+      ...(target.kind === 'line' ? { lineId: target.id } : { sectionId: target.id }),
+      name,
+      projection: { method: 'flat' },
+    });
+    setInstances((prev) => [...prev, created]);
+  }
+
+  async function renameInstance(instanceId: string, name: string) {
+    const updated = await lineInstanceRepository.update(instanceId, { name });
+    setInstances((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+  }
+
+  async function deleteInstance(instanceId: string) {
+    await lineInstanceRepository.remove(instanceId);
+    setInstances((prev) => prev.filter((i) => i.id !== instanceId));
+  }
+
+  // Always mints a fresh driverId on commit, same rule setLineProjection uses in
+  // StatementDefinitionsScreen — re-interpreting an old driver's per-period values under a new
+  // method/basis would be silent and easy to get subtly wrong.
+  async function setInstanceProjection(instanceId: string, selection: InstanceProjectionSelection) {
+    const projection: LineInstance['projection'] =
+      selection.method === 'flat'
+        ? { method: 'flat' }
+        : selection.method === 'growth'
+          ? { method: 'growth', driverId: crypto.randomUUID() }
+          : { method: selection.method, driverId: crypto.randomUUID(), basisLineId: selection.basisLineId };
+    const updated = await lineInstanceRepository.update(instanceId, { projection });
+    setInstances((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
   }
 
   function openScenarioDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
@@ -850,6 +829,19 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           <DataTable key={activeScenarioId} columns={driverColumns} rows={schema.drivers} rowKey="id" dense stickyFirstColumn />
         )}
       </Card>
+
+      <InstancesPanel
+        schema={schema}
+        allInstances={instances}
+        timeline={model.timeline}
+        activeStoredDriverValues={activeStoredDriverValues}
+        evaluation={evaluation}
+        onCreate={createInstance}
+        onRename={renameInstance}
+        onDelete={deleteInstance}
+        onSetProjection={setInstanceProjection}
+        onUpdateDriverValue={updateDriverValue}
+      />
 
       <Tabs
         tabs={tabs}
