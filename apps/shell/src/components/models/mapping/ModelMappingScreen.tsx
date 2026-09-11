@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Select, Tabs, Toast } from '@basis/design-system';
 import {
   computedResultRepository,
+  lineInstanceRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
   type Company,
+  type LineInstance,
   type LineMapping,
   type Model,
   type ModelImport,
@@ -20,7 +22,7 @@ import { buildComputedResult, computeVersionStamp, materializeEvaluation } from 
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
-import { evaluateModel } from '../../../lib/engine/evaluate';
+import { applyDynamicInstances } from '../../../lib/engine/withDynamicInstances';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
@@ -73,6 +75,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
+  // Empty for a fresh (non-editing) draft — no model id exists yet to own any instances. A
+  // re-review of an already-saved model may already have some (created via the workspace's
+  // InstancesPanel), and the live preview below needs them to show correct rollup values.
+  const [instances, setInstances] = useState<LineInstance[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +89,8 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       } catch (err) {
         if (!cancelled) setParseError(err instanceof TemplateParseError ? err.message : 'Could not parse the uploaded file.');
       }
+      const existingInstances = editing ? await lineInstanceRepository.list(editing.model.id) : [];
+      if (!cancelled) setInstances(existingInstances);
     })();
     return () => {
       cancelled = true;
@@ -176,8 +184,8 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
   // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals.
   const evaluation = useMemo(
-    () => evaluateModel(statementSchema, { timeline, historicals }),
-    [statementSchema, timeline, historicals],
+    () => applyDynamicInstances(statementSchema, { timeline, historicals }, instances).evaluation,
+    [statementSchema, timeline, historicals, instances],
   );
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
@@ -247,8 +255,8 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       // Compute and cache the Base case immediately — so the issuer page (which reads this
       // cache rather than re-running the engine itself) has real numbers right after a save,
       // not just after someone happens to open the workspace next.
-      const savedEvaluation = evaluateModel(statementSchema!, savedModel);
-      const materialized = materializeEvaluation(statementSchema!, savedModel, savedEvaluation);
+      const { schema: savedInstancedSchema, evaluation: savedEvaluation } = applyDynamicInstances(statementSchema!, savedModel, instances);
+      const materialized = materializeEvaluation(savedInstancedSchema, savedModel, savedEvaluation);
       const versionStamp = computeVersionStamp(savedModel, null, statementSchema!);
       await computedResultRepository.set(buildComputedResult(savedModel.id, 'base', versionStamp, materialized));
 

@@ -19,6 +19,7 @@ import {
   analysisResultRepository,
   analysisSettingsRepository,
   computedResultRepository,
+  lineInstanceRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -30,6 +31,7 @@ import {
   type DcfInputs,
   type DcfOutput,
   type DriverDefinition,
+  type LineInstance,
   type Mapping,
   type Model,
   type ModelImport,
@@ -58,7 +60,7 @@ import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
-import { evaluateModel } from '../lib/engine/evaluate';
+import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -217,6 +219,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [compareLineId, setCompareLineId] = useState<string | null>(null);
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
+  const [instances, setInstances] = useState<LineInstance[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,6 +231,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
       const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
       const existingAnalysisSettings = existingModel ? await analysisSettingsRepository.get(existingModel.id) : undefined;
+      const existingInstances = existingModel ? await lineInstanceRepository.list(existingModel.id) : [];
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
@@ -235,6 +239,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       setMapping(existingMapping ?? null);
       setModelImport(existingModelImport ?? null);
       setAnalysisSettings(existingAnalysisSettings ?? null);
+      setInstances(existingInstances);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -265,16 +270,20 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const activeScenario = activeScenarioId === 'base' ? null : (scenarios.find((s) => s.id === activeScenarioId) ?? null);
 
   const evaluatedModel = recalcMode === 'auto' ? model : (manualSnapshot ?? model);
-  const evaluation = useMemo(() => {
-    if (!schema || !evaluatedModel) return null;
+  // instancedSchema is `schema` with every live LineInstance spliced in as a real StatementLine
+  // (segments, EBITDA adjustments, KPIs) — used for anything that renders rows (the grid below),
+  // while `schema` itself stays the raw, savable definition (concept resolution, schema edits).
+  const { schema: instancedSchema, evaluation } = useMemo(() => {
+    if (!schema || !evaluatedModel) return { schema: null, evaluation: null };
     // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
     // layered on top via the same merge helper the compare view will batch-evaluate with —
-    // evaluateModel itself never learns scenarios exist, it just reads whichever map it's handed.
+    // applyDynamicInstances itself never learns scenarios exist, it just reads whichever map
+    // it's handed.
     const driverValues = activeScenario
       ? mergeScenarioDriverValues(evaluatedModel.driverValues ?? {}, activeScenario.driverValues)
       : (evaluatedModel.driverValues ?? {});
-    return evaluateModel(schema, { ...evaluatedModel, driverValues });
-  }, [schema, evaluatedModel, activeScenario]);
+    return applyDynamicInstances(schema, { ...evaluatedModel, driverValues }, instances);
+  }, [schema, evaluatedModel, activeScenario, instances]);
 
   // Persists the active scenario's live evaluation as a ComputedResult — "computed state is a
   // cache, not a source" from the architecture contract. Auto mode only: manual mode's frozen
@@ -284,11 +293,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // engine at all; this screen's own read-path benefit is minor by comparison, since evaluateModel
   // is already synchronous and instant at this schema's scale.
   useEffect(() => {
-    if (recalcMode !== 'auto' || !schema || !model || !evaluation) return;
-    const materialized = materializeEvaluation(schema, model, evaluation);
+    if (recalcMode !== 'auto' || !schema || !instancedSchema || !model || !evaluation) return;
+    // instancedSchema (not schema) so a cached read (e.g. the Dashboard tab) sees instance rows
+    // too — schemaUpdatedAt itself still comes from the raw schema, since instance changes are
+    // tracked separately via Model.instancesUpdatedAt (see computeVersionStamp).
+    const materialized = materializeEvaluation(instancedSchema, model, evaluation);
     const versionStamp = computeVersionStamp(model, activeScenario, schema);
     void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
-  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
+  }, [recalcMode, schema, instancedSchema, model, evaluation, activeScenario, activeScenarioId]);
 
   // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
   // enabled and every required concept resolves (a partially-resolved DCF has nothing valid to
@@ -337,9 +349,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return cases.map((c) => ({
       id: c.id,
       name: c.name,
-      evaluation: evaluateModel(schema, { ...model, driverValues: mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues) }),
+      evaluation: applyDynamicInstances(
+        schema,
+        { ...model, driverValues: mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues) },
+        instances,
+      ).evaluation,
     }));
-  }, [schema, model, scenarios]);
+  }, [schema, model, scenarios, instances]);
 
   function selectScenario(id: string) {
     setActiveScenarioId(id);
@@ -495,8 +511,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         mapping,
         modelImport,
         scenarios,
-        // TODO(Phase 9 Slice 4): pass the model's live LineInstance rows once this screen loads them.
-        instances: [],
+        instances,
         label: pendingSnapshotLabel.trim(),
         note: pendingSnapshotNote.trim(),
       });
@@ -535,7 +550,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
 
-  if (!model || !schema) {
+  if (!model || !schema || !instancedSchema) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No model to show.</span>;
   }
 
@@ -602,7 +617,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   }));
 
   const rows: Array<{ id: string; __group?: string; line?: StatementLine }> = [];
-  schema.sections.forEach((section) => {
+  instancedSchema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
     if (!section.lines.length) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });

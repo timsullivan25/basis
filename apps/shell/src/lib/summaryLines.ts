@@ -28,7 +28,11 @@ export type SummaryConcept =
  *  bridge's final line) and only falls back to a plain "EBITDA" line if no adjusted one exists. */
 const CANDIDATES: Record<SummaryConcept, string[]> = {
   revenue: ['Revenue'],
-  ebitda: ['Adjusted EBITDA', 'EBITDA'],
+  // Prefers the deepest EBITDA bridge level a schema actually has, falling back down toward
+  // plain EBITDA — see the EBITDA Delta lines in defaultStatementSchema.ts (Phase 9). A level
+  // with no instances still resolves here (it's an ordinary line, just usually null/absent),
+  // which is why this is a preference order, not a presence check.
+  ebitda: ['Pro Forma EBITDA', 'Cash EBITDA', 'Adjusted EBITDA', 'EBITDA'],
   netDebt: ['Net Debt'],
   netLeverage: ['Net Leverage'],
   interestCoverage: ['Interest Coverage'],

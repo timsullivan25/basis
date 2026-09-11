@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Button, Icon } from '@basis/design-system';
-import { computedResultRepository, modelRepository, statementSchemaRepository, type Company, type Model, type StatementSchema } from '../../data';
+import {
+  computedResultRepository,
+  lineInstanceRepository,
+  modelRepository,
+  statementSchemaRepository,
+  type Company,
+  type LineInstance,
+  type Model,
+  type StatementSchema,
+} from '../../data';
 import {
   buildComputedResult,
   computeVersionStamp,
@@ -9,7 +18,7 @@ import {
   versionStampMatches,
   type LineValues,
 } from '../../lib/computedCache';
-import { evaluateModel } from '../../lib/engine/evaluate';
+import { applyDynamicInstances } from '../../lib/engine/withDynamicInstances';
 import { SummaryPanel } from './SummaryPanel';
 
 interface DashboardTabProps {
@@ -26,13 +35,13 @@ interface DashboardTabProps {
  *  Slice 1's cache for a screen that, unlike the workspace, doesn't already have an evaluation
  *  sitting in scope. A miss (first-ever view, or the version stamp moved on) computes live once
  *  and writes the fresh result back, same shape Slice 3's write-through already produces. */
-async function readOrComputeResult(model: Model, schema: StatementSchema): Promise<LineValues> {
+async function readOrComputeResult(model: Model, schema: StatementSchema, instances: LineInstance[]): Promise<LineValues> {
   const cached = await computedResultRepository.get(model.id, 'base');
   if (cached && versionStampMatches(cached.versionStamp, model, null, schema)) {
     return toLineValues(cached);
   }
-  const evaluation = evaluateModel(schema, model);
-  const materialized = materializeEvaluation(schema, model, evaluation);
+  const { schema: instancedSchema, evaluation } = applyDynamicInstances(schema, model, instances);
+  const materialized = materializeEvaluation(instancedSchema, model, evaluation);
   const versionStamp = computeVersionStamp(model, null, schema);
   const built = buildComputedResult(model.id, 'base', versionStamp, materialized);
   await computedResultRepository.set(built);
@@ -57,7 +66,9 @@ export function DashboardTab({ company, onOpenWorkspace, onGoToFinancials }: Das
       setSchema(existingSchema ?? null);
       if (!existingSchema) return;
 
-      const lineValues = await readOrComputeResult(existingModel, existingSchema);
+      const existingInstances = await lineInstanceRepository.list(existingModel.id);
+      if (cancelled) return;
+      const lineValues = await readOrComputeResult(existingModel, existingSchema, existingInstances);
       if (!cancelled) setResult(lineValues);
     })();
     return () => {

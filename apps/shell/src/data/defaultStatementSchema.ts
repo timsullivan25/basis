@@ -18,6 +18,8 @@ interface LineOptions {
   aggregation?: LineAggregation;
   /** Sourced lines default to required; calculated and optional memo lines pass false. */
   required?: boolean;
+  /** See StatementLine.allowsSubLines' own doc comment. */
+  allowsSubLines?: boolean;
 }
 
 /** Authored with a raw formula string for readability — resolved into a real ResolvedFormula
@@ -42,6 +44,7 @@ function line(name: string, options: LineOptions = {}): DraftLine {
     formula,
     projection: null,
     aliases: options.aliases ?? [],
+    allowsSubLines: options.allowsSubLines,
   };
 }
 
@@ -111,17 +114,22 @@ function cashFlowStatement(): DraftSection {
   ]);
 }
 
+/** Each Delta line is an ordinary allowsSubLines line — a schema author (or a seeded default,
+ *  see DEFAULT_ADJUSTMENT_INSTANCE_SEEDS in Phase 9 Slice 4) adds instances under it exactly the
+ *  same way a revenue segment gets added under Revenue; nothing here is bridge-specific. Each
+ *  bridge level's own formula uses `sum(...)`, not `+`, so a Delta line with zero instances (and
+ *  no direct mapping) evaluates to null and is skipped by sum()'s "ignore blanks" semantics —
+ *  the level above then reads as EXACTLY equal to the level below, with no separate "collapse
+ *  unused levels" logic needed anywhere. */
 function ebitdaBridge(): DraftSection {
   return section('EBITDA', [
     line('Reported EBITDA', { formula: 'EBITDA', required: false }),
-    line('Stock Based Compensation Addback', { formula: 'Stock Based Compensation', required: false, rowFormat: 'normal' }),
-    line('Restructuring & Severance', { sign: 'absolute' }),
-    line('Transaction & Integration Costs', { sign: 'absolute' }),
-    line(
-      'Total Adjustments',
-      { formula: 'Stock Based Compensation Addback + Restructuring & Severance + Transaction & Integration Costs' },
-    ),
-    line('Adjusted EBITDA', { formula: 'Reported EBITDA + Total Adjustments' }),
+    line('Adjusted EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Adjusted EBITDA', { formula: 'sum(Reported EBITDA, Adjusted EBITDA Delta)' }),
+    line('Cash EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Cash EBITDA', { formula: 'sum(Adjusted EBITDA, Cash EBITDA Delta)' }),
+    line('Pro Forma EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Pro Forma EBITDA', { formula: 'sum(Cash EBITDA, Pro Forma EBITDA Delta)' }),
     line('Adjusted EBITDA Margin %', { formula: 'Adjusted EBITDA / Revenue', rowFormat: 'metric', numberFormat: 'percentage', aggregation: 'none' }),
   ]);
 }
