@@ -87,7 +87,7 @@ function fromDisplayValue(display: string, unit: string): number | null {
 }
 function formatDriverValue(value: number | null, unit: string): string {
   if (value === null) return '—';
-  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value} days`;
+  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value.toFixed(1)} days`;
 }
 
 /** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
