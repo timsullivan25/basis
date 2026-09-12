@@ -32,14 +32,22 @@ export type ResolvedFormula =
   | { kind: 'driverRef'; driverId: string }
   | { kind: 'neg'; arg: ResolvedFormula }
   | { kind: 'bin'; op: '+' | '-' | '*' | '/' | '^'; left: ResolvedFormula; right: ResolvedFormula }
-  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear'; args: ResolvedFormula[] };
+  | { kind: 'call'; fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear' | 'lastActual'; args: ResolvedFormula[] };
 
 /** How a line's PROJECTED periods derive a value when no mapped source exists for them (an
  *  actual period always prefers its mapped value regardless of this — see StatementLine.formula
- *  and lib/engine/evaluate.ts's computeLine). 'growth'/'percent-of'/'days-of' each generate a
- *  formula that reads a DriverDefinition's per-period value via a driverRef node; 'flat' is a
- *  pure carry-forward (priorPeriod(self)) and needs no driver at all. */
-export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of';
+ *  and lib/engine/evaluate.ts's computeLine). 'growth'/'percent-of'/'days-of'/'roll-off' each
+ *  generate a formula that reads a DriverDefinition's per-period value via a driverRef node;
+ *  'flat' is a pure carry-forward (priorPeriod(self)) and needs no driver at all.
+ *  'roll-off' (LineInstance projections only — see instances/projectionMethod.tsx) anchors to
+ *  this line's own value at the model's last actual period (via a `lastActual` formula call, not
+ *  the prior period) and holds `1 - driver` of it flat forever; the `driver` fraction is injected
+ *  as a contra adjustment onto the basis line every period (see
+ *  lib/engine/withDynamicInstances.ts's injectRollOffContras) — e.g. a one-time cost that
+ *  permanently lowers another line's run-rate while continuing to show as a partial EBITDA
+ *  add-back. 'actual' (also LineInstance-only) has no formula computation at all — the driver IS
+ *  the value, a per-period hardcoded number. */
+export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' | 'actual';
 
 /** A named, per-period leaf value (see StatementSchema.drivers) — architecturally almost
  *  identical to a non-calculated line, just living outside the statement sections and feeding
@@ -55,8 +63,10 @@ export interface DriverDefinition {
   unit: string;
   targetLineId: string;
   method: ProjectionMethod;
-  /** Required for 'percent-of' | 'days-of' — the line this driver is expressed against. Absent
-   *  for 'growth', which references its own target line via priorPeriod instead. */
+  /** Required for 'percent-of' | 'days-of' | 'roll-off' — the line this driver is expressed
+   *  against (roll-off's basis line is where the contra adjustment lands, not a ratio basis).
+   *  Absent for 'growth' (references its own target line via priorPeriod instead) and 'actual'
+   *  (no basis at all — the driver is just a hardcoded number). */
   basisLineId?: string;
 }
 

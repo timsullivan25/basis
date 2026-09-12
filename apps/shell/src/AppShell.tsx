@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Breadcrumb, SideNav, type SideNavItem } from '@basis/design-system';
 import type { Company } from './data';
 import { ModelMappingScreen, type ModelMappingScreenProps } from './components/models/mapping/ModelMappingScreen';
-import { CompanyDetailScreen } from './screens/CompanyDetailScreen';
+import { CompanyDetailScreen, COMPANY_DETAIL_TABS } from './screens/CompanyDetailScreen';
 import { ModelWorkspaceScreen } from './screens/ModelWorkspaceScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
@@ -24,12 +24,12 @@ const NAV_ITEMS: SideNavItem[] = [
   },
 ];
 
-const SCREENS: Record<string, { section: string; title: string; parent?: string }> = {
-  overview: { section: 'Workspace', title: 'Overview' },
-  portfolio: { section: 'Workspace', title: 'Portfolio' },
-  reports: { section: 'Workspace', title: 'Reports' },
-  settings: { section: 'Configuration', title: 'Settings' },
-  'settings-statements': { section: 'Configuration', title: 'Financial Statement Definitions', parent: 'settings' },
+const SCREENS: Record<string, { title: string; parent?: string }> = {
+  overview: { title: 'Overview' },
+  portfolio: { title: 'Portfolio' },
+  reports: { title: 'Reports' },
+  settings: { title: 'Settings' },
+  'settings-statements': { title: 'Financial Statement Definitions', parent: 'settings' },
 };
 
 const PORTFOLIO_CRUMB = 'portfolio-root';
@@ -39,6 +39,10 @@ const WORKSPACE_CRUMB = 'workspace-root';
 export function AppShell() {
   const [active, setActive] = useState('overview');
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  // Lives here, not inside CompanyDetailScreen, so it survives that screen unmounting while the
+  // model workspace is open (see viewingModelWorkspace below) — only reset when a genuinely
+  // different company is selected.
+  const [companyTab, setCompanyTab] = useState(COMPANY_DETAIL_TABS[0].value);
   const [viewingModelWorkspace, setViewingModelWorkspace] = useState(false);
   const [viewingSnapshotId, setViewingSnapshotId] = useState<string | null>(null);
   const [mappingSession, setMappingSession] = useState<ModelMappingScreenProps | null>(null);
@@ -65,14 +69,19 @@ export function AppShell() {
   function handleNavChange(value: string) {
     setActive(value);
     setSelectedCompany(null);
+    setCompanyTab(COMPANY_DETAIL_TABS[0].value);
     setViewingModelWorkspace(false);
     setViewingSnapshotId(null);
   }
 
+  function handleSelectCompany(company: Company) {
+    setSelectedCompany(company);
+    setCompanyTab(COMPANY_DETAIL_TABS[0].value);
+  }
+
   const breadcrumbItems = parentScreen
-    ? [{ label: screen.section }, { value: screen.parent, label: parentScreen.title }, { label: screen.title }]
+    ? [{ value: screen.parent, label: parentScreen.title }, { label: screen.title }]
     : [
-        { label: screen.section },
         { value: PORTFOLIO_CRUMB, label: screen.title },
         ...(active === 'portfolio' && selectedCompany
           ? [
@@ -104,7 +113,7 @@ export function AppShell() {
 
   function renderScreen() {
     if (active === 'portfolio') {
-      if (!selectedCompany) return <PortfolioScreen onSelectCompany={setSelectedCompany} />;
+      if (!selectedCompany) return <PortfolioScreen onSelectCompany={handleSelectCompany} />;
       if (viewingSnapshotId) {
         return (
           <SnapshotViewScreen
@@ -126,6 +135,8 @@ export function AppShell() {
           company={selectedCompany}
           onOpenMapping={openMapping}
           onOpenWorkspace={() => setViewingModelWorkspace(true)}
+          tab={companyTab}
+          onTabChange={setCompanyTab}
         />
       );
     }

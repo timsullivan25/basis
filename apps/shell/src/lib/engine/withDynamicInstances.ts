@@ -1,5 +1,5 @@
 import type { DriverDefinition, LineInstance, StatementLine, StatementSchema } from '../../data';
-import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildRatioFormula } from './resolve';
+import { buildActualFormula, buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildRatioFormula, buildRollOffFormula } from './resolve';
 import { evaluateModel, type EvaluationInput, type EvaluationResult } from './evaluate';
 
 /** Builds the synthetic StatementLine + (when the method needs one) DriverDefinition for one
@@ -23,7 +23,11 @@ function materializeInstance(instance: LineInstance): { line: StatementLine; dri
           ? buildGrowthFormula(instance.id, projection.driverId)
           : projection.method === 'percent-of'
             ? buildRatioFormula(projection.basisLineId!, projection.driverId)
-            : buildDaysFormula(projection.basisLineId!, projection.driverId),
+            : projection.method === 'days-of'
+              ? buildDaysFormula(projection.basisLineId!, projection.driverId)
+              : projection.method === 'roll-off'
+                ? buildRollOffFormula(instance.id, projection.driverId)
+                : buildActualFormula(projection.driverId),
     projection,
     aliases: [],
   };
@@ -33,7 +37,7 @@ function materializeInstance(instance: LineInstance): { line: StatementLine; dri
     driver: {
       id: projection.driverId,
       name: instance.name,
-      unit: projection.method === 'days-of' ? 'days' : '%',
+      unit: projection.method === 'days-of' ? 'days' : projection.method === 'actual' ? 'raw' : '%',
       targetLineId: instance.id,
       method: projection.method,
       basisLineId: projection.basisLineId,
@@ -126,15 +130,76 @@ function injectRollups(
   return augmented;
 }
 
+/** The last 'actual'-kind period, or -1 if there isn't one — same scan evaluate.ts's own
+ *  lastActualIndex does (deliberately NOT lib/dcf.ts's own helper of the same name, which falls
+ *  back to the timeline's last period instead of -1; that fallback is wrong here, since it would
+ *  anchor a roll-off to an arbitrary projected period rather than skipping the contra entirely). */
+function lastActualIndex(timeline: EvaluationInput['timeline']): number {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    if (timeline[i].kind === 'actual') return i;
+  }
+  return -1;
+}
+
+/** For every 'roll-off' instance, sums the contra amount it rolls onto its basis line for each
+ *  PROJECTED period only — `anchor - remaining`, where `anchor` is the instance's own value at
+ *  the model's last actual period and `remaining` is its already-computed (pass 1) value for that
+ *  period, which equals `anchor * driver%` once buildRollOffFormula's `lastActual(self) * (1 -
+ *  driver)` is in effect — so no separate driver-reading logic is needed here, pass 1 already did
+ *  the (anchor * (1-driver)) math; this just infers the other half of the same split. Actual
+ *  periods are deliberately excluded, not merely expected to net to zero: an instance's own
+ *  history isn't flat leading up to the anchor (e.g. 6, 3, 0), so `anchor - remaining` would be
+ *  nonzero for an earlier actual period even though roll-off has no business touching it — only
+ *  the formula-driven projected periods are the real contra. Multiple roll-off instances
+ *  targeting the same basis line accumulate together. Folds into `historicals` (a copy — possibly
+ *  already `injectRollups`' own augmented one) the same "explicit value wins" way that function's
+ *  rollup totals do, so one final re-evaluation picks up both. */
+function injectRollOffContras(
+  instances: LineInstance[],
+  pass1: EvaluationResult,
+  periodCount: number,
+  historicals: Record<string, (number | null)[]>,
+  lastActualIdx: number,
+): Record<string, (number | null)[]> {
+  const contraByBasisLine = new Map<string, number[]>();
+  for (const instance of instances) {
+    if (instance.projection.method !== 'roll-off') continue;
+    const { basisLineId } = instance.projection;
+    const anchor = lastActualIdx >= 0 ? pass1.getValue(instance.id, lastActualIdx) : null;
+    if (!basisLineId || anchor === null) continue;
+    const sums = contraByBasisLine.get(basisLineId) ?? new Array(periodCount).fill(0);
+    // Strictly PROJECTED periods only — an actual period's own mapped value can differ from
+    // `anchor` (the instance's history isn't flat leading up to it), so `anchor - remaining`
+    // is only ever the intended roll-off contribution once buildRollOffFormula's formula (not a
+    // mapped historical) is actually driving `remaining`, i.e. after lastActualIdx.
+    for (let p = lastActualIdx + 1; p < periodCount; p++) {
+      const remaining = pass1.getValue(instance.id, p);
+      if (remaining !== null) sums[p] += anchor - remaining;
+    }
+    contraByBasisLine.set(basisLineId, sums);
+  }
+  if (contraByBasisLine.size === 0) return historicals;
+
+  const augmented = { ...historicals };
+  for (const [basisLineId, sums] of contraByBasisLine) {
+    augmented[basisLineId] = Array.from({ length: periodCount }, (_, p) => {
+      const base = augmented[basisLineId]?.[p] ?? pass1.getValue(basisLineId, p);
+      return base === null ? null : base - sums[p];
+    });
+  }
+  return augmented;
+}
+
 /**
  * Splices every one of a model's LineInstance rows into a copy of `schema` and evaluates it
  * through the completely unmodified engine — twice. Pass 1 computes each instance's own value
  * (using its own driver/historicals, exactly like any other line, including a sibling-instance
  * basis, since both are ordinary lines in the same schema copy by the time this runs). Pass 2
- * sums each `allowsSubLines` line's instances and injects the totals into that line's
- * historicals for every period, then re-evaluates once more so everything formula-chained off a
- * rollup (Gross Profit off Revenue, Adjusted EBITDA off Adjusted EBITDA Delta) picks up the
- * correct total via the engine's own unmodified "mapped value always wins" rule — no
+ * folds two independent overlays into one augmented-historicals patch — `injectRollups`' sums for
+ * every `allowsSubLines` line, and `injectRollOffContras`' contra reductions for every roll-off
+ * instance's basis line — then re-evaluates once more so everything formula-chained off either
+ * (Gross Profit off Revenue, Adjusted EBITDA off Adjusted EBITDA Delta, a lowered G&A run-rate)
+ * picks up the correct total via the engine's own unmodified "mapped value always wins" rule — no
  * bridge-specific or segment-specific logic anywhere in here.
  *
  * Returns the spliced `schema` (not the original) so every existing consumer's
@@ -148,7 +213,10 @@ export function applyDynamicInstances(
   const instancedSchema = spliceInstanceLines(schema, instances);
   const pass1 = evaluateModel(instancedSchema, model);
 
-  const augmentedHistoricals = injectRollups(instancedSchema, instances, pass1, model.timeline.length, model.historicals);
+  const rollupAugmented = injectRollups(instancedSchema, instances, pass1, model.timeline.length, model.historicals);
+  const augmentedHistoricals = injectRollOffContras(
+    instances, pass1, model.timeline.length, rollupAugmented, lastActualIndex(model.timeline),
+  );
   const finalEvaluation = evaluateModel(instancedSchema, { ...model, historicals: augmentedHistoricals });
 
   return { schema: instancedSchema, evaluation: finalEvaluation };

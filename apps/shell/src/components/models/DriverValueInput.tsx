@@ -3,10 +3,11 @@ import { Input } from '@basis/design-system';
 
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
  *  rate) — these two convert to/from the units a person actually wants to type ("10" for 10%,
- *  a plain day count for "days"). Only two units exist ('%' and 'days'), 'multiple-of' having
- *  been dropped as redundant with 'percent-of'. Shared by the workspace's Drivers card for both
- *  a schema line's own driver and a sub-line instance's (the latter reuses the exact same value
- *  bag and vocabulary — see LineInstance.projection's own doc comment). */
+ *  a plain day count for "days"). Three units exist: '%', 'days', and 'raw' (a hardcoded number
+ *  as-is — the Actual projection method, and manual historical-actuals entry), 'multiple-of'
+ *  having been dropped as redundant with 'percent-of'. Shared by the workspace's Drivers card for
+ *  both a schema line's own driver and a sub-line instance's (the latter reuses the exact same
+ *  value bag and vocabulary — see LineInstance.projection's own doc comment). */
 export function toDisplayValue(stored: number | null, unit: string): string {
   if (stored === null) return '';
   return unit === '%' ? String(stored * 100) : String(stored);
@@ -20,22 +21,27 @@ export function fromDisplayValue(display: string, unit: string): number | null {
 }
 export function formatDriverValue(value: number | null, unit: string): string {
   if (value === null) return '—';
-  return unit === '%' ? `${(value * 100).toFixed(1)}%` : `${value.toFixed(1)} days`;
+  if (unit === '%') return `${(value * 100).toFixed(1)}%`;
+  if (unit === 'raw') return value.toLocaleString();
+  return `${value.toFixed(1)} days`;
 }
 
 /** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
- *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. Always
- *  seeded from the raw stored value (blank if unset), never the computed default — editing means
- *  setting an override, not accepting-then-resaving whatever was being assumed. */
+ *  driver value means an async IndexedDB write, so it shouldn't fire on every keystroke. Seeded
+ *  from `initialValue` — the value actually shown in read mode (an explicit override, an
+ *  inherited-from-Base value, or an engine-computed soft default) — not necessarily the raw stored
+ *  override, so editing a pre-filled cell starts from what's visible instead of blank. Typing
+ *  something new (or clearing it) still only ever writes an explicit override for this cell via
+ *  onCommit; nothing is written just from seeding the buffer. */
 export function DriverValueInput({
-  stored, unit, onCommit, wasEditCancelled,
+  initialValue, unit, onCommit, wasEditCancelled,
 }: {
-  stored: number | null;
+  initialValue: number | null;
   unit: string;
   onCommit: (value: number | null) => void;
   wasEditCancelled?: () => boolean;
 }) {
-  const [text, setText] = useState(() => toDisplayValue(stored, unit));
+  const [text, setText] = useState(() => toDisplayValue(initialValue, unit));
   return (
     <Input
       size="sm"
@@ -45,13 +51,14 @@ export function DriverValueInput({
       selectOnFocus
       value={text}
       onChange={(e) => setText(e.target.value)}
-      // Enter commits directly rather than relying on the blur DataTable's document-level Enter
-      // handler triggers by deactivating the cell — removing a still-focused node via a state
-      // change, with nothing else taking real focus, doesn't reliably fire a synthetic blur in
-      // React (unlike a genuine click-away, which shifts focus for real and blurs reliably), so
-      // the commit has to happen here, not wait for one that may never come.
+      // Enter (and Tab, which DataTable's own document-level handler additionally advances to the
+      // next editable cell for) commit directly rather than relying on the blur DataTable's
+      // deactivating-the-cell triggers — removing a still-focused node via a state change, with
+      // nothing else taking real focus, doesn't reliably fire a synthetic blur in React (unlike a
+      // genuine click-away, which shifts focus for real and blurs reliably), so the commit has to
+      // happen here, not wait for one that may never come.
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onCommit(fromDisplayValue(text, unit));
+        if (e.key === 'Enter' || e.key === 'Tab') onCommit(fromDisplayValue(text, unit));
       }}
       onBlur={() => {
         if (wasEditCancelled?.()) return;

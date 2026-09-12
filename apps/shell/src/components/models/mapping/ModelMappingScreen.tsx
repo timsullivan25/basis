@@ -89,11 +89,6 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // Existing instances the user removed this session — actually deleted from the repository
   // only in handleSave(), matching everything else here being deferred until Save.
   const [deletedInstanceIds, setDeletedInstanceIds] = useState<string[]>([]);
-  // An instance with no source mapping (sourceLineIds.length === 0) gets its historicals typed
-  // in directly instead — the one-time-manual-adjustment case. Keyed by instance id, aligned
-  // 1:1 with workbook.periods; seeded from the model's existing historicals when re-opening
-  // mapping for an already-persisted manual instance.
-  const [manualHistoricals, setManualHistoricals] = useState<Record<string, (number | null)[]>>({});
   // Held between "delete clicked" on an instance and the user confirming/cancelling, only when a
   // sibling actually depends on it — see requestDeleteInstance's own comment.
   const [pendingInstanceDelete, setPendingInstanceDelete] = useState<{ instanceId: string; dependentNames: string[] } | null>(null);
@@ -116,11 +111,6 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           })),
         );
         setDeletedInstanceIds([]);
-        const seededManual: Record<string, (number | null)[]> = {};
-        for (const inst of existingInstances) {
-          if ((inst.sourceLineIds ?? []).length === 0) seededManual[inst.id] = editing?.model.historicals[inst.id] ?? [];
-        }
-        setManualHistoricals(seededManual);
       }
     })();
     return () => {
@@ -289,21 +279,14 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const historicals = useMemo(() => {
     if (!workbook) return {};
     // Every instance now carries its own sourceLineIds (existing or freshly added this session),
-    // so resolveActuals alone covers every mapped instance; an unmapped one's historicals come
-    // from manualHistoricals instead — no blanket "seed from the model's own historicals" fallback
-    // needed for instances anymore (contrast the schema-line case just below, which still is).
+    // so resolveActuals alone covers every mapped instance — an unmapped one simply has no
+    // historicals entry at all (reads as null for every period, same as any other unmapped line),
+    // rather than a manual-entry escape hatch.
     const mappedInstanceMappings: LineMapping[] = editableInstances
       .filter((e) => e.sourceLineIds.length > 0)
       .map((e) => ({ targetLineId: e.id, sourceLineIds: e.sourceLineIds, method: 'manual', confidence: 1, note: '', approved: true }));
-    const manualInstanceHistoricals: Record<string, (number | null)[]> = {};
-    for (const e of editableInstances) {
-      if (e.sourceLineIds.length === 0) manualInstanceHistoricals[e.id] = timeline.map((_, i) => manualHistoricals[e.id]?.[i] ?? null);
-    }
-    return {
-      ...resolveActuals([...Object.values(mapping), ...mappedInstanceMappings], workbook, timeline),
-      ...manualInstanceHistoricals,
-    };
-  }, [mapping, editableInstances, manualHistoricals, workbook, timeline]);
+    return resolveActuals([...Object.values(mapping), ...mappedInstanceMappings], workbook, timeline);
+  }, [mapping, editableInstances, workbook, timeline]);
   // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
   // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals
   // (including any not-yet-persisted sub-line/KPI instances, via previewInstances above).
@@ -463,9 +446,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         instance.projection = fixedProjection;
       }
 
-      // Every surviving instance's historicals — resolved from its source mapping when it has
-      // one, else whatever was typed in manually — written under its real (possibly just-remapped)
-      // id, same convention the schema-line historicals above already follow.
+      // Every surviving mapped instance's historicals, resolved from its source mapping and
+      // written under its real (possibly just-remapped) id — same convention the schema-line
+      // historicals above already follow. An unmapped instance simply gets none (no manual-entry
+      // escape hatch — see InstanceRowDetail's own doc comment).
       const mappedInstanceMappings: LineMapping[] = editableInstances
         .filter((e) => e.sourceLineIds.length > 0 && e.name.trim())
         .map((e) => ({
@@ -473,10 +457,6 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           method: 'manual' as const, confidence: 1, note: '', approved: true,
         }));
       const instanceHistoricals: Record<string, (number | null)[]> = resolveActuals(mappedInstanceMappings, workbook, resolvedTimeline);
-      for (const e of editableInstances) {
-        if (e.sourceLineIds.length > 0 || !e.name.trim()) continue;
-        instanceHistoricals[idRemap.get(e.id) ?? e.id] = resolvedTimeline.map((_, i) => manualHistoricals[e.id]?.[i] ?? null);
-      }
 
       savedModel = await modelRepository.update(savedModel.id, {
         historicals: { ...savedModel.historicals, ...instanceHistoricals },
@@ -891,7 +871,6 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 instance={row.instance}
                 sectionName={row.sectionName ?? ''}
                 workbook={workbook}
-                manualValues={manualHistoricals[row.instance.id] ?? []}
                 schemaLineGroups={schemaLineGroups}
                 allInstances={previewInstances}
                 lineNameById={lineNameById}
@@ -902,22 +881,25 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                   setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, sourceLineIds } : e)))
                 }
                 onChangeProjection={(selection: InstanceProjectionSelection) => {
+                  // Reuse the instance's existing driverId across a projection edit rather than
+                  // minting a new one every time — Model.driverValues and every Scenario's own
+                  // driverValues are keyed by driverId, so a fresh id on every edit (even just
+                  // switching the basis line while keeping "Percent of…") orphaned every Base and
+                  // scenario value already entered under the old one. Only a genuinely new driver
+                  // (coming from 'flat', which carries none) needs a fresh id.
+                  const currentProjection = row.instance!.projection;
+                  const existingDriverId = currentProjection.method !== 'flat' ? currentProjection.driverId : undefined;
+                  const driverId = existingDriverId ?? crypto.randomUUID();
                   const projection: LineInstance['projection'] =
                     selection.method === 'flat'
                       ? { method: 'flat' }
                       : selection.method === 'growth'
-                        ? { method: 'growth', driverId: crypto.randomUUID() }
-                        : { method: selection.method, driverId: crypto.randomUUID(), basisLineId: selection.basisLineId };
+                        ? { method: 'growth', driverId }
+                        : selection.method === 'actual'
+                          ? { method: 'actual', driverId }
+                          : { method: selection.method, driverId, basisLineId: selection.basisLineId };
                   setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, projection } : e)));
                 }}
-                onChangeManualValue={(periodIndex, value) =>
-                  setManualHistoricals((prev) => {
-                    const arr = [...(prev[row.instance!.id] ?? [])];
-                    while (arr.length <= periodIndex) arr.push(null);
-                    arr[periodIndex] = value;
-                    return { ...prev, [row.instance!.id]: arr };
-                  })
-                }
                 onDelete={() => requestDeleteInstance(row.instance!.id)}
               />
             ) : row.line ? (

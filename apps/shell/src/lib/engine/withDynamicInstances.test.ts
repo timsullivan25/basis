@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyDynamicInstances } from './withDynamicInstances';
 import { evaluateModel } from './evaluate';
+import { buildFlatFormula } from './resolve';
 import type { LineInstance, ResolvedFormula, StatementLine, StatementSchema, TimelinePeriod } from '../../data';
 
 function line(id: string, name: string, formula: ResolvedFormula | null = null, allowsSubLines = false): StatementLine {
@@ -184,5 +185,79 @@ describe('applyDynamicInstances', () => {
     expect(() => applyDynamicInstances(schema, model, instances)).not.toThrow();
     const { evaluation } = applyDynamicInstances(schema, model, instances);
     expect(evaluation.getValue('rev', 0)).toBe(500);
+  });
+
+  describe('roll-off', () => {
+    // G&A: a flat carry-forward line (its own formula, unrelated to the roll-off instance) —
+    // gives the basis line a real non-null projected value to subtract the contra from.
+    function schemaWithGA(): StatementSchema {
+      return {
+        id: 's1',
+        name: 'Test',
+        createdAt: '',
+        updatedAt: '',
+        sections: [{ id: 'kpis', name: 'EBITDA', lines: [line('ga', 'G&A', buildFlatFormula('ga'))], allowsFreeformLines: true }],
+        drivers: [],
+      };
+    }
+
+    it('holds a flat, non-compounding split of the anchor value on the source line itself', () => {
+      const model = {
+        timeline: [period('2024'), period('2025', 'projected'), period('2026', 'projected')],
+        historicals: { ga: [100], 'one-time': [40] } as Record<string, (number | null)[]>,
+        driverValues: { 'roll-driver': [null, 0.5, 0.5] } as Record<string, (number | null)[]>,
+      };
+      const instances = [
+        instance('one-time', {
+          sectionId: 'kpis',
+          name: 'One-time cost',
+          projection: { method: 'roll-off', driverId: 'roll-driver', basisLineId: 'ga' },
+        }),
+      ];
+
+      const { evaluation } = applyDynamicInstances(schemaWithGA(), model, instances);
+      expect(evaluation.getValue('one-time', 0)).toBe(40); // actual period: mapped value, untouched
+      expect(evaluation.getValue('one-time', 1)).toBe(20); // anchor(40) * (1 - 0.5)
+      expect(evaluation.getValue('one-time', 2)).toBe(20); // relative to the ORIGINAL anchor again, not the prior period
+    });
+
+    it('subtracts the rolled-off amount from the basis line for projected periods only, leaving actuals untouched', () => {
+      const model = {
+        timeline: [period('2024'), period('2025', 'projected'), period('2026', 'projected')],
+        historicals: { ga: [100], 'one-time': [40] } as Record<string, (number | null)[]>,
+        driverValues: { 'roll-driver': [null, 0.5, 0.5] } as Record<string, (number | null)[]>,
+      };
+      const instances = [
+        instance('one-time', {
+          sectionId: 'kpis',
+          name: 'One-time cost',
+          projection: { method: 'roll-off', driverId: 'roll-driver', basisLineId: 'ga' },
+        }),
+      ];
+
+      const { evaluation } = applyDynamicInstances(schemaWithGA(), model, instances);
+      expect(evaluation.getValue('ga', 0)).toBe(100); // actual period — the earlier one-time value never touches it
+      expect(evaluation.getValue('ga', 1)).toBe(80); // its own flat carry-forward (100) minus the contra (anchor 40 * 50%)
+      expect(evaluation.getValue('ga', 2)).toBe(80); // same contra again, not a growing/compounding one
+    });
+
+    it('accumulates contras from multiple roll-off instances onto the same basis line', () => {
+      const model = {
+        timeline: [period('2024'), period('2025', 'projected')],
+        historicals: { ga: [100], 'cost-a': [40], 'cost-b': [20] } as Record<string, (number | null)[]>,
+        driverValues: {
+          'driver-a': [null, 0.5],
+          'driver-b': [null, 1], // fully rolls off
+        } as Record<string, (number | null)[]>,
+      };
+      const instances = [
+        instance('cost-a', { sectionId: 'kpis', name: 'Cost A', projection: { method: 'roll-off', driverId: 'driver-a', basisLineId: 'ga' } }),
+        instance('cost-b', { sectionId: 'kpis', name: 'Cost B', projection: { method: 'roll-off', driverId: 'driver-b', basisLineId: 'ga' } }),
+      ];
+
+      const { evaluation } = applyDynamicInstances(schemaWithGA(), model, instances);
+      // contra = (40*0.5) + (20*1) = 40; G&A's own flat 100 minus that.
+      expect(evaluation.getValue('ga', 1)).toBe(60);
+    });
   });
 });

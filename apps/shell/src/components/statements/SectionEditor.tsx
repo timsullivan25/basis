@@ -237,7 +237,7 @@ export function SectionEditor({
         <div style={{ flex: '1 1 auto' }} />
         <Switch
           size="sm"
-          label="Freeform lines (KPIs)"
+          label="Freeform lines"
           checked={section.allowsFreeformLines ?? false}
           onChange={onSetAllowsFreeformLines}
         />
@@ -418,7 +418,7 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
               fullWidth={false}
               style={{ width: 220 }}
               value={basisLineId}
-              options={[{ value: '', label: 'Select a line…' }]}
+              options={[{ value: '', label: 'None / N/A' }]}
               groups={lineGroups
                 .map((g) => ({
                   label: g.sectionName,

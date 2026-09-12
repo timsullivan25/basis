@@ -8,17 +8,20 @@ import type { LineInstance, ProjectionMethod } from '../../../data';
 export type InstanceProjectionSelection =
   | { method: 'flat' }
   | { method: 'growth' }
-  | { method: 'percent-of' | 'days-of'; basisLineId: string };
+  | { method: 'actual' }
+  | { method: 'percent-of' | 'days-of' | 'roll-off'; basisLineId: string };
 
 export const INSTANCE_PROJECTION_METHOD_OPTIONS: { value: 'flat' | ProjectionMethod; label: string }[] = [
   { value: 'flat', label: 'Flat (holds last actual)' },
   { value: 'growth', label: 'Growth Rate' },
   { value: 'percent-of', label: 'Percent of…' },
   { value: 'days-of', label: 'Days of…' },
+  { value: 'roll-off', label: 'Roll-off' },
+  { value: 'actual', label: 'Actual' },
 ];
 
-export function needsBasisLine(method: 'flat' | ProjectionMethod): method is 'percent-of' | 'days-of' {
-  return method === 'percent-of' || method === 'days-of';
+export function needsBasisLine(method: 'flat' | ProjectionMethod): method is 'percent-of' | 'days-of' | 'roll-off' {
+  return method === 'percent-of' || method === 'days-of' || method === 'roll-off';
 }
 
 /** One line/section a model has (or could have) sub-lines against — a `lineId` target rolls its
@@ -52,7 +55,7 @@ export function ProjectionMethodEditor({
   lineNameById: Map<string, string>;
   onChange: (selection: InstanceProjectionSelection) => void;
 }) {
-  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
+  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
   const currentMethod = pendingMethod ?? projection.method;
   const currentBasisLineId = pendingMethod ? '' : ('basisLineId' in projection ? (projection.basisLineId ?? '') : '');
 
@@ -62,7 +65,7 @@ export function ProjectionMethodEditor({
       return;
     }
     setPendingMethod(null);
-    onChange(method === 'flat' ? { method: 'flat' } : { method: 'growth' });
+    onChange(method === 'flat' ? { method: 'flat' } : method === 'actual' ? { method: 'actual' } : { method: 'growth' });
   }
 
   function handleBasisLineChange(basisLineId: string) {
@@ -87,7 +90,7 @@ export function ProjectionMethodEditor({
           fullWidth={false}
           style={{ width: 180 }}
           value={currentBasisLineId}
-          options={[{ value: '', label: 'Select a line…' }]}
+          options={[{ value: '', label: 'None / N/A' }]}
           groups={[
             ...schemaLineGroups
               .map((g) => ({ label: g.sectionName, options: g.lines.map((l) => ({ value: l.id, label: l.name })) }))

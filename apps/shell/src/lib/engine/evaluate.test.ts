@@ -26,7 +26,7 @@ function num(value: number): ResolvedFormula {
 function bin(op: '+' | '-' | '*' | '/' | '^', left: ResolvedFormula, right: ResolvedFormula): ResolvedFormula {
   return { kind: 'bin', op, left, right };
 }
-function call(fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear', args: ResolvedFormula[]): ResolvedFormula {
+function call(fn: 'sum' | 'min' | 'max' | 'avg' | 'abs' | 'priorPeriod' | 'priorYear' | 'lastActual', args: ResolvedFormula[]): ResolvedFormula {
   return { kind: 'call', fn, args };
 }
 function driverRef(driverId: string): ResolvedFormula {
@@ -269,6 +269,38 @@ describe('priorPeriod / priorYear', () => {
   });
 });
 
+describe('lastActual', () => {
+  it('anchors every projected period to the same last-actual value, not the prior period', () => {
+    // Mirrors buildRollOffFormula's real shape exactly: a self-referencing `lastActual(self)`
+    // formula whose OWN actual periods are covered by a mapped historical (mapped-value-wins
+    // means the formula never even runs for periods 0/1) — only the projected periods (2, 3),
+    // which have no historical, actually fall through to it. lastActual is only ever guaranteed
+    // safe to read from a period after the one it anchors to (see its own comment in evaluate.ts);
+    // this is the one real call shape it needs to support.
+    const timeline: TimelinePeriod[] = [
+      { id: 'a1', type: 'FY', endDate: '2023-12-31', label: 'FY 2023', kind: 'actual' },
+      { id: 'a2', type: 'FY', endDate: '2024-12-31', label: 'FY 2024', kind: 'actual' },
+      { id: 'p1', type: 'FY', endDate: '2025-12-31', label: 'FY 2025', kind: 'projected' },
+      { id: 'p2', type: 'FY', endDate: '2026-12-31', label: 'FY 2026', kind: 'projected' },
+    ];
+    const s = schema([line('anchor', call('lastActual', [ref('anchor')]))]);
+    const m = modelWithTimeline(timeline, { anchor: [100, 150] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('anchor', 0)).toBe(100); // mapped, actual — formula never runs here
+    expect(result.getValue('anchor', 1)).toBe(150); // mapped, actual
+    expect(result.getValue('anchor', 2)).toBe(150); // no mapped value — falls through to lastActual
+    expect(result.getValue('anchor', 3)).toBe(150); // same anchor again, not a further step back
+  });
+
+  it('is null when the timeline has no actual period at all', () => {
+    const timeline: TimelinePeriod[] = [{ id: 'p1', type: 'FY', endDate: '2025-12-31', label: 'FY 2025', kind: 'projected' }];
+    const s = schema([line('revenue'), line('anchor', call('lastActual', [ref('revenue')]))]);
+    const m = modelWithTimeline(timeline, { revenue: [100] });
+    const result = evaluateModel(s, m);
+    expect(result.getValue('anchor', 0)).toBeNull();
+  });
+});
+
 describe('driverRef and the mapped-value-first priority', () => {
   it('an explicit mapped value wins over the formula for that period', () => {
     const s = schema([line('a'), line('b'), line('total', bin('+', ref('a'), ref('b')))]);
@@ -392,6 +424,24 @@ describe('driver defaults (no explicit value entered for a period)', () => {
     const result = evaluateModel(s, m);
     expect(result.getDriverValue('dso', 1)).toBeCloseTo(30, 6);
     expect(result.getValue('ar', 1)).toBeCloseTo(60, 6); // (30/365) * 730
+  });
+
+  it('roll-off defaults to 0% (no adjustment yet) when nothing is entered', () => {
+    const s = schema(
+      [line('cost', call('lastActual', [ref('cost')])), line('ga')],
+      [driver('roll', 'roll-off', 'cost', 'ga')],
+    );
+    const m = modelWithTimeline(mixedTimeline, { cost: [40], ga: [100] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('roll', 1)).toBe(0);
+  });
+
+  it('actual has no computed default at all (null, not an inferred number)', () => {
+    const s = schema([line('cost', driverRef('one-time'))], [driver('one-time', 'actual', 'cost')]);
+    const m = modelWithTimeline(mixedTimeline, { cost: [40] });
+    const result = evaluateModel(s, m);
+    expect(result.getDriverValue('one-time', 1)).toBeNull();
+    expect(result.getValue('cost', 1)).toBeNull();
   });
 
   it('an explicit value still overrides the computed default', () => {

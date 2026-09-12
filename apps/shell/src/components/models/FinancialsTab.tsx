@@ -1,18 +1,31 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, Dialog, Icon, IconButton } from '@basis/design-system';
 import {
+  computedResultRepository,
+  lineInstanceRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
   statementSchemaRepository,
   type Company,
+  type LineInstance,
   type Mapping,
   type Model,
   type ModelImport,
   type ModelTemplateType,
   type StatementSchema,
 } from '../../data';
+import {
+  buildComputedResult,
+  computeVersionStamp,
+  materializeEvaluation,
+  toLineValues,
+  versionStampMatches,
+  type LineValues,
+} from '../../lib/computedCache';
+import { applyDynamicInstances } from '../../lib/engine/withDynamicInstances';
 import { CreateModelDialog } from './CreateModelDialog';
+import { SummaryPanel } from './SummaryPanel';
 import type { ModelMappingScreenProps } from './mapping/ModelMappingScreen';
 
 const TEMPLATE_LABELS: Record<ModelTemplateType, string> = {
@@ -28,11 +41,29 @@ interface FinancialsTabProps {
   onOpenWorkspace: () => void;
 }
 
+/** Read-through cache lookup: a version-stamp hit skips the engine entirely — see DashboardTab's
+ *  own former copy of this (moved here now that the full summary lives on Financials, not
+ *  Dashboard). A miss computes live once and writes the fresh result back. */
+async function readOrComputeResult(model: Model, schema: StatementSchema, instances: LineInstance[]): Promise<LineValues> {
+  const cached = await computedResultRepository.get(model.id, 'base');
+  if (cached && versionStampMatches(cached.versionStamp, model, null, schema)) {
+    return toLineValues(cached);
+  }
+  const { schema: instancedSchema, evaluation } = applyDynamicInstances(schema, model, instances);
+  const materialized = materializeEvaluation(instancedSchema, model, evaluation);
+  const versionStamp = computeVersionStamp(model, null, schema);
+  const built = buildComputedResult(model.id, 'base', versionStamp, materialized);
+  await computedResultRepository.set(built);
+  return toLineValues(built);
+}
+
 export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: FinancialsTabProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [modelImport, setModelImport] = useState<ModelImport | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
   const [schemas, setSchemas] = useState<StatementSchema[] | null>(null);
+  const [modelSchema, setModelSchema] = useState<StatementSchema | null>(null);
+  const [summaryResult, setSummaryResult] = useState<LineValues | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -56,6 +87,18 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
       setModelImport(imp ?? null);
       setMapping(map ?? null);
       setSchemas(schemaList);
+      setModelSchema(null);
+      setSummaryResult(null);
+
+      if (!existingModel) return;
+      const [existingSchema, existingInstances] = await Promise.all([
+        statementSchemaRepository.get(existingModel.statementSchemaId),
+        lineInstanceRepository.list(existingModel.id),
+      ]);
+      if (cancelled || !existingSchema) return;
+      setModelSchema(existingSchema);
+      const lineValues = await readOrComputeResult(existingModel, existingSchema, existingInstances);
+      if (!cancelled) setSummaryResult(lineValues);
     })();
     return () => {
       cancelled = true;
@@ -70,6 +113,8 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
       setModel(null);
       setModelImport(null);
       setMapping(null);
+      setModelSchema(null);
+      setSummaryResult(null);
     } finally {
       setDeleting(false);
       setDeleteConfirmOpen(false);
@@ -77,13 +122,17 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
   }
 
   async function loadModelDetails(savedModel: Model) {
-    const [imp, map] = await Promise.all([
+    const [imp, map, schema, savedInstances] = await Promise.all([
       modelImportRepository.get(savedModel.modelImportId),
       mappingRepository.get(savedModel.mappingId),
+      statementSchemaRepository.get(savedModel.statementSchemaId),
+      lineInstanceRepository.list(savedModel.id),
     ]);
     setModel(savedModel);
     setModelImport(imp ?? null);
     setMapping(map ?? null);
+    setModelSchema(schema ?? null);
+    setSummaryResult(schema ? await readOrComputeResult(savedModel, schema, savedInstances) : null);
   }
 
   function startNewImport(input: { templateType: ModelTemplateType; file: File }) {
@@ -118,6 +167,9 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
+      {model && modelSchema && summaryResult ? (
+        <SummaryPanel schema={modelSchema} model={model} result={summaryResult} onOpenWorkspace={onOpenWorkspace} />
+      ) : null}
       {model && modelImport && mapping ? (
         <Card
           title="Model"
@@ -149,9 +201,20 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
           </div>
         </Card>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 'var(--space-5)', padding: 'var(--space-11) 0' }}>
-          <Icon name="file-spreadsheet" size={22} color="var(--text-tertiary)" />
-          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No financials yet.</span>
+        <div
+          style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 'var(--space-5)',
+            padding: 'var(--space-13) var(--space-8)', border: '1px dashed var(--border-default)',
+            borderRadius: 'var(--radius-md)', background: 'var(--surface-app)',
+          }}
+        >
+          <Icon name="file-spreadsheet" size={28} color="var(--text-tertiary)" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>No financials yet</span>
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+              Upload a file to map it against a statement template and start building a model.
+            </span>
+          </div>
           <Button variant="primary" iconLeft="plus" onClick={() => setDialogOpen(true)}>
             Create new model
           </Button>
