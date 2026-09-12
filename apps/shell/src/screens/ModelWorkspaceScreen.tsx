@@ -62,7 +62,7 @@ import {
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
-import { findSummaryLine } from '../lib/summaryLines';
+import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
@@ -122,6 +122,14 @@ function ScenarioNameDialog({
     </Dialog>
   );
 }
+
+/** The Compare tab's headline metrics — the same concepts SummaryPanel already resolves via
+ *  findSummaryLine, rather than a schema-specific line list, so this works across schemas without
+ *  assuming any of them share exact line names. Interim: see compareMetricLines' own comment for
+ *  why this is a hardcoded list rather than a per-schema configurable one. */
+const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
+  'revenue', 'ebitda', 'totalDebt', 'totalEquity', 'netDebt', 'netLeverage', 'interestCoverage',
+];
 
 /**
  * The current model's live view — a drivers panel over the projected periods, statement
@@ -562,10 +570,17 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     setTab(value === 'financials' ? financialsSubTabRef.current : value);
   }
 
-  // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
-  // section (Gross Profit, EBITDA, Operating Income, etc.), rather than every single line, which
-  // would just be the full grid repeated once per scenario.
-  const compareMetricLines = schema.sections.flatMap((s) => s.lines).filter((l) => l.rowFormat === 'total');
+  // The same headline concepts SummaryPanel already resolves — not `rowFormat === 'total'`
+  // (dropped 2026-09-12), which is a display flag for bold/underline styling, not a "this is a
+  // key metric" flag, and swept in every subtotal in the schema (Total Current Liabilities, Cash
+  // EBITDA, ...) with no editorial judgment behind it. findSummaryLine resolves by name/alias, so
+  // this list works across schemas without assuming any of them use the exact same line names.
+  // Interim measure: the real fix is letting each schema pick and order its own "summary metrics"
+  // in settings, which Compare and the Live output rail would both read instead of a hardcoded
+  // concept list — a bigger, separately-designed feature, not a layout change.
+  const compareMetricLines = COMPARE_METRIC_CONCEPTS.map((concept) => findSummaryLine(schema, concept)).filter(
+    (l): l is StatementLine => Boolean(l),
+  );
   const comparePeriod = Math.min(comparePeriodIndex, model.timeline.length - 1);
   const compareColumns = [
     {
