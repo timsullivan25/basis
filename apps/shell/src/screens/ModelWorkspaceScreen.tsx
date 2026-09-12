@@ -4,12 +4,15 @@ import {
   Card,
   ChartLegend,
   DataTable,
+  DeltaValue,
   Dialog,
   Field,
   Icon,
   IconButton,
   Input,
   LineChart,
+  MetricCard,
+  Popover,
   SegmentedControl,
   Select,
   Tabs,
@@ -34,6 +37,7 @@ import {
   type Mapping,
   type Model,
   type ModelImport,
+  type ProjectionMethod,
   type Scenario,
   type ScenarioKey,
   type Snapshot,
@@ -47,7 +51,7 @@ import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
-import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
+import { buildComputedResult, computeVersionStamp, materializeEvaluation, type LineValues } from '../lib/computedCache';
 import {
   computeDcfOutputs,
   computeSensitivityGrid,
@@ -58,7 +62,9 @@ import {
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
-import { findSummaryLine } from '../lib/summaryLines';
+import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
+import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
+import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
@@ -117,6 +123,14 @@ function ScenarioNameDialog({
   );
 }
 
+/** The Compare tab's headline metrics — the same concepts SummaryPanel already resolves via
+ *  findSummaryLine, rather than a schema-specific line list, so this works across schemas without
+ *  assuming any of them share exact line names. Interim: see compareMetricLines' own comment for
+ *  why this is a hardcoded list rather than a per-schema configurable one. */
+const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
+  'revenue', 'ebitda', 'totalDebt', 'totalEquity', 'netDebt', 'netLeverage', 'interestCoverage',
+];
+
 /**
  * The current model's live view — a drivers panel over the projected periods, statement
  * sub-tabs over the full period grid, both reading the model's persisted historicals plus
@@ -136,12 +150,26 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [tab, setTab] = useState('all');
+  // Remembers the last active Financials sub-tab (All / a statement section) across a detour to
+  // Summary, Compare or Analyses, so returning to Financials restores it instead of resetting to
+  // "All" — see selectTopNav below. A ref, not state: it only needs to be read back on the next
+  // top-nav click, never to trigger a render of its own.
+  const financialsSubTabRef = useRef('all');
   // Lines whose sub-line instances are hidden — collapsed via the chevron on a parent row in the
   // main grid below. Keyed by the parent StatementLine's id, not the instance's.
   const [collapsedParentIds, setCollapsedParentIds] = useState<Set<string>>(new Set());
   // Same idea as collapsedParentIds above, but for the Drivers card below — independent so
   // collapsing a line's children in one table doesn't affect the other.
   const [collapsedDriverParentIds, setCollapsedDriverParentIds] = useState<Set<string>>(new Set());
+  // Whether the Drivers card itself (not an individual row) is collapsed — the card now lives
+  // inside Financials rather than pinned above every tab (see mockup 1a), so this saves the
+  // vertical space it costs while you're just reading the statement grid, not editing drivers.
+  const [driversCollapsed, setDriversCollapsed] = useState(false);
+  // Masthead menus — both Popovers are controlled (rather than left uncontrolled) purely so a
+  // click on a menu item can close the menu itself; an uncontrolled Popover only closes on an
+  // outside click, which an in-menu click isn't.
+  const [scenarioMenuOpen, setScenarioMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   // Serializes updateDriverValue's read-modify-write against the repository so two commits
   // issued in quick succession never both read the same pre-edit driverValues — see its own
   // doc comment.
@@ -519,18 +547,40 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No model to show.</span>;
   }
 
-  const tabs = [
+  // Two nav levels, both driven by the one `tab` state: Summary/Financials/Compare/Analyses are
+  // top-level destinations, while "All" and each statement section are sub-tabs that only make
+  // sense once you're inside Financials — matching mockup 1a's masthead-then-section hierarchy
+  // rather than mixing both levels into one flat tab row.
+  const financialsSubTabs = [{ value: 'all', label: 'All' }, ...schema.sections.map((section) => ({ value: section.id, label: section.name }))];
+  const financialsSubTabValues = new Set(financialsSubTabs.map((t) => t.value));
+  const isFinancialsTab = financialsSubTabValues.has(tab);
+  const topNavTabs = [
+    { value: 'financials', label: 'Financials' },
     { value: 'summary', label: 'Summary' },
-    { value: 'all', label: 'All' },
-    ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
-    ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
     { value: 'analyses', label: 'Analyses' },
+    ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
   ];
+  const topNavValue = isFinancialsTab ? 'financials' : tab;
+  if (isFinancialsTab) financialsSubTabRef.current = tab;
 
-  // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
-  // section (Gross Profit, EBITDA, Operating Income, etc.), rather than every single line, which
-  // would just be the full grid repeated once per scenario.
-  const compareMetricLines = schema.sections.flatMap((s) => s.lines).filter((l) => l.rowFormat === 'total');
+  function selectTopNav(value: string) {
+    // Re-entering Financials restores whichever sub-tab was last active there (tracked in the
+    // ref since `tab` itself has moved on to 'summary'/'compare'/'analyses' by the time this
+    // runs) rather than always resetting to "All".
+    setTab(value === 'financials' ? financialsSubTabRef.current : value);
+  }
+
+  // The same headline concepts SummaryPanel already resolves — not `rowFormat === 'total'`
+  // (dropped 2026-09-12), which is a display flag for bold/underline styling, not a "this is a
+  // key metric" flag, and swept in every subtotal in the schema (Total Current Liabilities, Cash
+  // EBITDA, ...) with no editorial judgment behind it. findSummaryLine resolves by name/alias, so
+  // this list works across schemas without assuming any of them use the exact same line names.
+  // Interim measure: the real fix is letting each schema pick and order its own "summary metrics"
+  // in settings, which Compare and the Live output rail would both read instead of a hardcoded
+  // concept list — a bigger, separately-designed feature, not a layout change.
+  const compareMetricLines = COMPARE_METRIC_CONCEPTS.map((concept) => findSummaryLine(schema, concept)).filter(
+    (l): l is StatementLine => Boolean(l),
+  );
   const comparePeriod = Math.min(comparePeriodIndex, model.timeline.length - 1);
   const compareColumns = [
     {
@@ -708,6 +758,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     childCount?: number;
     driverId?: string;
     unit?: string;
+    /** Only set alongside driverId, for a row whose method has a well-defined implied historical
+     *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
+     *  driver-less row, or an 'actual'/'roll-off' instance projection, all of which show a plain
+     *  dash in historical columns instead of an implied number. */
+    targetLineId?: string;
+    method?: ProjectionMethod;
+    basisLineId?: string;
   }
 
   const schemaDriverByLineId = new Map(schema.drivers.map((d) => [d.targetLineId, d]));
@@ -734,6 +791,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       driverRows.push({
         id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0,
         childCount: children.length, driverId: ownDriver?.id, unit: ownDriver?.unit,
+        targetLineId: ownDriver?.targetLineId, method: ownDriver?.method, basisLineId: ownDriver?.basisLineId,
       });
       if (collapsedDriverParentIds.has(line.id)) continue;
       for (const child of children) {
@@ -741,6 +799,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           id: child.id, name: child.name, isChild: true, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
           unit: instanceDriverUnit(child.projection.method),
+          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
+          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
+          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
         });
       }
     }
@@ -750,6 +811,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           id: child.id, name: child.name, isChild: false, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
           unit: instanceDriverUnit(child.projection.method),
+          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
+          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
+          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
         });
       }
     }
@@ -779,13 +843,27 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         />
       ),
     },
-    ...projectedPeriods.map(({ period, index }) => ({
+    // Every period, actual and projected — not just projectedPeriods — so this table's columns
+    // line up 1:1 with the statement grid's below it (same count ⇒ the DataTable's own auto
+    // column-width layout stretches both to the same per-column width; previously the Drivers
+    // table's own narrower period set stretched wider than the grid's, throwing the two visibly
+    // out of alignment). Historical columns render an implied value or a dash — see below — never
+    // an editable cell, so nothing about entering projected assumptions changes here.
+    ...model.timeline.map((period, index) => ({
       key: `p${index}`,
       label: period.label,
       numeric: true,
       width: 110,
+      background: period.kind === 'projected' ? 'var(--alpha-blue-06)' : undefined,
       render: (_: unknown, row: DriverRow) => {
         if (row.hasChildren) {
+          // A parent's historical value comes directly from summing its instances' own mapped
+          // historicals (see withDynamicInstances.ts), not from any driver — the lock treatment
+          // below is specifically about a PROJECTED value being superseded, so it doesn't apply
+          // to a period where there was never a driver-derived value to supersede.
+          if (period.kind !== 'projected') {
+            return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+          }
           return (
             <span
               title={`Value comes from ${row.childCount} sub-line${row.childCount === 1 ? '' : 's'} — see Segments, adjustments & KPIs`}
@@ -798,6 +876,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         }
         if (!row.driverId) {
           return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+        }
+        if (period.kind !== 'projected') {
+          const implied =
+            evaluation && row.method && row.targetLineId
+              ? impliedHistoricalDriverValue(evaluation, row.targetLineId, row.method, row.basisLineId, index)
+              : null;
+          return (
+            <span
+              title="Implied by actual results for this period — not a stored assumption"
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+                fontStyle: 'italic', color: implied === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
+              }}
+            >
+              {formatDriverValue(implied, row.unit!)}
+            </span>
+          );
         }
         const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
         const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
@@ -829,7 +924,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </span>
         );
       },
-      canEdit: (row: DriverRow) => Boolean(row.driverId) && !row.hasChildren,
+      canEdit: (row: DriverRow) => period.kind === 'projected' && Boolean(row.driverId) && !row.hasChildren,
       renderEdit: (_: unknown, row: DriverRow, wasEditCancelled: () => boolean) =>
         row.driverId ? (
           <DriverValueInput
@@ -844,81 +939,80 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', padding: 'var(--gutter)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{company.name}</span>
-          <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
+        {/* model.name defaults to the uploaded file's name at creation (see ModelMappingScreen's
+            modelRepository.create call) and has no rename flow yet — showing it here read as raw
+            file metadata rather than a meaningful title, so the heading is the company instead. */}
+        <h1 style={{ fontSize: 'var(--text-2xl)' }}>{company.name}</h1>
         <div style={{ flex: '1 1 auto' }} />
-        <Button variant="secondary" iconLeft="history" onClick={openHistory}>
-          History
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <Select
+            size="sm"
+            options={[{ value: 'base', label: 'Base case' }, ...scenarios.map((s) => ({ value: s.id, label: s.name }))]}
+            value={activeScenarioId}
+            onChange={(e) => selectScenario(e.target.value)}
+            style={{ width: 150 }}
+          />
+          <IconButton
+            icon="plus"
+            label="New scenario"
+            size="sm"
+            variant="ghost"
+            onClick={() => openScenarioDialog('new', '')}
+          />
+          <Popover
+            open={scenarioMenuOpen}
+            onOpenChange={setScenarioMenuOpen}
+            placement="bottom-start"
+            width={190}
+            title="Scenario"
+            trigger={<IconButton icon="chevron-down" label="More scenario actions" size="sm" variant="ghost" />}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, margin: 'calc(var(--space-6) * -1)' }}>
+              <MenuAction
+                icon="copy"
+                label="Duplicate"
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`);
+                }}
+              />
+              <MenuAction
+                icon="pencil"
+                label="Rename"
+                disabled={!activeScenario}
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  if (activeScenario) openScenarioDialog('rename', activeScenario.name);
+                }}
+              />
+              <MenuAction
+                icon="trash-2"
+                label="Delete"
+                disabled={!activeScenario}
+                tone="danger"
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  setDeleteScenarioConfirmOpen(true);
+                }}
+              />
+            </div>
+          </Popover>
+        </div>
+        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
+        <IconButton icon="history" label="History" size="sm" variant="ghost" onClick={openHistory} />
         <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
           Snapshot
         </Button>
-      </div>
-
-      <Card
-        title="Drivers"
-        icon="sliders-horizontal"
-        padding="none"
-        actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <Select
-                size="sm"
-                options={[{ value: 'base', label: 'Base case' }, ...scenarios.map((s) => ({ value: s.id, label: s.name }))]}
-                value={activeScenarioId}
-                onChange={(e) => selectScenario(e.target.value)}
-                style={{ width: 150 }}
-              />
-              <IconButton
-                icon="plus"
-                label="New scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => openScenarioDialog('new', '')}
-              />
-              <IconButton
-                icon="copy"
-                label="Duplicate scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`)}
-              />
-              <IconButton
-                icon="pencil"
-                label="Rename scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => activeScenario && openScenarioDialog('rename', activeScenario.name)}
-                disabled={!activeScenario}
-              />
-              <IconButton
-                icon="trash-2"
-                label="Delete scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => setDeleteScenarioConfirmOpen(true)}
-                disabled={!activeScenario}
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
-              <Input
-                size="sm"
-                mono
-                type="number"
-                value={horizonInput}
-                onChange={(e) => setHorizonInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitHorizonChange();
-                }}
-                onBlur={commitHorizonChange}
-                fullWidth={false}
-                style={{ width: 56 }}
-              />
-            </div>
+        <Popover
+          open={settingsMenuOpen}
+          onOpenChange={setSettingsMenuOpen}
+          placement="bottom-end"
+          width={200}
+          title="Recalculation"
+          trigger={<IconButton icon="settings" label="Model settings" size="sm" variant="ghost" />}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             <SegmentedControl
               size="sm"
               options={[
@@ -927,35 +1021,21 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
               ]}
               value={recalcMode}
               onChange={(value) => handleRecalcModeChange(value as 'auto' | 'manual')}
+              fullWidth
             />
             {recalcMode === 'manual' ? (
-              <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate}>
+              <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate} fullWidth>
                 Recalculate
               </Button>
             ) : null}
           </div>
-        }
-      >
-        {driverRows.length === 0 ? (
-          <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-            No projection drivers defined yet — set a line's projection method in Financial Statement Definitions to add one.
-          </div>
-        ) : projectedPeriods.length === 0 ? (
-          <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-            No projected periods yet — set how many above to start entering driver assumptions.
-          </div>
-        ) : (
-          // Keyed by the active scenario so switching forces a full remount — otherwise a
-          // mid-edit DriverValueInput's stale local text buffer would commit against whichever
-          // scenario is active by the time it blurs, silently writing to the wrong one.
-          <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
-        )}
-      </Card>
+        </Popover>
+      </div>
 
       <Tabs
-        tabs={tabs}
-        value={tab}
-        onChange={setTab}
+        tabs={topNavTabs}
+        value={topNavValue}
+        onChange={selectTopNav}
         size="sm"
         actions={
           tab === 'compare' ? (
@@ -969,6 +1049,20 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           ) : null
         }
       />
+
+      {isFinancialsTab ? (
+        // Plain background, same as the top nav above — a filled/sunken strip here read as
+        // heavier than the primary nav it's subordinate to, backwards from the hierarchy it's
+        // meant to show. The indent plus the underline-tab convention already carries "these are
+        // Financials' own sub-views" without needing a color block to say it again.
+        <Tabs
+          tabs={financialsSubTabs}
+          value={tab}
+          onChange={setTab}
+          size="sm"
+          style={{ paddingLeft: 'var(--space-6)' }}
+        />
+      ) : null}
 
       {tab === 'summary' ? (
         evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
@@ -1032,18 +1126,84 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </Card>
         </>
       ) : (
-        <Card padding="none">
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey="id"
-            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-            dense
-            stickyHeader
-            stickyFirstColumn
-            maxHeight="calc(100vh - 260px)"
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <Card
+            title={
+              <button
+                type="button"
+                onClick={() => setDriversCollapsed((v) => !v)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+                  background: 'transparent', border: 'none', padding: 0, margin: 0, cursor: 'pointer',
+                  font: 'inherit', color: 'inherit',
+                }}
+              >
+                <Icon name={driversCollapsed ? 'chevron-right' : 'chevron-down'} size={12} color="var(--text-tertiary)" />
+                <span>Drivers</span>
+              </button>
+            }
+            icon="sliders-horizontal"
+            padding="none"
+            actions={
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
+                <Input
+                  size="sm"
+                  mono
+                  type="number"
+                  value={horizonInput}
+                  onChange={(e) => setHorizonInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitHorizonChange();
+                  }}
+                  onBlur={commitHorizonChange}
+                  fullWidth={false}
+                  style={{ width: 56 }}
+                />
+              </div>
+            }
+          >
+            {driversCollapsed ? null : driverRows.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                No projection drivers defined yet — set a line's projection method in Financial Statement Definitions to add one.
+              </div>
+            ) : projectedPeriods.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                No projected periods yet — set how many above to start entering driver assumptions.
+              </div>
+            ) : (
+              // Keyed by the active scenario so switching forces a full remount — otherwise a
+              // mid-edit DriverValueInput's stale local text buffer would commit against whichever
+              // scenario is active by the time it blurs, silently writing to the wrong one.
+              <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
+            )}
+          </Card>
+
+          <Card padding="none">
+            <DataTable
+              columns={columns}
+              rows={rows}
+              rowKey="id"
+              rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+              dense
+              stickyHeader
+              stickyFirstColumn
+              maxHeight="calc(100vh - 260px)"
+            />
+          </Card>
+        </div>
+        {evaluation ? (
+          <LiveOutputRail
+            schema={schema}
+            model={model}
+            evaluation={evaluation}
+            compareEvaluations={compareEvaluations}
+            activeScenarioId={activeScenarioId}
+            compareMetricLines={compareMetricLines}
           />
-        </Card>
+        ) : null}
+        </div>
       )}
 
       <Dialog
@@ -1225,6 +1385,126 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
           <Toast tone="positive" title={toast} onDismiss={() => setToast(null)} />
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** One row in the scenario-actions Popover menu — full-width, left-aligned, hover-highlighted.
+ *  There's no design-system menu-list primitive yet; this is deliberately minimal rather than a
+ *  new DS component, since it's currently only used in this one place. */
+function MenuAction({
+  icon, label, onClick, disabled = false, tone = 'default',
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'default' | 'danger';
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 'var(--space-3)', width: '100%',
+        padding: 'var(--space-3) var(--space-6)', background: hover && !disabled ? 'var(--surface-hover)' : 'transparent',
+        border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left',
+        font: 'inherit', fontSize: 'var(--text-xs)',
+        color: disabled ? 'var(--text-disabled)' : tone === 'danger' ? 'var(--text-negative)' : 'var(--text-body)',
+      }}
+    >
+      <Icon name={icon} size={12} color={disabled ? 'var(--text-disabled)' : tone === 'danger' ? 'var(--text-negative)' : 'var(--text-tertiary)'} />
+      {label}
+    </button>
+  );
+}
+
+/** Financials-only sidebar giving live feedback as drivers are edited — mockup 1a's "Live output"
+ *  rail. Anchored on the timeline's LAST period (actual or projected), not SummaryPanel's own
+ *  latest-actual: the whole point is to reflect the projection you're currently shaping, which
+ *  only moves on projected periods. Returns null when there's nothing to show (no Revenue/EBITDA
+ *  concept resolved and no non-Base scenario active), rather than an empty shell. */
+function LiveOutputRail({
+  schema, model, evaluation, compareEvaluations, activeScenarioId, compareMetricLines,
+}: {
+  schema: StatementSchema;
+  model: Model;
+  evaluation: LineValues;
+  compareEvaluations: Array<{ id: string; name: string; evaluation: LineValues }>;
+  activeScenarioId: string;
+  compareMetricLines: StatementLine[];
+}) {
+  const latest = model.timeline.length - 1;
+  const kpiLines = [findSummaryLine(schema, 'revenue'), findSummaryLine(schema, 'ebitda')].filter(
+    (l): l is StatementLine => Boolean(l),
+  );
+
+  const activeCompare = compareEvaluations.find((c) => c.id === activeScenarioId);
+  const baseCompare = compareEvaluations.find((c) => c.id === 'base');
+  // Comparing Base to itself would just show zero deltas everywhere — only worth a card once a
+  // different scenario is active. Capped to the same curated "total" lines the Compare tab uses,
+  // trimmed further since this is a narrow sidebar rather than a full table.
+  const showDelta = activeScenarioId !== 'base' && Boolean(activeCompare) && Boolean(baseCompare);
+  const deltaLines = compareMetricLines.slice(0, 4);
+
+  if (kpiLines.length === 0 && !showDelta) return null;
+
+  return (
+    <div style={{ width: 260, flex: 'none', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <span
+        style={{
+          fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: '.07em',
+          textTransform: 'uppercase', color: 'var(--text-secondary)',
+        }}
+      >
+        Live output
+      </span>
+
+      {kpiLines.map((line) => (
+        <MetricCard
+          key={line.id}
+          label={line.name}
+          value={formatPeriodValue(evaluation.getValue(line.id, latest), line.numberFormat)}
+          delta={periodOverPeriodDelta(evaluation, line.id, latest)}
+          deltaLabel="vs prior period"
+          spark={trend(evaluation, line.id, model)}
+        />
+      ))}
+
+      {showDelta ? (
+        <Card title={`vs Base Case · ${model.timeline[latest]?.label ?? ''}`} padding="sm">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {deltaLines.map((line) => {
+              const activeValue = activeCompare!.evaluation.getValue(line.id, latest);
+              const baseValue = baseCompare!.evaluation.getValue(line.id, latest);
+              const deltaPct =
+                activeValue !== null && baseValue !== null && baseValue !== 0
+                  ? ((activeValue - baseValue) / Math.abs(baseValue)) * 100
+                  : null;
+              return (
+                <div key={line.id} style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
+                  <span style={{ flex: '1 1 auto', minWidth: 0, fontSize: 'var(--text-xs)', color: 'var(--text-body)' }}>
+                    {line.name}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)',
+                      fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-primary)',
+                    }}
+                  >
+                    {formatPeriodValue(activeValue, line.numberFormat)}
+                  </span>
+                  {deltaPct !== null ? <DeltaValue value={deltaPct} size="sm" /> : null}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       ) : null}
     </div>
   );
