@@ -878,10 +878,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', padding: 'var(--gutter)' }}>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{company.name}</span>
-          <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
-        </div>
+        {/* model.name defaults to the uploaded file's name at creation (see ModelMappingScreen's
+            modelRepository.create call) and has no rename flow yet — showing it here read as raw
+            file metadata rather than a meaningful title, so the heading is the company instead. */}
+        <h1 style={{ fontSize: 'var(--text-2xl)' }}>{company.name}</h1>
         <div style={{ flex: '1 1 auto' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <Select
