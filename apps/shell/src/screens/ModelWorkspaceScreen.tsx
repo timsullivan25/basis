@@ -136,6 +136,11 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [historyOpen, setHistoryOpen] = useState(false);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [tab, setTab] = useState('all');
+  // Remembers the last active Financials sub-tab (All / a statement section) across a detour to
+  // Summary, Compare or Analyses, so returning to Financials restores it instead of resetting to
+  // "All" — see selectTopNav below. A ref, not state: it only needs to be read back on the next
+  // top-nav click, never to trigger a render of its own.
+  const financialsSubTabRef = useRef('all');
   // Lines whose sub-line instances are hidden — collapsed via the chevron on a parent row in the
   // main grid below. Keyed by the parent StatementLine's id, not the instance's.
   const [collapsedParentIds, setCollapsedParentIds] = useState<Set<string>>(new Set());
@@ -519,13 +524,28 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No model to show.</span>;
   }
 
-  const tabs = [
+  // Two nav levels, both driven by the one `tab` state: Summary/Financials/Compare/Analyses are
+  // top-level destinations, while "All" and each statement section are sub-tabs that only make
+  // sense once you're inside Financials — matching mockup 1a's masthead-then-section hierarchy
+  // rather than mixing both levels into one flat tab row.
+  const financialsSubTabs = [{ value: 'all', label: 'All' }, ...schema.sections.map((section) => ({ value: section.id, label: section.name }))];
+  const financialsSubTabValues = new Set(financialsSubTabs.map((t) => t.value));
+  const isFinancialsTab = financialsSubTabValues.has(tab);
+  const topNavTabs = [
     { value: 'summary', label: 'Summary' },
-    { value: 'all', label: 'All' },
-    ...schema.sections.map((section) => ({ value: section.id, label: section.name })),
+    { value: 'financials', label: 'Financials' },
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
     { value: 'analyses', label: 'Analyses' },
   ];
+  const topNavValue = isFinancialsTab ? 'financials' : tab;
+  if (isFinancialsTab) financialsSubTabRef.current = tab;
+
+  function selectTopNav(value: string) {
+    // Re-entering Financials restores whichever sub-tab was last active there (tracked in the
+    // ref since `tab` itself has moved on to 'summary'/'compare'/'analyses' by the time this
+    // runs) rather than always resetting to "All".
+    setTab(value === 'financials' ? financialsSubTabRef.current : value);
+  }
 
   // A curated set of "key metrics" for the Compare tab — every total/subtotal line across every
   // section (Gross Profit, EBITDA, Operating Income, etc.), rather than every single line, which
@@ -953,9 +973,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       </Card>
 
       <Tabs
-        tabs={tabs}
-        value={tab}
-        onChange={setTab}
+        tabs={topNavTabs}
+        value={topNavValue}
+        onChange={selectTopNav}
         size="sm"
         actions={
           tab === 'compare' ? (
@@ -969,6 +989,16 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           ) : null
         }
       />
+
+      {isFinancialsTab ? (
+        <Tabs
+          tabs={financialsSubTabs}
+          value={tab}
+          onChange={setTab}
+          size="sm"
+          style={{ background: 'var(--surface-sunken)', paddingLeft: 'var(--space-4)' }}
+        />
+      ) : null}
 
       {tab === 'summary' ? (
         evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
