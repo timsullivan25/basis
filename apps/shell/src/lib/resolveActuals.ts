@@ -12,13 +12,16 @@ export function resolveActuals(
   timeline: Timeline,
 ): Record<string, (number | null)[]> {
   const result: Record<string, (number | null)[]> = {};
+  // Built once per call rather than re-scanning workbook.lines for every (mapping × period ×
+  // sourceLineId) combination — this runs reactively on every mapping edit, not just at save.
+  const sourceLineById = new Map(workbook.lines.map((line) => [line.id, line]));
   for (const m of mapping) {
     if (m.sourceLineIds.length === 0) continue;
     result[m.targetLineId] = timeline.map((_, periodIndex) => {
       let sum = 0;
       let any = false;
       for (const id of m.sourceLineIds) {
-        const value = workbook.lines.find((line) => line.id === id)?.values[periodIndex];
+        const value = sourceLineById.get(id)?.values[periodIndex];
         if (value !== null && value !== undefined) {
           sum += value;
           any = true;

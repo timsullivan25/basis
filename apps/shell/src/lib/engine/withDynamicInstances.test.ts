@@ -88,9 +88,13 @@ describe('applyDynamicInstances', () => {
     model.historicals['seg-a'] = [60];
     model.historicals['seg-b'] = [40];
 
-    const { evaluation } = applyDynamicInstances(schema, model, instances);
+    const { schema: instancedSchema, evaluation } = applyDynamicInstances(schema, model, instances);
     expect(evaluation.getValue('rev', 0)).toBe(100);
     expect(evaluation.getValue('gp', 0)).toBe(100); // formula chained off Revenue picks up the rollup
+    // Instances must display in the order they were created, not reversed — each is spliced in
+    // right after the ones already inserted for the same parent, not always right after the
+    // parent itself.
+    expect(instancedSchema.sections[0].lines.map((l) => l.id)).toEqual(['rev', 'seg-a', 'seg-b', 'gp']);
   });
 
   it('resolves a sibling-instance basis — a sub-line driven off another sub-line, not the parent total', () => {
