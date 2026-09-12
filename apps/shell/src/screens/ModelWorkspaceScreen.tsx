@@ -37,6 +37,7 @@ import {
   type Mapping,
   type Model,
   type ModelImport,
+  type ProjectionMethod,
   type Scenario,
   type ScenarioKey,
   type Snapshot,
@@ -63,6 +64,7 @@ import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
+import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
@@ -741,6 +743,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     childCount?: number;
     driverId?: string;
     unit?: string;
+    /** Only set alongside driverId, for a row whose method has a well-defined implied historical
+     *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
+     *  driver-less row, or an 'actual'/'roll-off' instance projection, all of which show a plain
+     *  dash in historical columns instead of an implied number. */
+    targetLineId?: string;
+    method?: ProjectionMethod;
+    basisLineId?: string;
   }
 
   const schemaDriverByLineId = new Map(schema.drivers.map((d) => [d.targetLineId, d]));
@@ -767,6 +776,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       driverRows.push({
         id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0,
         childCount: children.length, driverId: ownDriver?.id, unit: ownDriver?.unit,
+        targetLineId: ownDriver?.targetLineId, method: ownDriver?.method, basisLineId: ownDriver?.basisLineId,
       });
       if (collapsedDriverParentIds.has(line.id)) continue;
       for (const child of children) {
@@ -774,6 +784,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           id: child.id, name: child.name, isChild: true, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
           unit: instanceDriverUnit(child.projection.method),
+          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
+          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
+          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
         });
       }
     }
@@ -783,6 +796,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           id: child.id, name: child.name, isChild: false, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
           unit: instanceDriverUnit(child.projection.method),
+          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
+          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
+          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
         });
       }
     }
@@ -812,13 +828,27 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         />
       ),
     },
-    ...projectedPeriods.map(({ period, index }) => ({
+    // Every period, actual and projected — not just projectedPeriods — so this table's columns
+    // line up 1:1 with the statement grid's below it (same count ⇒ the DataTable's own auto
+    // column-width layout stretches both to the same per-column width; previously the Drivers
+    // table's own narrower period set stretched wider than the grid's, throwing the two visibly
+    // out of alignment). Historical columns render an implied value or a dash — see below — never
+    // an editable cell, so nothing about entering projected assumptions changes here.
+    ...model.timeline.map((period, index) => ({
       key: `p${index}`,
       label: period.label,
       numeric: true,
       width: 110,
+      background: period.kind === 'projected' ? 'var(--alpha-blue-06)' : undefined,
       render: (_: unknown, row: DriverRow) => {
         if (row.hasChildren) {
+          // A parent's historical value comes directly from summing its instances' own mapped
+          // historicals (see withDynamicInstances.ts), not from any driver — the lock treatment
+          // below is specifically about a PROJECTED value being superseded, so it doesn't apply
+          // to a period where there was never a driver-derived value to supersede.
+          if (period.kind !== 'projected') {
+            return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+          }
           return (
             <span
               title={`Value comes from ${row.childCount} sub-line${row.childCount === 1 ? '' : 's'} — see Segments, adjustments & KPIs`}
@@ -831,6 +861,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         }
         if (!row.driverId) {
           return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+        }
+        if (period.kind !== 'projected') {
+          const implied =
+            evaluation && row.method && row.targetLineId
+              ? impliedHistoricalDriverValue(evaluation, row.targetLineId, row.method, row.basisLineId, index)
+              : null;
+          return (
+            <span
+              title="Implied by actual results for this period — not a stored assumption"
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+                fontStyle: 'italic', color: implied === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
+              }}
+            >
+              {formatDriverValue(implied, row.unit!)}
+            </span>
+          );
         }
         const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
         const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
@@ -862,7 +909,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </span>
         );
       },
-      canEdit: (row: DriverRow) => Boolean(row.driverId) && !row.hasChildren,
+      canEdit: (row: DriverRow) => period.kind === 'projected' && Boolean(row.driverId) && !row.hasChildren,
       renderEdit: (_: unknown, row: DriverRow, wasEditCancelled: () => boolean) =>
         row.driverId ? (
           <DriverValueInput
