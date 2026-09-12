@@ -2,6 +2,7 @@ import { Button, Card, ChartLegend, DataTable, LineChart, MetricCard, BarChart }
 import type { Model, StatementLine, StatementSchema } from '../../data';
 import { formatPeriodValue } from './mapping/mappingFormatting';
 import { findSummaryLine, type SummaryConcept } from '../../lib/summaryLines';
+import { periodOverPeriodDelta, trend } from '../../lib/summaryMetrics';
 import type { LineValues } from '../../lib/computedCache';
 
 interface SummaryPanelProps {
@@ -31,24 +32,6 @@ function lastActualIndex(model: Pick<Model, 'timeline'>): number {
 
 function resolveLine(schema: StatementSchema, concept: SummaryConcept): StatementLine | undefined {
   return findSummaryLine(schema, concept);
-}
-
-/** Percent change vs. the prior period, for MetricCard's `delta` prop — null (no delta shown)
- *  when there's no prior period, or the prior value is null/zero (division would be meaningless). */
-function periodOverPeriodDelta(result: LineValues, lineId: string, index: number): number | null {
-  if (index <= 0) return null;
-  const latest = result.getValue(lineId, index);
-  const prior = result.getValue(lineId, index - 1);
-  if (latest === null || prior === null || prior === 0) return null;
-  return ((latest - prior) / Math.abs(prior)) * 100;
-}
-
-/** Full-timeline trend for a sparkline/chart series. LineChart and Sparkline both have no gap-
- *  rendering for a missing value, so a null is shown as 0 here — the same accepted simplification
- *  already used for the Compare tab's chart (see ModelWorkspaceScreen), not a claim that 0 was
- *  actually mapped for that period. */
-function trend(result: LineValues, lineId: string, model: Pick<Model, 'timeline'>): number[] {
-  return model.timeline.map((_, i) => result.getValue(lineId, i) ?? 0);
 }
 
 export function SummaryPanel({ schema, model, result, onOpenWorkspace }: SummaryPanelProps) {

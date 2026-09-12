@@ -4,12 +4,14 @@ import {
   Card,
   ChartLegend,
   DataTable,
+  DeltaValue,
   Dialog,
   Field,
   Icon,
   IconButton,
   Input,
   LineChart,
+  MetricCard,
   SegmentedControl,
   Select,
   Tabs,
@@ -47,7 +49,7 @@ import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
-import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../lib/computedCache';
+import { buildComputedResult, computeVersionStamp, materializeEvaluation, type LineValues } from '../lib/computedCache';
 import {
   computeDcfOutputs,
   computeSensitivityGrid,
@@ -59,6 +61,7 @@ import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine } from '../lib/summaryLines';
+import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
@@ -1027,7 +1030,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </Card>
         </>
       ) : (
-        <>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           <Card
             title={
               <button
@@ -1092,7 +1096,18 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
               maxHeight="calc(100vh - 260px)"
             />
           </Card>
-        </>
+        </div>
+        {evaluation ? (
+          <LiveOutputRail
+            schema={schema}
+            model={model}
+            evaluation={evaluation}
+            compareEvaluations={compareEvaluations}
+            activeScenarioId={activeScenarioId}
+            compareMetricLines={compareMetricLines}
+          />
+        ) : null}
+        </div>
       )}
 
       <Dialog
@@ -1274,6 +1289,92 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
           <Toast tone="positive" title={toast} onDismiss={() => setToast(null)} />
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Financials-only sidebar giving live feedback as drivers are edited — mockup 1a's "Live output"
+ *  rail. Anchored on the timeline's LAST period (actual or projected), not SummaryPanel's own
+ *  latest-actual: the whole point is to reflect the projection you're currently shaping, which
+ *  only moves on projected periods. Returns null when there's nothing to show (no Revenue/EBITDA
+ *  concept resolved and no non-Base scenario active), rather than an empty shell. */
+function LiveOutputRail({
+  schema, model, evaluation, compareEvaluations, activeScenarioId, compareMetricLines,
+}: {
+  schema: StatementSchema;
+  model: Model;
+  evaluation: LineValues;
+  compareEvaluations: Array<{ id: string; name: string; evaluation: LineValues }>;
+  activeScenarioId: string;
+  compareMetricLines: StatementLine[];
+}) {
+  const latest = model.timeline.length - 1;
+  const kpiLines = [findSummaryLine(schema, 'revenue'), findSummaryLine(schema, 'ebitda')].filter(
+    (l): l is StatementLine => Boolean(l),
+  );
+
+  const activeCompare = compareEvaluations.find((c) => c.id === activeScenarioId);
+  const baseCompare = compareEvaluations.find((c) => c.id === 'base');
+  // Comparing Base to itself would just show zero deltas everywhere — only worth a card once a
+  // different scenario is active. Capped to the same curated "total" lines the Compare tab uses,
+  // trimmed further since this is a narrow sidebar rather than a full table.
+  const showDelta = activeScenarioId !== 'base' && Boolean(activeCompare) && Boolean(baseCompare);
+  const deltaLines = compareMetricLines.slice(0, 4);
+
+  if (kpiLines.length === 0 && !showDelta) return null;
+
+  return (
+    <div style={{ width: 260, flex: 'none', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <span
+        style={{
+          fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: '.07em',
+          textTransform: 'uppercase', color: 'var(--text-secondary)',
+        }}
+      >
+        Live output
+      </span>
+
+      {kpiLines.map((line) => (
+        <MetricCard
+          key={line.id}
+          label={line.name}
+          value={formatPeriodValue(evaluation.getValue(line.id, latest), line.numberFormat)}
+          delta={periodOverPeriodDelta(evaluation, line.id, latest)}
+          deltaLabel="vs prior period"
+          spark={trend(evaluation, line.id, model)}
+        />
+      ))}
+
+      {showDelta ? (
+        <Card title={`vs Base Case · ${model.timeline[latest]?.label ?? ''}`} padding="sm">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {deltaLines.map((line) => {
+              const activeValue = activeCompare!.evaluation.getValue(line.id, latest);
+              const baseValue = baseCompare!.evaluation.getValue(line.id, latest);
+              const deltaPct =
+                activeValue !== null && baseValue !== null && baseValue !== 0
+                  ? ((activeValue - baseValue) / Math.abs(baseValue)) * 100
+                  : null;
+              return (
+                <div key={line.id} style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
+                  <span style={{ flex: '1 1 auto', minWidth: 0, fontSize: 'var(--text-xs)', color: 'var(--text-body)' }}>
+                    {line.name}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)',
+                      fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-primary)',
+                    }}
+                  >
+                    {formatPeriodValue(activeValue, line.numberFormat)}
+                  </span>
+                  {deltaPct !== null ? <DeltaValue value={deltaPct} size="sm" /> : null}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       ) : null}
     </div>
   );
