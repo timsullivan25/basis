@@ -545,10 +545,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const financialsSubTabValues = new Set(financialsSubTabs.map((t) => t.value));
   const isFinancialsTab = financialsSubTabValues.has(tab);
   const topNavTabs = [
-    { value: 'summary', label: 'Summary' },
     { value: 'financials', label: 'Financials' },
-    ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
+    { value: 'summary', label: 'Summary' },
     { value: 'analyses', label: 'Analyses' },
+    ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
   ];
   const topNavValue = isFinancialsTab ? 'financials' : tab;
   if (isFinancialsTab) financialsSubTabRef.current = tab;
