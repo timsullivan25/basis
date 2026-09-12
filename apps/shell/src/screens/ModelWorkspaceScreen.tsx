@@ -12,6 +12,7 @@ import {
   Input,
   LineChart,
   MetricCard,
+  Popover,
   SegmentedControl,
   Select,
   Tabs,
@@ -154,6 +155,11 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // inside Financials rather than pinned above every tab (see mockup 1a), so this saves the
   // vertical space it costs while you're just reading the statement grid, not editing drivers.
   const [driversCollapsed, setDriversCollapsed] = useState(false);
+  // Masthead menus — both Popovers are controlled (rather than left uncontrolled) purely so a
+  // click on a menu item can close the menu itself; an uncontrolled Popover only closes on an
+  // outside click, which an in-menu click isn't.
+  const [scenarioMenuOpen, setScenarioMenuOpen] = useState(false);
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   // Serializes updateDriverValue's read-modify-write against the repository so two commits
   // issued in quick succession never both read the same pre-edit driverValues — see its own
   // doc comment.
@@ -877,13 +883,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
         </div>
         <div style={{ flex: '1 1 auto' }} />
-        <Button variant="secondary" iconLeft="history" onClick={openHistory}>
-          History
-        </Button>
-        <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
-          Snapshot
-        </Button>
-        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <Select
             size="sm"
@@ -899,45 +898,76 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             variant="ghost"
             onClick={() => openScenarioDialog('new', '')}
           />
-          <IconButton
-            icon="copy"
-            label="Duplicate scenario"
-            size="sm"
-            variant="ghost"
-            onClick={() => openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`)}
-          />
-          <IconButton
-            icon="pencil"
-            label="Rename scenario"
-            size="sm"
-            variant="ghost"
-            onClick={() => activeScenario && openScenarioDialog('rename', activeScenario.name)}
-            disabled={!activeScenario}
-          />
-          <IconButton
-            icon="trash-2"
-            label="Delete scenario"
-            size="sm"
-            variant="ghost"
-            onClick={() => setDeleteScenarioConfirmOpen(true)}
-            disabled={!activeScenario}
-          />
+          <Popover
+            open={scenarioMenuOpen}
+            onOpenChange={setScenarioMenuOpen}
+            placement="bottom-start"
+            width={190}
+            title="Scenario"
+            trigger={<IconButton icon="chevron-down" label="More scenario actions" size="sm" variant="ghost" />}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, margin: 'calc(var(--space-6) * -1)' }}>
+              <MenuAction
+                icon="copy"
+                label="Duplicate"
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`);
+                }}
+              />
+              <MenuAction
+                icon="pencil"
+                label="Rename"
+                disabled={!activeScenario}
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  if (activeScenario) openScenarioDialog('rename', activeScenario.name);
+                }}
+              />
+              <MenuAction
+                icon="trash-2"
+                label="Delete"
+                disabled={!activeScenario}
+                tone="danger"
+                onClick={() => {
+                  setScenarioMenuOpen(false);
+                  setDeleteScenarioConfirmOpen(true);
+                }}
+              />
+            </div>
+          </Popover>
         </div>
         <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
-        <SegmentedControl
-          size="sm"
-          options={[
-            { value: 'auto', label: 'Auto' },
-            { value: 'manual', label: 'Manual' },
-          ]}
-          value={recalcMode}
-          onChange={(value) => handleRecalcModeChange(value as 'auto' | 'manual')}
-        />
-        {recalcMode === 'manual' ? (
-          <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate}>
-            Recalculate
-          </Button>
-        ) : null}
+        <IconButton icon="history" label="History" size="sm" variant="ghost" onClick={openHistory} />
+        <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
+          Snapshot
+        </Button>
+        <Popover
+          open={settingsMenuOpen}
+          onOpenChange={setSettingsMenuOpen}
+          placement="bottom-end"
+          width={200}
+          title="Recalculation"
+          trigger={<IconButton icon="settings" label="Model settings" size="sm" variant="ghost" />}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            <SegmentedControl
+              size="sm"
+              options={[
+                { value: 'auto', label: 'Auto' },
+                { value: 'manual', label: 'Manual' },
+              ]}
+              value={recalcMode}
+              onChange={(value) => handleRecalcModeChange(value as 'auto' | 'manual')}
+              fullWidth
+            />
+            {recalcMode === 'manual' ? (
+              <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate} fullWidth>
+                Recalculate
+              </Button>
+            ) : null}
+          </div>
+        </Popover>
       </div>
 
       <Tabs
@@ -1291,6 +1321,40 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** One row in the scenario-actions Popover menu — full-width, left-aligned, hover-highlighted.
+ *  There's no design-system menu-list primitive yet; this is deliberately minimal rather than a
+ *  new DS component, since it's currently only used in this one place. */
+function MenuAction({
+  icon, label, onClick, disabled = false, tone = 'default',
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: 'default' | 'danger';
+}) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 'var(--space-3)', width: '100%',
+        padding: 'var(--space-3) var(--space-6)', background: hover && !disabled ? 'var(--surface-hover)' : 'transparent',
+        border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', textAlign: 'left',
+        font: 'inherit', fontSize: 'var(--text-xs)',
+        color: disabled ? 'var(--text-disabled)' : tone === 'danger' ? 'var(--text-negative)' : 'var(--text-body)',
+      }}
+    >
+      <Icon name={icon} size={12} color={disabled ? 'var(--text-disabled)' : tone === 'danger' ? 'var(--text-negative)' : 'var(--text-tertiary)'} />
+      {label}
+    </button>
   );
 }
 
