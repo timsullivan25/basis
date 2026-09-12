@@ -147,6 +147,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Same idea as collapsedParentIds above, but for the Drivers card below — independent so
   // collapsing a line's children in one table doesn't affect the other.
   const [collapsedDriverParentIds, setCollapsedDriverParentIds] = useState<Set<string>>(new Set());
+  // Whether the Drivers card itself (not an individual row) is collapsed — the card now lives
+  // inside Financials rather than pinned above every tab (see mockup 1a), so this saves the
+  // vertical space it costs while you're just reading the statement grid, not editing drivers.
+  const [driversCollapsed, setDriversCollapsed] = useState(false);
   // Serializes updateDriverValue's read-modify-write against the repository so two commits
   // issued in quick succession never both read the same pre-edit driverValues — see its own
   // doc comment.
@@ -933,45 +937,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         ) : null}
       </div>
 
-      <Card
-        title="Drivers"
-        icon="sliders-horizontal"
-        padding="none"
-        actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
-            <Input
-              size="sm"
-              mono
-              type="number"
-              value={horizonInput}
-              onChange={(e) => setHorizonInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitHorizonChange();
-              }}
-              onBlur={commitHorizonChange}
-              fullWidth={false}
-              style={{ width: 56 }}
-            />
-          </div>
-        }
-      >
-        {driverRows.length === 0 ? (
-          <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-            No projection drivers defined yet — set a line's projection method in Financial Statement Definitions to add one.
-          </div>
-        ) : projectedPeriods.length === 0 ? (
-          <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-            No projected periods yet — set how many above to start entering driver assumptions.
-          </div>
-        ) : (
-          // Keyed by the active scenario so switching forces a full remount — otherwise a
-          // mid-edit DriverValueInput's stale local text buffer would commit against whichever
-          // scenario is active by the time it blurs, silently writing to the wrong one.
-          <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
-        )}
-      </Card>
-
       <Tabs
         tabs={topNavTabs}
         value={topNavValue}
@@ -1062,18 +1027,72 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </Card>
         </>
       ) : (
-        <Card padding="none">
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey="id"
-            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-            dense
-            stickyHeader
-            stickyFirstColumn
-            maxHeight="calc(100vh - 260px)"
-          />
-        </Card>
+        <>
+          <Card
+            title={
+              <button
+                type="button"
+                onClick={() => setDriversCollapsed((v) => !v)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
+                  background: 'transparent', border: 'none', padding: 0, margin: 0, cursor: 'pointer',
+                  font: 'inherit', color: 'inherit',
+                }}
+              >
+                <Icon name={driversCollapsed ? 'chevron-right' : 'chevron-down'} size={12} color="var(--text-tertiary)" />
+                <span>Drivers</span>
+              </button>
+            }
+            icon="sliders-horizontal"
+            padding="none"
+            actions={
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
+                <Input
+                  size="sm"
+                  mono
+                  type="number"
+                  value={horizonInput}
+                  onChange={(e) => setHorizonInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitHorizonChange();
+                  }}
+                  onBlur={commitHorizonChange}
+                  fullWidth={false}
+                  style={{ width: 56 }}
+                />
+              </div>
+            }
+          >
+            {driversCollapsed ? null : driverRows.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                No projection drivers defined yet — set a line's projection method in Financial Statement Definitions to add one.
+              </div>
+            ) : projectedPeriods.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                No projected periods yet — set how many above to start entering driver assumptions.
+              </div>
+            ) : (
+              // Keyed by the active scenario so switching forces a full remount — otherwise a
+              // mid-edit DriverValueInput's stale local text buffer would commit against whichever
+              // scenario is active by the time it blurs, silently writing to the wrong one.
+              <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
+            )}
+          </Card>
+
+          <Card padding="none">
+            <DataTable
+              columns={columns}
+              rows={rows}
+              rowKey="id"
+              rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+              dense
+              stickyHeader
+              stickyFirstColumn
+              maxHeight="calc(100vh - 260px)"
+            />
+          </Card>
+        </>
       )}
 
       <Dialog
