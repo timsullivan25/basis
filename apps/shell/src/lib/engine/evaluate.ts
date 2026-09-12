@@ -127,7 +127,11 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
    *  going silently blank. Reads lastActualIndex, always strictly before any period a driver
    *  default is ever needed for, so both lines are guaranteed already resolved in memo. */
   function defaultDriverValue(driver: DriverDefinition): number | null {
-    if (driver.method === 'growth') return 0;
+    // 0% growth and 0% roll-off are both "no adjustment assumed yet" — a safe default that
+    // doesn't invent a number. 'actual' has no sensible default at all (it's a hardcoded number
+    // with nothing to fall back to); percent-of/days-of alone get the ratio inference below.
+    if (driver.method === 'growth' || driver.method === 'roll-off') return 0;
+    if (driver.method === 'actual') return null;
     if (lastActualIndex < 0 || !driver.basisLineId) return null;
     const targetValue = readLine(driver.targetLineId, lastActualIndex, undefined);
     const basisValue = readLine(driver.basisLineId, lastActualIndex, undefined);
@@ -178,6 +182,20 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
       // undefined, not cycleValues — this reads a DIFFERENT period, so the current period's
       // in-flight Gauss-Seidel values (scoped to periodIndex) must never leak into it.
       return evalNode(node.args[0], priorIndex, undefined);
+    }
+    if (node.fn === 'lastActual') {
+      // Anchors to the model's last actual period specifically — unlike priorPeriod, this value
+      // is the SAME for every projected period (buildRollOffFormula's "relative to the original
+      // base, not the prior period"), not one step further back each time. Only ever safe to read
+      // from a period AFTER lastActualIndex: readLine below returns null for a period not yet
+      // memoized in this period-major pass, and (unlike priorPeriod's always-strictly-earlier
+      // periodIndex - 1) lastActualIndex is a fixed absolute index that isn't guaranteed to be
+      // already computed unless the caller is itself past it. That's exactly what
+      // buildRollOffFormula relies on: the source line's own mapped/historical value wins for
+      // every period up to and including lastActualIndex, so this formula only ever actually
+      // fires — via computeLine's fallback — for a period strictly after it.
+      if (lastActualIndex < 0) return null;
+      return evalNode(node.args[0], lastActualIndex, undefined);
     }
     // call — abs takes exactly one arg and propagates null; sum/min/max/avg skip null args
     // (an Excel-like "ignore blanks"), and are null only when every arg is null.

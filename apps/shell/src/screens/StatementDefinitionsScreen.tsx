@@ -20,7 +20,10 @@ import {
 } from '../lib/engine/resolve';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../lib/lineDependents';
 
-const PROJECTION_METHOD_UNIT: Record<ProjectionMethod, string> = {
+// Roll-off/Actual are LineInstance-only projection methods (see instances/projectionMethod.tsx)
+// — never selectable here, so this schema-line map deliberately only covers the subset
+// SectionEditor's own PROJECTION_METHOD_OPTIONS actually offers.
+const PROJECTION_METHOD_UNIT: Record<Extract<ProjectionMethod, 'growth' | 'percent-of' | 'days-of'>, string> = {
   growth: '%',
   'percent-of': '%',
   'days-of': 'days',

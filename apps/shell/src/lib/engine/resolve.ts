@@ -249,6 +249,9 @@ function num(value: number): ResolvedFormula {
 function priorPeriodOf(inner: ResolvedFormula): ResolvedFormula {
   return { kind: 'call', fn: 'priorPeriod', args: [inner] };
 }
+function lastActualOf(inner: ResolvedFormula): ResolvedFormula {
+  return { kind: 'call', fn: 'lastActual', args: [inner] };
+}
 
 /** A pure carry-forward: this period repeats the line's own immediately preceding value. No
  *  driver at all — 'flat' needs no per-period assumption to hold constant. */
@@ -269,4 +272,22 @@ export function buildRatioFormula(basisLineId: string, driverId: string): Resolv
 /** (driver / 365) * basisLine — driver is a day-count (DSO/DPO/DIO-style working-capital driver). */
 export function buildDaysFormula(basisLineId: string, driverId: string): ResolvedFormula {
   return { kind: 'bin', op: '*', left: { kind: 'bin', op: '/', left: driverRef(driverId), right: num(365) }, right: ref(basisLineId) };
+}
+
+/** lastActual(self) * (1 - driver) — a flat, non-compounding split of this line's own value at
+ *  the model's last actual period: `driver` fraction rolls off onto the basis line every
+ *  projected period (see withDynamicInstances.ts's injectRollOffContras), `1 - driver` is what
+ *  continues showing on this line itself, forever, relative to the ORIGINAL base — never the
+ *  prior period, unlike 'growth'. */
+export function buildRollOffFormula(lineId: string, driverId: string): ResolvedFormula {
+  return {
+    kind: 'bin', op: '*',
+    left: lastActualOf(ref(lineId)),
+    right: { kind: 'bin', op: '-', left: num(1), right: driverRef(driverId) },
+  };
+}
+
+/** The driver IS the value — a per-period hardcoded number, no computation at all. */
+export function buildActualFormula(driverId: string): ResolvedFormula {
+  return driverRef(driverId);
 }

@@ -24,10 +24,40 @@ export function DataTable({
   const toggleRow = (k) => onSelectedChange && onSelectedChange(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
   const align = (c) => c.align || (c.numeric ? 'right' : 'left');
 
+  // Every editable cell in reading order, across every non-group row — Tab walks this list
+  // exactly like a spreadsheet, wrapping from a row's last editable column to the next row's
+  // first. Recomputed each render rather than memoized: rows/columns are already fresh props,
+  // and this is only ever walked once per keypress.
+  const editableCells = React.useMemo(() => {
+    const editableColumns = columns.filter((c) => c.renderEdit);
+    const list = [];
+    for (const r of rows) {
+      if (r.__group) continue;
+      for (const c of editableColumns) {
+        if (c.canEdit ? c.canEdit(r) : true) list.push(r[rowKey] + ':' + c.key);
+      }
+    }
+    return list;
+  }, [rows, columns, rowKey]);
+
   React.useEffect(() => {
     if (!activeCell) return undefined;
     const clear = () => setActiveCell(null);
     const onKeyDown = (e) => {
+      if (e.key === 'Tab') {
+        // Deactivating the current cell (same as Enter/click-away below) lets its removal's
+        // native blur commit it; setting activeCell straight to the next cell's id — rather than
+        // null — both commits the one being left and activates the next in the same update.
+        e.preventDefault();
+        const i = editableCells.indexOf(activeCell);
+        if (i === -1) {
+          clear();
+          return;
+        }
+        const next = i + (e.shiftKey ? -1 : 1);
+        setActiveCell(next >= 0 && next < editableCells.length ? editableCells[next] : null);
+        return;
+      }
       // Enter completes the edit the same way clicking away does (deactivate, let the removal's
       // blur commit it) — Escape is the only path that discards instead, via cancelledEditRef.
       if (e.key !== 'Escape' && e.key !== 'Enter') return;
@@ -40,7 +70,7 @@ export function DataTable({
       document.removeEventListener('click', clear);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [activeCell]);
+  }, [activeCell, editableCells]);
 
   return (
     <div style={{ overflow: 'auto', maxHeight, ...style }} {...rest}>

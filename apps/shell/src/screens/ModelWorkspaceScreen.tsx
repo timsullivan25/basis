@@ -701,7 +701,11 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     id: string;
     name: string;
     isChild: boolean;
+    /** True for a parent line that has ≥1 sub-line instance — its own value is superseded by the
+     *  sum of those instances for every period (see withDynamicInstances.ts's injectRollups), so
+     *  its own driver cell, though still rendered, is locked rather than edited. */
     hasChildren: boolean;
+    childCount?: number;
     driverId?: string;
     unit?: string;
   }
@@ -715,19 +719,28 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     childInstancesByLineId.set(instance.lineId, group);
   }
 
+  function instanceDriverUnit(method: LineInstance['projection']['method']): string {
+    if (method === 'days-of') return 'days';
+    if (method === 'actual') return 'raw';
+    return '%';
+  }
+
   const driverRows: DriverRow[] = [];
   for (const section of schema.sections) {
     for (const line of section.lines) {
       const ownDriver = schemaDriverByLineId.get(line.id);
       const children = line.allowsSubLines ? (childInstancesByLineId.get(line.id) ?? []) : [];
       if (!ownDriver && children.length === 0) continue;
-      driverRows.push({ id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0, driverId: ownDriver?.id, unit: ownDriver?.unit });
+      driverRows.push({
+        id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0,
+        childCount: children.length, driverId: ownDriver?.id, unit: ownDriver?.unit,
+      });
       if (collapsedDriverParentIds.has(line.id)) continue;
       for (const child of children) {
         driverRows.push({
           id: child.id, name: child.name, isChild: true, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
-          unit: child.projection.method === 'days-of' ? 'days' : '%',
+          unit: instanceDriverUnit(child.projection.method),
         });
       }
     }
@@ -736,7 +749,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         driverRows.push({
           id: child.id, name: child.name, isChild: false, hasChildren: false,
           driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
-          unit: child.projection.method === 'days-of' ? 'days' : '%',
+          unit: instanceDriverUnit(child.projection.method),
         });
       }
     }
@@ -772,6 +785,17 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       numeric: true,
       width: 110,
       render: (_: unknown, row: DriverRow) => {
+        if (row.hasChildren) {
+          return (
+            <span
+              title={`Value comes from ${row.childCount} sub-line${row.childCount === 1 ? '' : 's'} — see Segments, adjustments & KPIs`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}
+            >
+              <Icon name="lock" size={10} color="var(--text-tertiary)" />
+              {row.driverId ? formatDriverValue(evaluation?.getDriverValue(row.driverId, index) ?? null, row.unit!) : '—'}
+            </span>
+          );
+        }
         if (!row.driverId) {
           return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
         }
@@ -805,11 +829,11 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </span>
         );
       },
-      canEdit: (row: DriverRow) => Boolean(row.driverId),
+      canEdit: (row: DriverRow) => Boolean(row.driverId) && !row.hasChildren,
       renderEdit: (_: unknown, row: DriverRow, wasEditCancelled: () => boolean) =>
         row.driverId ? (
           <DriverValueInput
-            stored={activeStoredDriverValues[row.driverId]?.[index] ?? null}
+            initialValue={evaluation?.getDriverValue(row.driverId, index) ?? null}
             unit={row.unit!}
             onCommit={(value) => updateDriverValue(row.driverId!, index, value)}
             wasEditCancelled={wasEditCancelled}
@@ -887,6 +911,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
                 type="number"
                 value={horizonInput}
                 onChange={(e) => setHorizonInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitHorizonChange();
+                }}
                 onBlur={commitHorizonChange}
                 fullWidth={false}
                 style={{ width: 56 }}
