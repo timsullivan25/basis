@@ -844,7 +844,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', padding: 'var(--gutter)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>{company.name}</span>
           <h1 style={{ fontSize: 'var(--text-2xl)' }}>{model.name}</h1>
@@ -856,6 +856,61 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
           Snapshot
         </Button>
+        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <Select
+            size="sm"
+            options={[{ value: 'base', label: 'Base case' }, ...scenarios.map((s) => ({ value: s.id, label: s.name }))]}
+            value={activeScenarioId}
+            onChange={(e) => selectScenario(e.target.value)}
+            style={{ width: 150 }}
+          />
+          <IconButton
+            icon="plus"
+            label="New scenario"
+            size="sm"
+            variant="ghost"
+            onClick={() => openScenarioDialog('new', '')}
+          />
+          <IconButton
+            icon="copy"
+            label="Duplicate scenario"
+            size="sm"
+            variant="ghost"
+            onClick={() => openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`)}
+          />
+          <IconButton
+            icon="pencil"
+            label="Rename scenario"
+            size="sm"
+            variant="ghost"
+            onClick={() => activeScenario && openScenarioDialog('rename', activeScenario.name)}
+            disabled={!activeScenario}
+          />
+          <IconButton
+            icon="trash-2"
+            label="Delete scenario"
+            size="sm"
+            variant="ghost"
+            onClick={() => setDeleteScenarioConfirmOpen(true)}
+            disabled={!activeScenario}
+          />
+        </div>
+        <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
+        <SegmentedControl
+          size="sm"
+          options={[
+            { value: 'auto', label: 'Auto' },
+            { value: 'manual', label: 'Manual' },
+          ]}
+          value={recalcMode}
+          onChange={(value) => handleRecalcModeChange(value as 'auto' | 'manual')}
+        />
+        {recalcMode === 'manual' ? (
+          <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate}>
+            Recalculate
+          </Button>
+        ) : null}
       </div>
 
       <Card
@@ -863,76 +918,21 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         icon="sliders-horizontal"
         padding="none"
         actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <Select
-                size="sm"
-                options={[{ value: 'base', label: 'Base case' }, ...scenarios.map((s) => ({ value: s.id, label: s.name }))]}
-                value={activeScenarioId}
-                onChange={(e) => selectScenario(e.target.value)}
-                style={{ width: 150 }}
-              />
-              <IconButton
-                icon="plus"
-                label="New scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => openScenarioDialog('new', '')}
-              />
-              <IconButton
-                icon="copy"
-                label="Duplicate scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => openScenarioDialog('duplicate', `${activeScenario ? activeScenario.name : 'Base case'} copy`)}
-              />
-              <IconButton
-                icon="pencil"
-                label="Rename scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => activeScenario && openScenarioDialog('rename', activeScenario.name)}
-                disabled={!activeScenario}
-              />
-              <IconButton
-                icon="trash-2"
-                label="Delete scenario"
-                size="sm"
-                variant="ghost"
-                onClick={() => setDeleteScenarioConfirmOpen(true)}
-                disabled={!activeScenario}
-              />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
-              <Input
-                size="sm"
-                mono
-                type="number"
-                value={horizonInput}
-                onChange={(e) => setHorizonInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitHorizonChange();
-                }}
-                onBlur={commitHorizonChange}
-                fullWidth={false}
-                style={{ width: 56 }}
-              />
-            </div>
-            <SegmentedControl
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
+            <Input
               size="sm"
-              options={[
-                { value: 'auto', label: 'Auto' },
-                { value: 'manual', label: 'Manual' },
-              ]}
-              value={recalcMode}
-              onChange={(value) => handleRecalcModeChange(value as 'auto' | 'manual')}
+              mono
+              type="number"
+              value={horizonInput}
+              onChange={(e) => setHorizonInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitHorizonChange();
+              }}
+              onBlur={commitHorizonChange}
+              fullWidth={false}
+              style={{ width: 56 }}
             />
-            {recalcMode === 'manual' ? (
-              <Button size="sm" variant="primary" iconLeft="refresh-cw" onClick={recalculate}>
-                Recalculate
-              </Button>
-            ) : null}
           </div>
         }
       >
