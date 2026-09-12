@@ -52,6 +52,11 @@ function materializeInstance(instance: LineInstance): { line: StatementLine; dri
 export function spliceInstanceLines(schema: StatementSchema, instances: LineInstance[]): StatementSchema {
   const copy = structuredClone(schema);
   const extraDrivers: DriverDefinition[] = [];
+  // Tracks how many instances have already been spliced in after a given parent, so a second
+  // (or third) sibling is appended after the ones already inserted rather than always landing
+  // right after the parent — otherwise each new sibling would push every prior one further down,
+  // reversing their creation order.
+  const insertedCountByParentId = new Map<string, number>();
 
   for (const instance of instances) {
     const { line, driver } = materializeInstance(instance);
@@ -60,7 +65,9 @@ export function spliceInstanceLines(schema: StatementSchema, instances: LineInst
       const section = copy.sections.find((s) => s.lines.some((l) => l.id === instance.lineId));
       const parentIndex = section?.lines.findIndex((l) => l.id === instance.lineId) ?? -1;
       if (!section || parentIndex < 0 || !section.lines[parentIndex].allowsSubLines) continue;
-      section.lines.splice(parentIndex + 1, 0, line);
+      const alreadyInserted = insertedCountByParentId.get(instance.lineId) ?? 0;
+      section.lines.splice(parentIndex + 1 + alreadyInserted, 0, line);
+      insertedCountByParentId.set(instance.lineId, alreadyInserted + 1);
     } else if (instance.sectionId !== undefined) {
       const section = copy.sections.find((s) => s.id === instance.sectionId);
       if (!section || !section.allowsFreeformLines) continue;

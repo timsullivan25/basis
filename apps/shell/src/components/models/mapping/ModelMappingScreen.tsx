@@ -345,10 +345,18 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       // this mapping's own SCHEMA target lines, never touching an instance id, so without this
       // seed a bare resolveActuals result would silently drop every pre-existing instance's data
       // the instant modelRepository.update() below replaces `historicals` wholesale.
-      const resolvedHistoricals = {
+      const resolvedHistoricals: Record<string, (number | null)[]> = {
         ...(editing?.model.historicals ?? {}),
         ...resolveActuals(Object.values(mapping), workbook, resolvedTimeline),
       };
+      // resolveActuals omits an entry entirely for a mapping with no source lines, which would
+      // otherwise leave a schema line's stale prior historicals in place after the user
+      // explicitly clears its mapping — write an explicit null-per-period entry for those,
+      // matching how the instance-historicals block below already handles the identical
+      // "explicitly cleared" case.
+      for (const m of Object.values(mapping)) {
+        if (m.sourceLineIds.length === 0) resolvedHistoricals[m.targetLineId] = resolvedTimeline.map(() => null);
+      }
 
       let savedModel: Model;
       if (editing) {
@@ -404,6 +412,18 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           });
           persistedInstances.push(updatedInstance);
         }
+      }
+
+      // A sibling-instance basis picked during this session may reference another new
+      // instance by its temp id, which only became a real id once that draft was persisted
+      // above — fix up any such reference now that every real id is known.
+      for (const instance of persistedInstances) {
+        if (!('basisLineId' in instance.projection) || !instance.projection.basisLineId) continue;
+        const remappedBasisLineId = idRemap.get(instance.projection.basisLineId);
+        if (!remappedBasisLineId) continue;
+        const fixedProjection = { ...instance.projection, basisLineId: remappedBasisLineId };
+        await lineInstanceRepository.update(instance.id, { projection: fixedProjection });
+        instance.projection = fixedProjection;
       }
 
       // Every surviving instance's historicals — resolved from its source mapping when it has
@@ -862,8 +882,20 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                   })
                 }
                 onDelete={() => {
-                  setEditableInstances((prev) => prev.filter((e) => e.id !== row.instance!.id));
-                  if (!row.instance!.isNew) setDeletedInstanceIds((prev) => [...prev, row.instance!.id]);
+                  const deletedId = row.instance!.id;
+                  // A sibling whose basis is the instance being deleted would otherwise be left
+                  // with a dangling basisLineId (silently resolving to null forever) — fall it
+                  // back to 'flat' instead so deleting one instance never silently breaks another.
+                  setEditableInstances((prev) =>
+                    prev
+                      .filter((e) => e.id !== deletedId)
+                      .map((e) =>
+                        'basisLineId' in e.projection && e.projection.basisLineId === deletedId
+                          ? { ...e, projection: { method: 'flat' } }
+                          : e,
+                      ),
+                  );
+                  if (!row.instance!.isNew) setDeletedInstanceIds((prev) => [...prev, deletedId]);
                   setExpandedLineId(null);
                 }}
               />

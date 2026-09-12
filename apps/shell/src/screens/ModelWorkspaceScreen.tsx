@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Card,
@@ -142,6 +142,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Same idea as collapsedParentIds above, but for the Drivers card below — independent so
   // collapsing a line's children in one table doesn't affect the other.
   const [collapsedDriverParentIds, setCollapsedDriverParentIds] = useState<Set<string>>(new Set());
+  // Serializes updateDriverValue's read-modify-write against the repository so two commits
+  // issued in quick succession never both read the same pre-edit driverValues — see its own
+  // doc comment.
+  const driverWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [horizonInput, setHorizonInput] = useState('0');
   // Set only while confirming a reduction in projected periods — growing needs no confirmation
   // (purely additive), but shrinking permanently drops driver values entered for the removed tail.
@@ -315,23 +319,36 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   async function updateDriverValue(driverId: string, periodIndex: number, value: number | null) {
     if (!model) return;
-    if (activeScenario) {
-      const current = activeScenario.driverValues;
-      const nextValues = [...(current[driverId] ?? [])];
+    const scenarioId = activeScenario?.id ?? null;
+    const modelId = model.id;
+    // Serialized via driverWriteQueueRef, and each turn re-reads the record fresh from the
+    // repository rather than the (possibly stale-by-then) React-state closure — otherwise two
+    // driver-value commits issued in quick succession both build their patch from the same
+    // pre-edit driverValues, and since the repository replaces the whole field rather than deep-
+    // merging it, whichever write lands last silently drops the other edit.
+    const run = driverWriteQueueRef.current.then(async () => {
+      if (scenarioId) {
+        const latest = await scenarioRepository.get(scenarioId);
+        if (!latest) return;
+        const nextValues = [...(latest.driverValues[driverId] ?? [])];
+        while (nextValues.length <= periodIndex) nextValues.push(null);
+        nextValues[periodIndex] = value;
+        const updated = await scenarioRepository.update(scenarioId, { driverValues: { ...latest.driverValues, [driverId]: nextValues } });
+        setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+        return;
+      }
+      // A model created before driverValues existed on Model won't have the field at all yet —
+      // normalize rather than assume it's always present.
+      const latest = await modelRepository.getForCompany(company.id);
+      const currentDriverValues = latest?.driverValues ?? {};
+      const nextValues = [...(currentDriverValues[driverId] ?? [])];
       while (nextValues.length <= periodIndex) nextValues.push(null);
       nextValues[periodIndex] = value;
-      const updated = await scenarioRepository.update(activeScenario.id, { driverValues: { ...current, [driverId]: nextValues } });
-      setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-      return;
-    }
-    // A model created before driverValues existed on Model won't have the field at all yet —
-    // normalize rather than assume it's always present.
-    const currentDriverValues = model.driverValues ?? {};
-    const nextValues = [...(currentDriverValues[driverId] ?? [])];
-    while (nextValues.length <= periodIndex) nextValues.push(null);
-    nextValues[periodIndex] = value;
-    const updated = await modelRepository.update(model.id, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
-    setModel(updated);
+      const updated = await modelRepository.update(modelId, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
+      setModel(updated);
+    });
+    driverWriteQueueRef.current = run.catch(() => {});
+    await run;
   }
 
   function openScenarioDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
@@ -569,7 +586,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // it's in schema.sections[].lines; parentLineIdByInstanceId is what lets the grid below tell
   // them apart and indent/nest them under their parent, matching the mapping screen's own
   // parent/child row treatment for the same instances.
-  const parentLineIdByInstanceId = new Map(instances.filter((i) => i.lineId !== undefined).map((i) => [i.id, i.lineId!]));
+  // Matches spliceInstanceLines' own defensive check — an instance whose parent line no longer
+  // has allowsSubLines set is silently dropped from instancedSchema entirely, so it must be
+  // excluded here too, or the parent would keep showing a collapse chevron for a child that was
+  // never actually spliced in and never renders as a row.
+  const allowsSubLinesLineIds = new Set(schema.sections.flatMap((s) => s.lines).filter((l) => l.allowsSubLines).map((l) => l.id));
+  const parentLineIdByInstanceId = new Map(
+    instances.filter((i) => i.lineId !== undefined && allowsSubLinesLineIds.has(i.lineId)).map((i) => [i.id, i.lineId!]),
+  );
   const childCountByParentId = new Map<string, number>();
   for (const parentId of parentLineIdByInstanceId.values()) {
     childCountByParentId.set(parentId, (childCountByParentId.get(parentId) ?? 0) + 1);
@@ -603,40 +627,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       width: 240,
       render: (_: unknown, row: { line?: StatementLine; isChild?: boolean; childCount?: number }) => {
         if (!row.line) return null;
-        const hasChildren = Boolean(row.childCount);
         return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-            {hasChildren ? (
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleParentCollapsed(row.line!.id);
-                }}
-                style={{ display: 'flex', cursor: 'pointer', flex: '0 0 auto' }}
-              >
-                <Icon
-                  name={collapsedParentIds.has(row.line.id) ? 'chevron-right' : 'chevron-down'}
-                  size={12}
-                  color="var(--text-tertiary)"
-                />
-              </span>
-            ) : row.isChild ? (
-              <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
-            ) : (
-              <span style={{ width: 12, flex: '0 0 auto' }} />
-            )}
-            <span
-              style={{
-                fontSize: 'var(--text-sm)',
-                fontWeight: row.isChild ? 'var(--weight-regular)' : 'var(--weight-medium)',
-                color: row.isChild ? 'var(--text-secondary)' : 'var(--text-primary)',
-              }}
-            >
-              {row.line.name}
-            </span>
-          </div>
+          <TreeRowLabel
+            label={row.line.name}
+            isChild={Boolean(row.isChild)}
+            hasChildren={Boolean(row.childCount)}
+            collapsed={collapsedParentIds.has(row.line.id)}
+            onToggleCollapse={() => toggleParentCollapsed(row.line!.id)}
+          />
         );
       },
     },
@@ -759,38 +757,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       label: 'Driver',
       width: 240,
       render: (_: unknown, row: DriverRow) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-          {row.hasChildren ? (
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleDriverParentCollapsed(row.id);
-              }}
-              style={{ display: 'flex', cursor: 'pointer', flex: '0 0 auto' }}
-            >
-              <Icon
-                name={collapsedDriverParentIds.has(row.id) ? 'chevron-right' : 'chevron-down'}
-                size={12}
-                color="var(--text-tertiary)"
-              />
-            </span>
-          ) : row.isChild ? (
-            <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
-          ) : (
-            <span style={{ width: 12, flex: '0 0 auto' }} />
-          )}
-          <span
-            style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: row.isChild ? 'var(--weight-regular)' : 'var(--weight-medium)',
-              color: row.isChild ? 'var(--text-secondary)' : 'var(--text-primary)',
-            }}
-          >
-            {row.name}
-          </span>
-        </div>
+        <TreeRowLabel
+          label={row.name}
+          isChild={row.isChild}
+          hasChildren={row.hasChildren}
+          collapsed={collapsedDriverParentIds.has(row.id)}
+          onToggleCollapse={() => toggleDriverParentCollapsed(row.id)}
+        />
       ),
     },
     ...projectedPeriods.map(({ period, index }) => ({
@@ -1226,6 +1199,51 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           <Toast tone="positive" title={toast} onDismiss={() => setToast(null)} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Shared "name" cell for a parent/child row — the statement grid and the Drivers card both
+ *  nest instance rows under their parent line the same way, so this is the one place that
+ *  treatment is defined rather than two independently-maintained copies. Module-level (not
+ *  nested inside ModelWorkspaceScreen) so its identity is stable across renders. */
+function TreeRowLabel({
+  label, isChild, hasChildren, collapsed, onToggleCollapse,
+}: {
+  label: string;
+  isChild: boolean;
+  hasChildren: boolean;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+      {hasChildren ? (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapse();
+          }}
+          style={{ display: 'flex', cursor: 'pointer', flex: '0 0 auto' }}
+        >
+          <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} color="var(--text-tertiary)" />
+        </span>
+      ) : isChild ? (
+        <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
+      ) : (
+        <span style={{ width: 12, flex: '0 0 auto' }} />
+      )}
+      <span
+        style={{
+          fontSize: 'var(--text-sm)',
+          fontWeight: isChild ? 'var(--weight-regular)' : 'var(--weight-medium)',
+          color: isChild ? 'var(--text-secondary)' : 'var(--text-primary)',
+        }}
+      >
+        {label}
+      </span>
     </div>
   );
 }
