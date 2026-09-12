@@ -24,6 +24,7 @@ import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
 import { applyDynamicInstances } from '../../../lib/engine/withDynamicInstances';
+import { findInstanceBasisDependents, hasInstanceBasisDependents } from '../../../lib/lineDependents';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import type { InstanceProjectionSelection, InstanceTarget, SchemaLineGroup } from '../instances/projectionMethod';
 import { InstanceRowDetail, type EditableInstance } from './InstanceRowDetail';
@@ -93,6 +94,9 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // 1:1 with workbook.periods; seeded from the model's existing historicals when re-opening
   // mapping for an already-persisted manual instance.
   const [manualHistoricals, setManualHistoricals] = useState<Record<string, (number | null)[]>>({});
+  // Held between "delete clicked" on an instance and the user confirming/cancelling, only when a
+  // sibling actually depends on it — see requestDeleteInstance's own comment.
+  const [pendingInstanceDelete, setPendingInstanceDelete] = useState<{ instanceId: string; dependentNames: string[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,6 +327,39 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         ? `Set manually. Previous: ${previous?.sourceLineIds.length ? previous.method : 'unmapped'}.`
         : 'Cleared manually.',
     });
+  }
+
+  /** Falls a sibling whose basis is the instance being deleted back to 'flat' (see its own
+   *  comment) — deletes immediately when nothing depends on it, otherwise holds the delete and
+   *  opens a confirm dialog naming which sibling(s) will fall back, instead of doing it silently. */
+  function requestDeleteInstance(instanceId: string) {
+    const dependents = findInstanceBasisDependents(editableInstances, instanceId);
+    if (hasInstanceBasisDependents(dependents)) {
+      setPendingInstanceDelete({ instanceId, dependentNames: dependents.dependentNames });
+    } else {
+      commitInstanceDelete(instanceId);
+    }
+  }
+
+  function commitInstanceDelete(instanceId: string) {
+    setEditableInstances((prev) =>
+      prev
+        .filter((e) => e.id !== instanceId)
+        .map((e) =>
+          'basisLineId' in e.projection && e.projection.basisLineId === instanceId
+            ? { ...e, projection: { method: 'flat' } }
+            : e,
+        ),
+    );
+    const wasNew = editableInstances.find((e) => e.id === instanceId)?.isNew;
+    if (!wasNew) setDeletedInstanceIds((prev) => [...prev, instanceId]);
+    setExpandedLineId(null);
+  }
+
+  function confirmPendingInstanceDelete() {
+    if (!pendingInstanceDelete) return;
+    commitInstanceDelete(pendingInstanceDelete.instanceId);
+    setPendingInstanceDelete(null);
   }
 
   function handleSaveClick() {
@@ -881,23 +918,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                     return { ...prev, [row.instance!.id]: arr };
                   })
                 }
-                onDelete={() => {
-                  const deletedId = row.instance!.id;
-                  // A sibling whose basis is the instance being deleted would otherwise be left
-                  // with a dangling basisLineId (silently resolving to null forever) — fall it
-                  // back to 'flat' instead so deleting one instance never silently breaks another.
-                  setEditableInstances((prev) =>
-                    prev
-                      .filter((e) => e.id !== deletedId)
-                      .map((e) =>
-                        'basisLineId' in e.projection && e.projection.basisLineId === deletedId
-                          ? { ...e, projection: { method: 'flat' } }
-                          : e,
-                      ),
-                  );
-                  if (!row.instance!.isNew) setDeletedInstanceIds((prev) => [...prev, deletedId]);
-                  setExpandedLineId(null);
-                }}
+                onDelete={() => requestDeleteInstance(row.instance!.id)}
               />
             ) : row.line ? (
               <MappingRowDetail
@@ -989,6 +1010,35 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
           The parsed file and any mapping changes will be discarded. Nothing is written until you save.
         </p>
+      </Dialog>
+
+      <Dialog
+        open={pendingInstanceDelete !== null}
+        onClose={() => setPendingInstanceDelete(null)}
+        icon="alert-triangle"
+        title="Delete this sub-line?"
+        subtitle={editableInstances.find((e) => e.id === pendingInstanceDelete?.instanceId)?.name}
+        footer={
+          <>
+            <Button onClick={() => setPendingInstanceDelete(null)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={confirmPendingInstanceDelete}>
+              Delete anyway
+            </Button>
+          </>
+        }
+      >
+        {pendingInstanceDelete ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+              These will switch to "Flat (holds last actual)" since their basis will no longer exist:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+              {pendingInstanceDelete.dependentNames.map((name, idx) => (
+                <li key={idx}>{name}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </Dialog>
 
       {savedToast ? (

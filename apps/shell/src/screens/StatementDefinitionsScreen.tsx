@@ -18,6 +18,7 @@ import {
   collectRefIds,
   isCalculated,
 } from '../lib/engine/resolve';
+import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../lib/lineDependents';
 
 const PROJECTION_METHOD_UNIT: Record<ProjectionMethod, string> = {
   growth: '%',
@@ -31,6 +32,15 @@ const DRIVER_NAME_PHRASE: Record<'percent-of' | 'days-of', string> = {
   'percent-of': '% of',
   'days-of': 'Days of',
 };
+
+/** Held between "delete clicked" and the user confirming/cancelling — `lineId` undefined means
+ *  the whole section (every id in `deletedIds`) is being removed, not just one line. */
+interface PendingLineRemoval {
+  sectionId: string;
+  lineId?: string;
+  deletedIds: Set<string>;
+  dependents: SchemaLineDependents;
+}
 
 function emptyLine(): StatementLine {
   return {
@@ -117,6 +127,7 @@ export function StatementDefinitionsScreen() {
   const [dialog, setDialog] = useState<'new' | 'duplicate' | 'rename' | null>(null);
   const [pendingName, setPendingName] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [pendingLineRemoval, setPendingLineRemoval] = useState<PendingLineRemoval | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,10 +236,12 @@ export function StatementDefinitionsScreen() {
     setDrivers((prev) => prev.filter((d) => !removedLineIds.has(d.targetLineId)));
   }
 
+  /** Deletes the section (all its lines at once) if nothing depends on any of them, otherwise
+   *  holds the delete and opens a confirm dialog naming what does — see requestLineRemoval. */
   function deleteSection(sectionId: string) {
     const removed = sections.find((s) => s.id === sectionId);
-    if (removed) dropDriversForLines(new Set(removed.lines.map((l) => l.id)));
-    setSections((prev) => prev.filter((s) => s.id !== sectionId));
+    if (!removed) return;
+    requestLineRemoval(sectionId, undefined, new Set(removed.lines.map((l) => l.id)));
   }
 
   function addLine(sectionId: string) {
@@ -306,11 +319,49 @@ export function StatementDefinitionsScreen() {
     updateLine(lineId, { formula, projection: { method: selection.method, driverId } });
   }
 
+  /** Deletes the line if nothing depends on it, otherwise holds the delete and opens a confirm
+   *  dialog naming what does — see requestLineRemoval. */
   function deleteLine(sectionId: string, lineId: string) {
-    dropDriversForLines(new Set([lineId]));
-    setSections((prev) =>
-      prev.map((s) => (s.id === sectionId ? { ...s, lines: s.lines.filter((line) => line.id !== lineId) } : s)),
-    );
+    requestLineRemoval(sectionId, lineId, new Set([lineId]));
+  }
+
+  /** Looks up everything that references `deletedIds` within this statement definition — another
+   *  line's formula, or a driver's basis — before actually deleting. Deliberately schema-only: a
+   *  saved model's schema choice is locked, so what a specific model's own mapping/instances
+   *  depend on is that model's own concern (see the mapping screen's own instance-delete check),
+   *  not something this screen looks into. Nothing depending on it deletes immediately, same as
+   *  before; anything found opens a confirm dialog instead of breaking silently. */
+  function requestLineRemoval(sectionId: string, lineId: string | undefined, deletedIds: Set<string>) {
+    if (!selectedSchema) return;
+    const currentSchema: StatementSchema = { ...selectedSchema, sections, drivers };
+    const dependents = findSchemaDependents(currentSchema, deletedIds);
+    if (hasSchemaDependents(dependents)) {
+      setPendingLineRemoval({ sectionId, lineId, deletedIds, dependents });
+    } else {
+      commitLineRemoval(sectionId, lineId, deletedIds);
+    }
+  }
+
+  function commitLineRemoval(sectionId: string, lineId: string | undefined, deletedIds: Set<string>) {
+    dropDriversForLines(deletedIds);
+    if (lineId === undefined) {
+      setSections((prev) => prev.filter((s) => s.id !== sectionId));
+    } else {
+      setSections((prev) =>
+        prev.map((s) => (s.id === sectionId ? { ...s, lines: s.lines.filter((line) => line.id !== lineId) } : s)),
+      );
+    }
+  }
+
+  function confirmPendingLineRemoval() {
+    if (!pendingLineRemoval) return;
+    commitLineRemoval(pendingLineRemoval.sectionId, pendingLineRemoval.lineId, pendingLineRemoval.deletedIds);
+    setPendingLineRemoval(null);
+  }
+
+  function pendingRemovalName(p: PendingLineRemoval): string {
+    if (p.lineId !== undefined) return findLine(p.lineId)?.name ?? '';
+    return sections.find((s) => s.id === p.sectionId)?.name ?? '';
   }
 
   function moveLine(sectionId: string, lineId: string, direction: 'up' | 'down') {
@@ -510,6 +561,38 @@ export function StatementDefinitionsScreen() {
           Sections and lines defined here will be permanently removed. Models already mapped against it keep their
           saved mapping, but it can no longer be edited or duplicated. This cannot be undone.
         </p>
+      </Dialog>
+
+      <Dialog
+        open={pendingLineRemoval !== null}
+        onClose={() => setPendingLineRemoval(null)}
+        icon="alert-triangle"
+        title={pendingLineRemoval?.lineId === undefined ? 'Delete this section?' : 'Delete this line?'}
+        subtitle={pendingLineRemoval ? pendingRemovalName(pendingLineRemoval) : undefined}
+        footer={
+          <>
+            <Button onClick={() => setPendingLineRemoval(null)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={confirmPendingLineRemoval}>
+              Delete anyway
+            </Button>
+          </>
+        }
+      >
+        {pendingLineRemoval ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+              This still has references elsewhere that will break or silently change if you continue:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+              {pendingLineRemoval.dependents.formulaLines.map((l) => (
+                <li key={`formula-${l.id}`}>"{l.name}"'s formula references this — it will show a broken reference.</li>
+              ))}
+              {pendingLineRemoval.dependents.driverBases.map((d) => (
+                <li key={`driver-${d.id}`}>The driver "{d.name}" uses this as its basis and will be left pointing at nothing.</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </Dialog>
 
       {toast ? (
