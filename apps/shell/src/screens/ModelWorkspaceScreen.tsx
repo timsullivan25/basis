@@ -989,12 +989,16 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       />
 
       {isFinancialsTab ? (
+        // Plain background, same as the top nav above — a filled/sunken strip here read as
+        // heavier than the primary nav it's subordinate to, backwards from the hierarchy it's
+        // meant to show. The indent plus the underline-tab convention already carries "these are
+        // Financials' own sub-views" without needing a color block to say it again.
         <Tabs
           tabs={financialsSubTabs}
           value={tab}
           onChange={setTab}
           size="sm"
-          style={{ background: 'var(--surface-sunken)', paddingLeft: 'var(--space-4)' }}
+          style={{ paddingLeft: 'var(--space-6)' }}
         />
       ) : null}
 
