@@ -152,7 +152,12 @@ export interface StatementSchemaRepository {
   list(): Promise<StatementSchema[]>;
   get(id: string): Promise<StatementSchema | undefined>;
   create(input: { name: string }): Promise<StatementSchema>;
-  duplicate(id: string, name: string): Promise<StatementSchema>;
+  /** `idMap` is the complete old-id -> new-id correspondence duplicate() built to remap the
+   *  copy's own formulas/driver refs (every line, section, and driver id, all regenerated in
+   *  the source's own order) — returned so a caller that holds OTHER state built against the
+   *  source's ids (e.g. a mapping-in-progress, or draft dynamic-line instances) can rewrite
+   *  those same references onto the copy, instead of them silently going stale. */
+  duplicate(id: string, name: string): Promise<{ schema: StatementSchema; idMap: Map<string, string> }>;
   /** Returns the persisted record (its `updatedAt` is bumped on save) — use this, not the object
    *  passed in, as the new source of truth for any local state tracking the schema. */
   save(schema: StatementSchema): Promise<StatementSchema>;

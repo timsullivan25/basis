@@ -150,9 +150,15 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
 
   function startEditMapping() {
     if (!schemas || !model || !modelImport) return;
+    // `schemas` (statementSchemaRepository.list()) deliberately excludes every model's own
+    // private forked copy — see its own doc comment — so the model being edited here needs its
+    // own schema (already loaded into `modelSchema`, via a direct get() that bypasses that
+    // filter) added back in, or ModelMappingScreen's schema lookup would fail to find it.
+    const schemasForMapping =
+      modelSchema && !schemas.some((s) => s.id === modelSchema.id) ? [...schemas, modelSchema] : schemas;
     onOpenMapping({
       company,
-      schemas,
+      schemas: schemasForMapping,
       editing: { model, modelImport },
       onCancel: () => {},
       onSaved: (updatedModel) => {

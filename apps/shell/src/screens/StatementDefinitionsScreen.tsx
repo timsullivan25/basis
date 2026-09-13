@@ -186,7 +186,7 @@ export function StatementDefinitionsScreen() {
 
   async function handleDuplicate() {
     if (!selectedSchema) return;
-    const copy = await statementSchemaRepository.duplicate(selectedSchema.id, pendingName.trim());
+    const { schema: copy } = await statementSchemaRepository.duplicate(selectedSchema.id, pendingName.trim());
     setSchemas((prev) => [...prev, copy]);
     setDialog(null);
     setSelectedSchemaId(copy.id);

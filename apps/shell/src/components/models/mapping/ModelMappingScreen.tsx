@@ -6,6 +6,7 @@ import {
   mappingRepository,
   modelImportRepository,
   modelRepository,
+  statementSchemaRepository,
   type Company,
   type LineInstance,
   type LineInstanceContent,
@@ -422,33 +423,73 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         if (m.sourceLineIds.length === 0) resolvedHistoricals[m.targetLineId] = resolvedTimeline.map(() => null);
       }
 
+      // For a brand-new model these three all start out built against the CHOSEN TEMPLATE's ids
+      // (that's what the mapping screen has been matching/previewing against). They get rewritten
+      // onto the model's own forked schema below, right before anything is persisted.
+      let mappingLinesToPersist = Object.values(mapping);
+      let historicalsToPersist = resolvedHistoricals;
+      let instancesToPersist = editableInstances;
+      let finalSchema: StatementSchema = statementSchema!;
+
       let savedModel: Model;
       if (editing) {
-        await mappingRepository.save(editing.model.mappingId, Object.values(mapping));
+        await mappingRepository.save(editing.model.mappingId, mappingLinesToPersist);
         savedModel = await modelRepository.update(editing.model.id, {
           timeline: resolvedTimeline,
-          historicals: resolvedHistoricals,
+          historicals: historicalsToPersist,
         });
       } else {
+        // Every model gets its own private copy of the chosen template's schema, forked here at
+        // creation — never a live reference to the shared template record, so a later template
+        // edit can't silently change this company's numbers, and this company's own tranches/
+        // segments/etc. can live directly on its own schema's lines. duplicate() mints a fresh id
+        // for every line/section/driver in the template's own order and hands back the old->new
+        // correspondence it built to keep the copy's own formulas correct — the exact same
+        // correspondence applies to every OTHER id reference this screen built against the
+        // template while matching/previewing (the mapping, and any draft instance's
+        // lineId/sectionId/basisLineId), so they get rewritten onto the fork the same way.
+        const { schema: forkedSchema, idMap } = await statementSchemaRepository.duplicate(selectedSchemaId, company.name);
+        finalSchema = forkedSchema;
+
+        mappingLinesToPersist = mappingLinesToPersist.map((m) => ({
+          ...m,
+          targetLineId: idMap.get(m.targetLineId) ?? m.targetLineId,
+        }));
+        historicalsToPersist = Object.fromEntries(
+          Object.entries(historicalsToPersist).map(([lineId, values]) => [idMap.get(lineId) ?? lineId, values]),
+        );
+        instancesToPersist = editableInstances.map((e) => ({
+          ...e,
+          lineId: e.lineId !== undefined ? (idMap.get(e.lineId) ?? e.lineId) : undefined,
+          sectionId: e.sectionId !== undefined ? (idMap.get(e.sectionId) ?? e.sectionId) : undefined,
+          // A basisLineId may point at a real (template) schema line — remap it — or at a
+          // SIBLING draft instance, which has no idMap entry (instances aren't part of the
+          // schema), in which case the `?? ` fallback correctly leaves it untouched.
+          projection:
+            'basisLineId' in e.projection && e.projection.basisLineId
+              ? { ...e.projection, basisLineId: idMap.get(e.projection.basisLineId) ?? e.projection.basisLineId }
+              : e.projection,
+        }));
+
         const createdImport = await modelImportRepository.create({
           companyId: company.id,
           templateType: draft!.templateType,
-          statementSchemaId: selectedSchemaId,
+          statementSchemaId: forkedSchema.id,
           file: draft!.file,
         });
         const createdMapping = await mappingRepository.create({
           modelImportId: createdImport.id,
-          statementSchemaId: selectedSchemaId,
-          lines: Object.values(mapping),
+          statementSchemaId: forkedSchema.id,
+          lines: mappingLinesToPersist,
         });
         savedModel = await modelRepository.create({
           companyId: company.id,
           name: createdImport.fileName,
-          statementSchemaId: selectedSchemaId,
+          statementSchemaId: forkedSchema.id,
           modelImportId: createdImport.id,
           mappingId: createdMapping.id,
           timeline: resolvedTimeline,
-          historicals: resolvedHistoricals,
+          historicals: historicalsToPersist,
         });
       }
 
@@ -460,7 +501,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
 
       const idRemap = new Map<string, string>(); // new instance's temp id -> its real created id
       const persistedInstances: LineInstance[] = [];
-      for (const e of editableInstances) {
+      for (const e of instancesToPersist) {
         const trimmedName = e.name.trim();
         if (!trimmedName) continue;
         const debtFields = debtFieldsOf(e);
@@ -495,14 +536,14 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       // written under its real (possibly just-remapped) id — same convention the schema-line
       // historicals above already follow. An unmapped instance with manually-entered values (see
       // ManualHistoricalsInput) writes those directly instead of going through resolveActuals.
-      const mappedInstanceMappings: LineMapping[] = editableInstances
+      const mappedInstanceMappings: LineMapping[] = instancesToPersist
         .filter((e) => e.sourceLineIds.length > 0 && e.name.trim())
         .map((e) => ({
           targetLineId: idRemap.get(e.id) ?? e.id, sourceLineIds: e.sourceLineIds,
           method: 'manual' as const, confidence: 1, note: '', approved: true,
         }));
       const instanceHistoricals: Record<string, (number | null)[]> = resolveActuals(mappedInstanceMappings, workbook, resolvedTimeline);
-      for (const e of editableInstances) {
+      for (const e of instancesToPersist) {
         if (!e.name.trim() || e.sourceLineIds.length > 0) continue;
         if (e.manualHistoricals.some((v) => v !== null)) {
           instanceHistoricals[idRemap.get(e.id) ?? e.id] = e.manualHistoricals;
@@ -516,9 +557,9 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       // Compute and cache the Base case immediately — so the issuer page (which reads this
       // cache rather than re-running the engine itself) has real numbers right after a save,
       // not just after someone happens to open the workspace next.
-      const { schema: savedInstancedSchema, evaluation: savedEvaluation } = applyDynamicInstances(statementSchema!, savedModel, persistedInstances);
+      const { schema: savedInstancedSchema, evaluation: savedEvaluation } = applyDynamicInstances(finalSchema, savedModel, persistedInstances);
       const materialized = materializeEvaluation(savedInstancedSchema, savedModel, savedEvaluation);
-      const versionStamp = computeVersionStamp(savedModel, null, statementSchema!);
+      const versionStamp = computeVersionStamp(savedModel, null, finalSchema);
       await computedResultRepository.set(buildComputedResult(savedModel.id, 'base', versionStamp, materialized));
 
       setSavedToast(true);

@@ -3,13 +3,18 @@ import { openBasisDb } from './db';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
 import { remapFormulaIds } from '../lib/engine/resolve';
 
-/** Every line gets a fresh id on copy, recorded in `idMap` as it goes — formulas aren't
- *  touched here, since a line's formula can reference a line defined later in the schema and
- *  the full old-id -> new-id map needs to exist before any of them are remapped. */
+/** Every section AND line gets a fresh id on copy, all recorded in `idMap` as it goes —
+ *  formulas aren't touched here, since a line's formula can reference a line defined later in
+ *  the schema and the full old-id -> new-id map needs to exist before any of them are remapped.
+ *  The section's own id is recorded too (not just its lines') so a caller with other state
+ *  referencing a section directly (e.g. a freeform/KPI instance's sectionId) can remap it the
+ *  same way. */
 function cloneSectionShallow(section: StatementSection, idMap: Map<string, string>): StatementSection {
+  const newSectionId = crypto.randomUUID();
+  idMap.set(section.id, newSectionId);
   return {
     ...section,
-    id: crypto.randomUUID(),
+    id: newSectionId,
     lines: section.lines.map((l): StatementLine => {
       const newId = crypto.randomUUID();
       idMap.set(l.id, newId);
@@ -50,10 +55,16 @@ function remapDriverLineRefs(drivers: DriverDefinition[], idMap: Map<string, str
 
 /** First StatementSchemaRepository adapter. Swap for an API-backed one later without touching callers. */
 export class IndexedDbStatementSchemaRepository implements StatementSchemaRepository {
+  /** Real templates only — every model forks its own private copy via duplicate() at creation
+   *  (see ModelMappingScreen.handleSave), so the store fills up with one `copiedFromSchemaId`-set
+   *  row per model over time. Those are never meant to be picked as a starting point for another
+   *  model, or managed from the template library (StatementDefinitionsScreen) — a model's own
+   *  copy is only ever edited from within that model's own screen. Filtered out here, the one
+   *  place both current callers read the list from, rather than in each caller. */
   async list(): Promise<StatementSchema[]> {
     const db = await openBasisDb();
     const existing = await db.getAllFromIndex('statementSchema', 'by-createdAt');
-    if (existing.length > 0) return existing;
+    if (existing.length > 0) return existing.filter((s) => !s.copiedFromSchemaId);
 
     // put (not add): concurrent calls on an empty store (e.g. two screens mounting at once)
     // all seed the same fixed id, so they converge on one row instead of racing to add duplicates.
@@ -82,7 +93,7 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     return schema;
   }
 
-  async duplicate(id: string, name: string): Promise<StatementSchema> {
+  async duplicate(id: string, name: string): Promise<{ schema: StatementSchema; idMap: Map<string, string> }> {
     const db = await openBasisDb();
     const source = await db.get('statementSchema', id);
     if (!source) throw new Error(`Statement schema not found: ${id}`);
@@ -101,7 +112,7 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
       drivers: remapDriverLineRefs(clonedDrivers, idMap),
     };
     await db.add('statementSchema', copy);
-    return copy;
+    return { schema: copy, idMap };
   }
 
   async save(schema: StatementSchema): Promise<StatementSchema> {
