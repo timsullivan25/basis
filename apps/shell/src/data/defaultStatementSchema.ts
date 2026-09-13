@@ -90,7 +90,18 @@ function balanceSheet(): DraftSection {
     line('Deferred Revenue', { sign: 'absolute', aliases: ['Unearned revenue'] }),
     line('Other Current Liabilities', { sign: 'absolute' }),
     line('Total Current Liabilities', { formula: 'Accounts Payable + Deferred Revenue + Other Current Liabilities' }),
-    line('Total Debt', { sign: 'absolute', aliases: ['Total borrowings'] }),
+    // Debt is broken out by seniority tier so a capital-structure tranche (a LineInstance, see
+    // its own doc comment) can attach under the right one via `lineId` — same allowsSubLines
+    // mechanism the EBITDA bridge's Delta lines use, no engine changes needed. `sign: 'absolute'`
+    // moves onto the tiers (where a mapped value or a tranche's own value actually lands);
+    // "Secured Debt"/"Total Debt" are pure subtotals, same as any other formula line. A tier with
+    // zero instances and no direct mapping evaluates null and is ignored by sum()'s "ignore
+    // blanks" semantics, exactly like an unused EBITDA bridge Delta level.
+    line('1L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('2L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Secured Debt', { formula: 'sum(1L Debt, 2L Debt)' }),
+    line('Unsecured Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Total Debt', { formula: 'sum(Secured Debt, Unsecured Debt)', aliases: ['Total borrowings'] }),
     line('Other Long Term Liabilities', { sign: 'absolute' }),
     // "Total Debt" also exists as a Credit Metrics pull-through — qualified so this reads the
     // Balance Sheet's own raw line, not that ambiguity.

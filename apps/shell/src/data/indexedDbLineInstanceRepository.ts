@@ -1,4 +1,4 @@
-import type { CreateLineInstanceInput, LineInstance, LineInstanceRepository } from './types';
+import type { CreateLineInstanceInput, LineInstance, LineInstanceContent, LineInstanceRepository } from './types';
 import { openBasisDb } from './db';
 
 export class IndexedDbLineInstanceRepository implements LineInstanceRepository {
@@ -24,7 +24,7 @@ export class IndexedDbLineInstanceRepository implements LineInstanceRepository {
     return instance;
   }
 
-  async update(id: string, patch: Partial<Pick<LineInstance, 'name' | 'projection'>>): Promise<LineInstance> {
+  async update(id: string, patch: Partial<LineInstanceContent>): Promise<LineInstance> {
     const db = await openBasisDb();
     const existing = await db.get('lineInstances', id);
     if (!existing) throw new Error(`LineInstance not found: ${id}`);

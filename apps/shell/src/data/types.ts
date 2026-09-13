@@ -2,6 +2,12 @@ export interface Company {
   id: string;
   name: string;
   createdAt: string;
+  /** Absent means "not yet set" — treated as private (see valuationMultiple) until set true. */
+  isPublic?: boolean;
+  /** Used for Enterprise Value when isPublic is true. */
+  marketCap?: number;
+  /** Used for Enterprise Value (EBITDA × multiple) when isPublic is false. */
+  valuationMultiple?: number;
 }
 
 export interface CreateCompanyInput {
@@ -336,11 +342,62 @@ export interface LineInstance {
    *  deliberately not a separate instance-owned value bag, so scenario overrides and
    *  mergeScenarioDriverValues work completely unchanged. */
   projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string; basisLineId?: string };
+  /** Debt-tranche fields — all absent/undefined for a non-debt instance (a revenue segment, an
+   *  EBITDA adjustment). Set only when `lineId` targets a debt-tier line (1L/2L/Unsecured Debt) —
+   *  see capitalStructure.ts. Kept on LineInstance rather than a parallel entity so tranches reuse
+   *  the exact same splice/rollup mechanism (withDynamicInstances.ts) as every other instance. */
+  debtType?: 'term' | 'revolver';
+  /** ISO date string. */
+  maturity?: string;
+  /** Annual rate, e.g. 0.08 for 8%. For a revolver, the rate on the DRAWN balance. */
+  couponRate?: number;
+  couponType?: 'fixed' | 'floating';
+  /** Free-text reference (e.g. "SOFR") — only meaningful when couponType is 'floating'. Not yet
+   *  resolved to an actual per-period rate value; that's Debt Schedule's concern. */
+  baseRate?: string;
+  frequency?: 'quarterly' | 'semiAnnual';
+  /** Overrides the "original face value" amortization is computed against (see
+   *  amortizationRate) — falls back to the instance's own last-historical-period value when
+   *  absent, since original issuance size often isn't separately reported. */
+  originalFaceValue?: number;
+  /** Annual %, e.g. 0.01 for 1%/year — applied against originalFaceValue, not the current
+   *  balance. Debt Schedule's concern to actually compute; captured here as a property now. */
+  amortizationRate?: number;
+  /** Whether this tranche participates in the (future) cash-sweep repayment waterfall. Defaults
+   *  to true when absent — most tranches are repayable; a bond typically is not. */
+  repayable?: boolean;
+  /** Revolver-only: the cap on what can be drawn. The instance's own historicals/driver value is
+   *  always the DRAWN amount (what rolls up into 1L Debt), never the commitment amount. */
+  commitmentAmount?: number;
+  /** Revolver-only: annual rate on the undrawn portion (commitmentAmount minus the drawn
+   *  balance). */
+  commitmentFeeRate?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface CreateLineInstanceInput {
+/** Every field a LineInstance can be created or updated with, other than its identity
+ *  (id/modelId), timestamps, and lineId/sectionId (which line/section it targets is fixed at
+ *  creation — see LineInstance's own doc comment on "exactly one of the two is ever set"). */
+export type LineInstanceContent = Pick<
+  LineInstance,
+  | 'name'
+  | 'sourceLineIds'
+  | 'projection'
+  | 'debtType'
+  | 'maturity'
+  | 'couponRate'
+  | 'couponType'
+  | 'baseRate'
+  | 'frequency'
+  | 'originalFaceValue'
+  | 'amortizationRate'
+  | 'repayable'
+  | 'commitmentAmount'
+  | 'commitmentFeeRate'
+>;
+
+export interface CreateLineInstanceInput extends Partial<LineInstanceContent> {
   modelId: string;
   lineId?: string;
   sectionId?: string;
@@ -353,7 +410,7 @@ export interface LineInstanceRepository {
   list(modelId: string): Promise<LineInstance[]>;
   get(id: string): Promise<LineInstance | undefined>;
   create(input: CreateLineInstanceInput): Promise<LineInstance>;
-  update(id: string, patch: Partial<Pick<LineInstance, 'name' | 'projection' | 'sourceLineIds'>>): Promise<LineInstance>;
+  update(id: string, patch: Partial<LineInstanceContent>): Promise<LineInstance>;
   remove(id: string): Promise<void>;
 }
 

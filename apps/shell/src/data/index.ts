@@ -46,6 +46,7 @@ export type {
   DriverDefinition,
   LineAggregation,
   LineInstance,
+  LineInstanceContent,
   LineInstanceRepository,
   LineMapping,
   LineNumberFormat,
