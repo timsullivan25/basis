@@ -30,10 +30,11 @@ interface InstanceRowDetailProps {
    *  picker — see ProjectionMethodEditor. */
   allInstances: LineInstance[];
   lineNameById: Map<string, string>;
-  /** Set when this instance's parent line is a debt-tier line (1L/2L/Unsecured Debt) — shows the
-   *  debt-specific property fields (maturity, coupon, etc.) below the usual ones. Only '1L' shows
-   *  the term/revolver toggle, since a revolver is always secured, first-lien debt. */
-  debtTier: '1L' | '2L' | 'unsecured' | null;
+  /** Set when this instance's parent line has StatementLine.subLineKind === 'debt' — shows the
+   *  debt-specific property fields (maturity, coupon, etc.) below the usual ones, and replaces the
+   *  projection-method picker (see below). `allowsRevolver` mirrors the parent line's own flag,
+   *  which schema (not a hardcoded "only 1L" rule) decides. */
+  debtLineFlags: { allowsRevolver: boolean } | null;
   onChangeName: (name: string) => void;
   onChangeSourceLines: (sourceLineIds: string[]) => void;
   onChangeManualHistoricals: (values: (number | null)[]) => void;
@@ -51,7 +52,7 @@ interface InstanceRowDetailProps {
  *  mapping and manual entry are mutually exclusive; picking a source line always wins once one is
  *  set, matching every other line's "mapped value wins" rule. */
 export function InstanceRowDetail({
-  instance, sectionName, workbook, schemaLineGroups, allInstances, lineNameById, debtTier,
+  instance, sectionName, workbook, schemaLineGroups, allInstances, lineNameById, debtLineFlags,
   onChangeName, onChangeSourceLines, onChangeManualHistoricals, onChangeProjection, onChangeDebtFields, onDelete,
 }: InstanceRowDetailProps) {
   const [manualEntry, setManualEntry] = useState(
@@ -92,20 +93,30 @@ export function InstanceRowDetail({
             placeholder={instance.sectionId ? 'e.g. Monthly Active Users' : 'e.g. Segment A'}
           />
 
-          <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
-            Projection method
-          </div>
-          <ProjectionMethodEditor
-            projection={instance.projection}
-            excludeInstanceId={instance.id}
-            schemaLineGroups={schemaLineGroups}
-            allInstances={allInstances}
-            lineNameById={lineNameById}
-            onChange={onChangeProjection}
-          />
+          {debtLineFlags ? (
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: 'var(--space-3)' }}>
+              Projected as a flat carry-forward until Debt Schedule ships — a debt tranche's
+              balance doesn't fit growth/percent-of/days-of/roll-off, and will instead be driven
+              entirely by Debt Schedule's roll-forward once that exists.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
+                Projection method
+              </div>
+              <ProjectionMethodEditor
+                projection={instance.projection}
+                excludeInstanceId={instance.id}
+                schemaLineGroups={schemaLineGroups}
+                allInstances={allInstances}
+                lineNameById={lineNameById}
+                onChange={onChangeProjection}
+              />
+            </>
+          )}
 
-          {debtTier ? (
-            <DebtTranchePropertiesEditor instance={instance} canBeRevolver={debtTier === '1L'} onChange={onChangeDebtFields} />
+          {debtLineFlags ? (
+            <DebtTranchePropertiesEditor instance={instance} canBeRevolver={debtLineFlags.allowsRevolver} onChange={onChangeDebtFields} />
           ) : null}
 
           <div style={{ marginTop: 'var(--space-4)' }}>

@@ -107,6 +107,17 @@ export interface StatementLine {
    *  superseding (not blending with) any direct mapping — see
    *  lib/engine/withDynamicInstances.ts. */
   allowsSubLines?: boolean;
+  /** Only meaningful when allowsSubLines is true. Declares that instances hosted under this line
+   *  are debt tranches — the schema's own way of saying "these sub-lines take the debt-specific
+   *  property fields (maturity, coupon, etc.) and flow into the future Debt Schedule," rather than
+   *  the mapping screen matching on a hardcoded line name. A schema is free to name its tiers
+   *  anything, or have any number of them; whichever lines set this are debt tiers. */
+  subLineKind?: 'debt';
+  /** Only meaningful when subLineKind is 'debt'. Declares that a tranche instance under this
+   *  specific line may be flagged as a revolver (see LineInstance.debtType) — kept separate from
+   *  subLineKind so a schema can designate exactly which tier(s) allow it, instead of the mapping
+   *  screen hardcoding "only 1L Debt". */
+  allowsRevolver?: boolean;
 }
 
 export interface StatementSection {
@@ -343,9 +354,10 @@ export interface LineInstance {
    *  mergeScenarioDriverValues work completely unchanged. */
   projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string; basisLineId?: string };
   /** Debt-tranche fields — all absent/undefined for a non-debt instance (a revenue segment, an
-   *  EBITDA adjustment). Set only when `lineId` targets a debt-tier line (1L/2L/Unsecured Debt) —
-   *  see capitalStructure.ts. Kept on LineInstance rather than a parallel entity so tranches reuse
-   *  the exact same splice/rollup mechanism (withDynamicInstances.ts) as every other instance. */
+   *  EBITDA adjustment). Set only when `lineId` targets a line with `StatementLine.subLineKind ===
+   *  'debt'` — see capitalStructure.ts. Kept on LineInstance rather than a parallel entity so
+   *  tranches reuse the exact same splice/rollup mechanism (withDynamicInstances.ts) as every
+   *  other instance. */
   debtType?: 'term' | 'revolver';
   /** ISO date string. */
   maturity?: string;

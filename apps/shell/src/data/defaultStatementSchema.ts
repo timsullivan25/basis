@@ -20,6 +20,10 @@ interface LineOptions {
   required?: boolean;
   /** See StatementLine.allowsSubLines' own doc comment. */
   allowsSubLines?: boolean;
+  /** See StatementLine.subLineKind' own doc comment. */
+  subLineKind?: 'debt';
+  /** See StatementLine.allowsRevolver' own doc comment. */
+  allowsRevolver?: boolean;
 }
 
 /** Authored with a raw formula string for readability — resolved into a real ResolvedFormula
@@ -45,6 +49,8 @@ function line(name: string, options: LineOptions = {}): DraftLine {
     projection: null,
     aliases: options.aliases ?? [],
     allowsSubLines: options.allowsSubLines,
+    subLineKind: options.subLineKind,
+    allowsRevolver: options.allowsRevolver,
   };
 }
 
@@ -96,11 +102,15 @@ function balanceSheet(): DraftSection {
     // moves onto the tiers (where a mapped value or a tranche's own value actually lands);
     // "Secured Debt"/"Total Debt" are pure subtotals, same as any other formula line. A tier with
     // zero instances and no direct mapping evaluates null and is ignored by sum()'s "ignore
-    // blanks" semantics, exactly like an unused EBITDA bridge Delta level.
-    line('1L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
-    line('2L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
+    // blanks" semantics, exactly like an unused EBITDA bridge Delta level. Each tier line also
+    // sets `subLineKind: 'debt'` — this (not a hardcoded line-name check) is what the mapping
+    // screen uses to show a tranche's debt-specific property fields; a custom schema is free to
+    // name its tiers anything, or have any number of them. `allowsRevolver` is set only on 1L
+    // Debt in this default schema — a schema-declared choice, not a hardcoded "only 1L" rule.
+    line('1L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, subLineKind: 'debt', allowsRevolver: true }),
+    line('2L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, subLineKind: 'debt' }),
     line('Secured Debt', { formula: 'sum(1L Debt, 2L Debt)' }),
-    line('Unsecured Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Unsecured Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, subLineKind: 'debt' }),
     line('Total Debt', { formula: 'sum(Secured Debt, Unsecured Debt)', aliases: ['Total borrowings'] }),
     line('Other Long Term Liabilities', { sign: 'absolute' }),
     // "Total Debt" also exists as a Credit Metrics pull-through — qualified so this reads the

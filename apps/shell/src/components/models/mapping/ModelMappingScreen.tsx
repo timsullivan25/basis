@@ -280,19 +280,16 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     () => new Map(statementSchema.sections.flatMap((s) => s.lines).map((l) => [l.id, l.name])),
     [statementSchema],
   );
-  // Which debt-tier line (if any) a given lineId is — drives InstanceRowDetail's
-  // DebtTranchePropertiesEditor. Matched by name (like any other schema concept lookup in this
-  // app, e.g. summaryLines.ts) rather than a stored flag, since the tier IS which line an
-  // instance targets, not a separate property.
-  const debtTierByLineId = useMemo(() => {
-    const tiers = new Map<string, '1L' | '2L' | 'unsecured'>();
-    for (const [id, name] of lineNameById) {
-      if (name === '1L Debt') tiers.set(id, '1L');
-      else if (name === '2L Debt') tiers.set(id, '2L');
-      else if (name === 'Unsecured Debt') tiers.set(id, 'unsecured');
+  // Whether a given lineId is a debt tier (and if so, whether it allows a revolver) — driven
+  // entirely by the schema's own StatementLine.subLineKind/allowsRevolver flags, not a hardcoded
+  // line-name check. A custom schema can name its tiers anything or have any number of them.
+  const debtLineFlagsById = useMemo(() => {
+    const flags = new Map<string, { allowsRevolver: boolean }>();
+    for (const line of statementSchema.sections.flatMap((s) => s.lines)) {
+      if (line.subLineKind === 'debt') flags.set(line.id, { allowsRevolver: line.allowsRevolver ?? false });
     }
-    return tiers;
-  }, [lineNameById]);
+    return flags;
+  }, [statementSchema]);
   const schemaLineGroups: SchemaLineGroup[] = useMemo(
     () => statementSchema.sections.map((s) => ({ sectionName: s.name, lines: s.lines.map((l) => ({ id: l.id, name: l.name })) })),
     [statementSchema],
@@ -928,7 +925,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 schemaLineGroups={schemaLineGroups}
                 allInstances={previewInstances}
                 lineNameById={lineNameById}
-                debtTier={row.instance.lineId ? (debtTierByLineId.get(row.instance.lineId) ?? null) : null}
+                debtLineFlags={row.instance.lineId ? (debtLineFlagsById.get(row.instance.lineId) ?? null) : null}
                 onChangeName={(name) =>
                   setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, name } : e)))
                 }

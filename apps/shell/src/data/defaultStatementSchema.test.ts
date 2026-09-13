@@ -34,6 +34,21 @@ describe('createDefaultStatementSchema — capital structure', () => {
     expect(lineByName.get('1L Debt')?.required).toBe(false);
   });
 
+  it('marks each tier as subLineKind "debt" — a schema-declared flag, not a hardcoded line-name check — and allows a revolver only on 1L', () => {
+    expect(lineByName.get('1L Debt')?.subLineKind).toBe('debt');
+    expect(lineByName.get('2L Debt')?.subLineKind).toBe('debt');
+    expect(lineByName.get('Unsecured Debt')?.subLineKind).toBe('debt');
+    expect(lineByName.get('1L Debt')?.allowsRevolver).toBe(true);
+    expect(lineByName.get('2L Debt')?.allowsRevolver).toBeFalsy();
+    expect(lineByName.get('Unsecured Debt')?.allowsRevolver).toBeFalsy();
+    // A line with no subLineKind at all (an ordinary sub-line-hosting line, e.g. an EBITDA
+    // bridge Delta) is not treated as a debt tier.
+    const ebitdaSection = schema.sections.find((s) => s.name === 'EBITDA')!;
+    const delta = ebitdaSection.lines.find((l) => l.name === 'Adjusted EBITDA Delta')!;
+    expect(delta.allowsSubLines).toBe(true);
+    expect(delta.subLineKind).toBeUndefined();
+  });
+
   it('Secured Debt and Total Debt are pure subtotal formulas over the tiers', () => {
     const oneL = lineByName.get('1L Debt')!;
     const twoL = lineByName.get('2L Debt')!;
