@@ -404,9 +404,35 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
             size="sm"
             label="Allow sub-lines"
             checked={line.allowsSubLines ?? false}
-            onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
+            onChange={(next) =>
+              onUpdateLine(line.id, next ? { allowsSubLines: true } : { allowsSubLines: false, subLineKind: undefined, allowsRevolver: undefined })
+            }
           />
         </div>
+
+        {line.allowsSubLines ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+              Debt tranches
+            </span>
+            <Switch
+              size="sm"
+              label="Debt line"
+              checked={line.subLineKind === 'debt'}
+              onChange={(next) =>
+                onUpdateLine(line.id, next ? { subLineKind: 'debt' } : { subLineKind: undefined, allowsRevolver: undefined })
+              }
+            />
+            {line.subLineKind === 'debt' ? (
+              <Switch
+                size="sm"
+                label="Allow revolver"
+                checked={line.allowsRevolver ?? false}
+                onChange={(next) => onUpdateLine(line.id, { allowsRevolver: next })}
+              />
+            ) : null}
+          </div>
+        ) : null}
 
         {needsBasisLine(currentMethod) ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
