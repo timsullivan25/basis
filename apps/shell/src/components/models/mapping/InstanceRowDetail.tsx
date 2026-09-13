@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { Button, Input } from '@basis/design-system';
-import type { LineInstance, ParsedWorkbook } from '../../../data';
+import type { LineInstance, LineInstanceContent, ParsedWorkbook } from '../../../data';
 import { SourceLineChecklist } from './SourceLineChecklist';
+import { ManualHistoricalsInput } from './ManualHistoricalsInput';
 import { ProjectionMethodEditor, type InstanceProjectionSelection, type SchemaLineGroup } from '../instances/projectionMethod';
+import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 
 /** One row's worth of not-yet-(or already-)persisted instance state — see ModelMappingScreen's
  *  own doc comment for why this is unified rather than split into "existing" vs "draft" lists. */
-export interface EditableInstance {
+export interface EditableInstance extends Partial<LineInstanceContent> {
   id: string;
   isNew: boolean;
   lineId?: string;
@@ -13,6 +16,9 @@ export interface EditableInstance {
   name: string;
   sourceLineIds: string[];
   projection: LineInstance['projection'];
+  /** Index-aligned with workbook.periods — see ManualHistoricalsInput. Only ever read/persisted
+   *  when sourceLineIds is empty. */
+  manualHistoricals: (number | null)[];
 }
 
 interface InstanceRowDetailProps {
@@ -24,9 +30,15 @@ interface InstanceRowDetailProps {
    *  picker — see ProjectionMethodEditor. */
   allInstances: LineInstance[];
   lineNameById: Map<string, string>;
+  /** Set when this instance's parent line is a debt-tier line (1L/2L/Unsecured Debt) — shows the
+   *  debt-specific property fields (maturity, coupon, etc.) below the usual ones. Only '1L' shows
+   *  the term/revolver toggle, since a revolver is always secured, first-lien debt. */
+  debtTier: '1L' | '2L' | 'unsecured' | null;
   onChangeName: (name: string) => void;
   onChangeSourceLines: (sourceLineIds: string[]) => void;
+  onChangeManualHistoricals: (values: (number | null)[]) => void;
   onChangeProjection: (selection: InstanceProjectionSelection) => void;
+  onChangeDebtFields: (patch: Partial<LineInstanceContent>) => void;
   onDelete: () => void;
 }
 
@@ -35,22 +47,38 @@ interface InstanceRowDetailProps {
  *  sub-line/KPI" row, held as a draft until Save) and an already-persisted one being revisited —
  *  mapping is the sole place instance structure is edited now; the model workspace's Drivers card
  *  only fills in driver values (see the Phase 9 revision plan). An instance with no source line
- *  mapped simply has no historical values and projects forward from nothing — there's
- *  deliberately no manual-entry escape hatch here (that's what mapping a source line is for). */
+ *  mapped can have its historicals typed in directly instead (ManualHistoricalsInput) — a source
+ *  mapping and manual entry are mutually exclusive; picking a source line always wins once one is
+ *  set, matching every other line's "mapped value wins" rule. */
 export function InstanceRowDetail({
-  instance, sectionName, workbook, schemaLineGroups, allInstances, lineNameById,
-  onChangeName, onChangeSourceLines, onChangeProjection, onDelete,
+  instance, sectionName, workbook, schemaLineGroups, allInstances, lineNameById, debtTier,
+  onChangeName, onChangeSourceLines, onChangeManualHistoricals, onChangeProjection, onChangeDebtFields, onDelete,
 }: InstanceRowDetailProps) {
+  const [manualEntry, setManualEntry] = useState(
+    instance.sourceLineIds.length === 0 && instance.manualHistoricals.some((v) => v !== null),
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 'var(--space-9)' }}>
-        <SourceLineChecklist
-          title={`Map ${instance.name.trim() || (instance.sectionId ? 'new KPI' : 'new sub-line')} from`}
-          sectionName={sectionName}
-          workbook={workbook}
-          sourceLineIds={instance.sourceLineIds}
-          onSetSourceLines={onChangeSourceLines}
-        />
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          {manualEntry ? (
+            <ManualHistoricalsInput workbook={workbook} values={instance.manualHistoricals} onChange={onChangeManualHistoricals} />
+          ) : (
+            <SourceLineChecklist
+              title={`Map ${instance.name.trim() || (instance.sectionId ? 'new KPI' : 'new sub-line')} from`}
+              sectionName={sectionName}
+              workbook={workbook}
+              sourceLineIds={instance.sourceLineIds}
+              onSetSourceLines={onChangeSourceLines}
+            />
+          )}
+          {instance.sourceLineIds.length === 0 ? (
+            <Button size="sm" variant="ghost" onClick={() => setManualEntry((prev) => !prev)}>
+              {manualEntry ? 'Map from the uploaded file instead' : 'Not in the uploaded file? Enter values manually'}
+            </Button>
+          ) : null}
+        </div>
 
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
@@ -75,6 +103,10 @@ export function InstanceRowDetail({
             lineNameById={lineNameById}
             onChange={onChangeProjection}
           />
+
+          {debtTier ? (
+            <DebtTranchePropertiesEditor instance={instance} canBeRevolver={debtTier === '1L'} onChange={onChangeDebtFields} />
+          ) : null}
 
           <div style={{ marginTop: 'var(--space-4)' }}>
             <Button size="sm" variant="ghost" iconLeft="trash-2" onClick={onDelete}>

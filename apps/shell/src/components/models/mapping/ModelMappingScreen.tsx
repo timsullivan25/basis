@@ -8,6 +8,7 @@ import {
   modelRepository,
   type Company,
   type LineInstance,
+  type LineInstanceContent,
   type LineMapping,
   type Model,
   type ModelImport,
@@ -34,6 +35,18 @@ import { MappingRowDetail } from './MappingRowDetail';
 import { formatPeriodValue, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
+
+/** Pulls just the debt-tranche fields off an EditableInstance for create/update — undefined for
+ *  every field on a non-debt instance (a segment, an EBITDA adjustment), which the repository
+ *  simply won't set. */
+function debtFieldsOf(e: EditableInstance): Partial<LineInstanceContent> {
+  return {
+    debtType: e.debtType, maturity: e.maturity, couponRate: e.couponRate, couponType: e.couponType,
+    baseRate: e.baseRate, frequency: e.frequency, originalFaceValue: e.originalFaceValue,
+    amortizationRate: e.amortizationRate, repayable: e.repayable,
+    commitmentAmount: e.commitmentAmount, commitmentFeeRate: e.commitmentFeeRate,
+  };
+}
 
 export interface ModelMappingScreenProps {
   company: Company;
@@ -108,6 +121,16 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           existingInstances.map((i) => ({
             id: i.id, isNew: false, lineId: i.lineId, sectionId: i.sectionId, name: i.name,
             sourceLineIds: i.sourceLineIds ?? [], projection: i.projection,
+            // Seeded from the live model's own historicals — mirrors resolvedHistoricals' own
+            // seeding in handleSave, so re-opening mapping on an instance with manually-entered
+            // values shows them back rather than a blank editor.
+            manualHistoricals: (i.sourceLineIds?.length ?? 0) === 0 && editing
+              ? (editing.model.historicals[i.id] ?? [])
+              : [],
+            debtType: i.debtType, maturity: i.maturity, couponRate: i.couponRate, couponType: i.couponType,
+            baseRate: i.baseRate, frequency: i.frequency, originalFaceValue: i.originalFaceValue,
+            amortizationRate: i.amortizationRate, repayable: i.repayable,
+            commitmentAmount: i.commitmentAmount, commitmentFeeRate: i.commitmentFeeRate,
           })),
         );
         setDeletedInstanceIds([]);
@@ -204,6 +227,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 (seedLine): EditableInstance => ({
                   id: crypto.randomUUID(), isNew: true, lineId: targetLine.id, name: seedLine.name,
                   sourceLineIds: seedMatches[seedLine.id]?.sourceLineIds ?? [], projection: { method: 'flat' },
+                  manualHistoricals: [],
                 }),
               ),
             ];
@@ -256,6 +280,19 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     () => new Map(statementSchema.sections.flatMap((s) => s.lines).map((l) => [l.id, l.name])),
     [statementSchema],
   );
+  // Which debt-tier line (if any) a given lineId is — drives InstanceRowDetail's
+  // DebtTranchePropertiesEditor. Matched by name (like any other schema concept lookup in this
+  // app, e.g. summaryLines.ts) rather than a stored flag, since the tier IS which line an
+  // instance targets, not a separate property.
+  const debtTierByLineId = useMemo(() => {
+    const tiers = new Map<string, '1L' | '2L' | 'unsecured'>();
+    for (const [id, name] of lineNameById) {
+      if (name === '1L Debt') tiers.set(id, '1L');
+      else if (name === '2L Debt') tiers.set(id, '2L');
+      else if (name === 'Unsecured Debt') tiers.set(id, 'unsecured');
+    }
+    return tiers;
+  }, [lineNameById]);
   const schemaLineGroups: SchemaLineGroup[] = useMemo(
     () => statementSchema.sections.map((s) => ({ sectionName: s.name, lines: s.lines.map((l) => ({ id: l.id, name: l.name })) })),
     [statementSchema],
@@ -278,14 +315,24 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const timeline = useMemo(() => (workbook ? buildTimeline(workbook.periods) : []), [workbook]);
   const historicals = useMemo(() => {
     if (!workbook) return {};
-    // Every instance now carries its own sourceLineIds (existing or freshly added this session),
-    // so resolveActuals alone covers every mapped instance — an unmapped one simply has no
-    // historicals entry at all (reads as null for every period, same as any other unmapped line),
-    // rather than a manual-entry escape hatch.
+    // A mapped instance's historicals come from resolveActuals, same as any schema line. An
+    // unmapped one (empty sourceLineIds) falls back to its own manualHistoricals, if any were
+    // typed in — see ManualHistoricalsInput. The two are mutually exclusive per instance (an
+    // instance either has source lines or manual values, never both, enforced by
+    // InstanceRowDetail's UI), so simple presence-based precedence is enough here.
     const mappedInstanceMappings: LineMapping[] = editableInstances
       .filter((e) => e.sourceLineIds.length > 0)
       .map((e) => ({ targetLineId: e.id, sourceLineIds: e.sourceLineIds, method: 'manual', confidence: 1, note: '', approved: true }));
-    return resolveActuals([...Object.values(mapping), ...mappedInstanceMappings], workbook, timeline);
+    const manualInstanceHistoricals: Record<string, (number | null)[]> = {};
+    for (const e of editableInstances) {
+      if (e.sourceLineIds.length === 0 && e.manualHistoricals.some((v) => v !== null)) {
+        manualInstanceHistoricals[e.id] = e.manualHistoricals;
+      }
+    }
+    return {
+      ...resolveActuals([...Object.values(mapping), ...mappedInstanceMappings], workbook, timeline),
+      ...manualInstanceHistoricals,
+    };
   }, [mapping, editableInstances, workbook, timeline]);
   // Live preview of every calculated line, recomputed as the mapping changes — same evaluator
   // ModelWorkspaceScreen uses on the saved model, just fed this draft's not-yet-saved historicals
@@ -419,16 +466,17 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       for (const e of editableInstances) {
         const trimmedName = e.name.trim();
         if (!trimmedName) continue;
+        const debtFields = debtFieldsOf(e);
         if (e.isNew) {
           const createdInstance = await lineInstanceRepository.create({
             modelId: savedModel.id, lineId: e.lineId, sectionId: e.sectionId,
-            name: trimmedName, sourceLineIds: e.sourceLineIds, projection: e.projection,
+            name: trimmedName, sourceLineIds: e.sourceLineIds, projection: e.projection, ...debtFields,
           });
           idRemap.set(e.id, createdInstance.id);
           persistedInstances.push(createdInstance);
         } else {
           const updatedInstance = await lineInstanceRepository.update(e.id, {
-            name: trimmedName, sourceLineIds: e.sourceLineIds, projection: e.projection,
+            name: trimmedName, sourceLineIds: e.sourceLineIds, projection: e.projection, ...debtFields,
           });
           persistedInstances.push(updatedInstance);
         }
@@ -448,8 +496,8 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
 
       // Every surviving mapped instance's historicals, resolved from its source mapping and
       // written under its real (possibly just-remapped) id — same convention the schema-line
-      // historicals above already follow. An unmapped instance simply gets none (no manual-entry
-      // escape hatch — see InstanceRowDetail's own doc comment).
+      // historicals above already follow. An unmapped instance with manually-entered values (see
+      // ManualHistoricalsInput) writes those directly instead of going through resolveActuals.
       const mappedInstanceMappings: LineMapping[] = editableInstances
         .filter((e) => e.sourceLineIds.length > 0 && e.name.trim())
         .map((e) => ({
@@ -457,6 +505,12 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           method: 'manual' as const, confidence: 1, note: '', approved: true,
         }));
       const instanceHistoricals: Record<string, (number | null)[]> = resolveActuals(mappedInstanceMappings, workbook, resolvedTimeline);
+      for (const e of editableInstances) {
+        if (!e.name.trim() || e.sourceLineIds.length > 0) continue;
+        if (e.manualHistoricals.some((v) => v !== null)) {
+          instanceHistoricals[idRemap.get(e.id) ?? e.id] = e.manualHistoricals;
+        }
+      }
 
       savedModel = await modelRepository.update(savedModel.id, {
         historicals: { ...savedModel.historicals, ...instanceHistoricals },
@@ -857,7 +911,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                   id: newId, isNew: true,
                   lineId: target.kind === 'line' ? target.id : undefined,
                   sectionId: target.kind === 'section' ? target.id : undefined,
-                  name: '', sourceLineIds: [], projection: { method: 'flat' },
+                  name: '', sourceLineIds: [], projection: { method: 'flat' }, manualHistoricals: [],
                 },
               ]);
               setExpandedLineId(`instance-${newId}`);
@@ -874,11 +928,18 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 schemaLineGroups={schemaLineGroups}
                 allInstances={previewInstances}
                 lineNameById={lineNameById}
+                debtTier={row.instance.lineId ? (debtTierByLineId.get(row.instance.lineId) ?? null) : null}
                 onChangeName={(name) =>
                   setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, name } : e)))
                 }
                 onChangeSourceLines={(sourceLineIds) =>
                   setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, sourceLineIds } : e)))
+                }
+                onChangeManualHistoricals={(manualHistoricals) =>
+                  setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, manualHistoricals } : e)))
+                }
+                onChangeDebtFields={(patch) =>
+                  setEditableInstances((prev) => prev.map((e) => (e.id === row.instance!.id ? { ...e, ...patch } : e)))
                 }
                 onChangeProjection={(selection: InstanceProjectionSelection) => {
                   // Reuse the instance's existing driverId across a projection edit rather than
