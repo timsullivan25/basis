@@ -10,18 +10,20 @@ export interface LineValues {
   getError(lineId: string): string | undefined;
 }
 
-/** The four fields a computed result's freshness depends on, read live off the current model/
+/** The three fields a computed result's freshness depends on, read live off the current model/
  *  scenario/schema. `scenario` is null for the Base case (no Scenario row to stamp). Falls back to
- *  `createdAt` for any record saved before `updatedAt` (or `instancesUpdatedAt`) existed — same
- *  normalize-at-point-of-use convention this codebase already uses for other fields added after
- *  the fact (e.g. `driverValues ?? {}`), rather than a repository-level migration for a field
- *  that's harmless to default this way. */
+ *  `createdAt` for any record saved before `updatedAt` existed — same normalize-at-point-of-use
+ *  convention this codebase already uses for other fields added after the fact (e.g.
+ *  `driverValues ?? {}`), rather than a repository-level migration for a field that's harmless to
+ *  default this way. Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is
+ *  a real StatementLine in the model's own private schema (see lib/statementLineChildren.ts), so
+ *  `schemaUpdatedAt` alone already covers a structural change to one of those — there's no
+ *  separate instances-freshness field to track anymore. */
 export function computeVersionStamp(model: Model, scenario: Scenario | null, schema: StatementSchema): ComputedResultVersionStamp {
   return {
     modelUpdatedAt: model.updatedAt ?? model.createdAt,
     scenarioUpdatedAt: scenario ? (scenario.updatedAt ?? scenario.createdAt) : null,
     schemaUpdatedAt: schema.updatedAt ?? schema.createdAt,
-    instancesUpdatedAt: model.instancesUpdatedAt ?? model.createdAt,
   };
 }
 
@@ -39,8 +41,7 @@ export function versionStampMatches(
   return (
     stamp.modelUpdatedAt === current.modelUpdatedAt &&
     stamp.scenarioUpdatedAt === current.scenarioUpdatedAt &&
-    stamp.schemaUpdatedAt === current.schemaUpdatedAt &&
-    stamp.instancesUpdatedAt === current.instancesUpdatedAt
+    stamp.schemaUpdatedAt === current.schemaUpdatedAt
   );
 }
 

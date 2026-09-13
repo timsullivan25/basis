@@ -404,35 +404,26 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
             size="sm"
             label="Allow sub-lines"
             checked={line.allowsSubLines ?? false}
-            onChange={(next) =>
-              onUpdateLine(line.id, next ? { allowsSubLines: true } : { allowsSubLines: false, subLineKind: undefined, allowsRevolver: undefined })
-            }
+            onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
           />
         </div>
 
-        {line.allowsSubLines ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-              Debt tranches
-            </span>
-            <Switch
-              size="sm"
-              label="Debt line"
-              checked={line.subLineKind === 'debt'}
-              onChange={(next) =>
-                onUpdateLine(line.id, next ? { subLineKind: 'debt' } : { subLineKind: undefined, allowsRevolver: undefined })
-              }
-            />
-            {line.subLineKind === 'debt' ? (
-              <Switch
-                size="sm"
-                label="Allow revolver"
-                checked={line.allowsRevolver ?? false}
-                onChange={(next) => onUpdateLine(line.id, { allowsRevolver: next })}
-              />
-            ) : null}
-          </div>
-        ) : null}
+        {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
+            single lump-sum balance carrying its own properties), have children without being
+            debt, both, or neither. Revolver is not a separate toggle here at all — it's just
+            part of whichever debt-properties panel a mapping-time tranche gets, on any
+            debt-kind line, always. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+            Line kind
+          </span>
+          <Switch
+            size="sm"
+            label="Is debt"
+            checked={line.lineKind === 'debt'}
+            onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
+          />
+        </div>
 
         {needsBasisLine(currentMethod) ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>

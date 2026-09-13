@@ -1,7 +1,6 @@
 import type {
   Company,
   CreateSnapshotInput,
-  LineInstance,
   Mapping,
   Model,
   ModelImport,
@@ -10,7 +9,7 @@ import type {
   SnapshotScenario,
   StatementSchema,
 } from '../data';
-import { applyDynamicInstances } from './engine/withDynamicInstances';
+import { evaluateModel } from './engine/evaluate';
 import { materializeEvaluation, type LineValues } from './computedCache';
 import { mergeScenarioDriverValues } from './scenario';
 
@@ -40,10 +39,6 @@ interface BuildSnapshotParams {
   mapping: Mapping;
   modelImport: ModelImport;
   scenarios: Scenario[];
-  /** The model's current LineInstance rows — spliced into `schema` for every case's evaluation
-   *  (so a frozen segment/adjustment rolls up correctly) and frozen verbatim into the snapshot's
-   *  own `instances` field for provenance (see Snapshot.instances' own doc comment). */
-  instances: LineInstance[];
   label: string;
   note: string;
 }
@@ -56,24 +51,24 @@ interface BuildSnapshotParams {
  *  and createdAt are the repository's to assign, same convention every other builder in this
  *  codebase follows (e.g. lib/computedCache.ts's buildComputedResult).
  *
- *  The embedded `schema` is the INSTANCED schema (every live instance already spliced in as a
- *  real StatementLine), not the raw one — so SnapshotViewScreen can render `schema.sections[].lines`
- *  exactly like the live workspace does, with zero special-casing for instance rows. */
+ *  `schema` is the model's own private schema — every dynamic child line (segment, EBITDA
+ *  adjustment, KPI, debt tranche) is already a real StatementLine living directly in it (see
+ *  lib/statementLineChildren.ts), so a plain evaluateModel() per case is all that's needed; there's
+ *  no separate instance-splicing step anymore, and SnapshotViewScreen renders
+ *  `schema.sections[].lines` with zero special-casing, same as before. */
 export function buildSnapshot(params: BuildSnapshotParams): CreateSnapshotInput {
-  const { company, model, schema, mapping, modelImport, scenarios, instances, label, note } = params;
+  const { company, model, schema, mapping, modelImport, scenarios, label, note } = params;
 
   const cases: Array<{ scenarioId: ScenarioKey; name: string; driverValues: Record<string, (number | null)[]> }> = [
     { scenarioId: 'base', name: 'Base case', driverValues: model.driverValues ?? {} },
     ...scenarios.map((s) => ({ scenarioId: s.id, name: s.name, driverValues: s.driverValues })),
   ];
 
-  let instancedSchema = schema;
   const snapshotScenarios: SnapshotScenario[] = cases.map((c) => {
     const merged =
       c.scenarioId === 'base' ? (model.driverValues ?? {}) : mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues);
-    const { schema: casedSchema, evaluation } = applyDynamicInstances(schema, { ...model, driverValues: merged }, instances);
-    instancedSchema = casedSchema; // structurally identical across cases (same instances every time) — any case's copy will do.
-    const materialized = materializeEvaluation(casedSchema, model, evaluation);
+    const evaluation = evaluateModel(schema, { ...model, driverValues: merged });
+    const materialized = materializeEvaluation(schema, model, evaluation);
     return { scenarioId: c.scenarioId, name: c.name, driverValues: structuredClone(c.driverValues), ...materialized };
   });
 
@@ -84,12 +79,11 @@ export function buildSnapshot(params: BuildSnapshotParams): CreateSnapshotInput 
     note,
     timeline: structuredClone(model.timeline),
     historicals: structuredClone(model.historicals),
-    schema: structuredClone(instancedSchema),
+    schema: structuredClone(schema),
     mapping: { lines: structuredClone(mapping.lines), mappedAt: mapping.mappedAt },
     sourceFileName: modelImport.fileName,
     sourceUploadedAt: modelImport.uploadedAt,
     scenarios: snapshotScenarios,
-    instances: structuredClone(instances),
   };
 }
 

@@ -22,7 +22,6 @@ import {
   analysisResultRepository,
   analysisSettingsRepository,
   computedResultRepository,
-  lineInstanceRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -33,7 +32,6 @@ import {
   type Company,
   type DcfInputs,
   type DcfOutput,
-  type LineInstance,
   type Mapping,
   type Model,
   type ModelImport,
@@ -65,7 +63,7 @@ import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
-import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
+import { evaluateModel } from '../lib/engine/evaluate';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
 interface ModelWorkspaceScreenProps {
@@ -199,7 +197,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [compareLineId, setCompareLineId] = useState<string | null>(null);
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
-  const [instances, setInstances] = useState<LineInstance[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,7 +208,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
       const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
       const existingAnalysisSettings = existingModel ? await analysisSettingsRepository.get(existingModel.id) : undefined;
-      const existingInstances = existingModel ? await lineInstanceRepository.list(existingModel.id) : [];
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
@@ -219,7 +215,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       setMapping(existingMapping ?? null);
       setModelImport(existingModelImport ?? null);
       setAnalysisSettings(existingAnalysisSettings ?? null);
-      setInstances(existingInstances);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -250,20 +245,18 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const activeScenario = activeScenarioId === 'base' ? null : (scenarios.find((s) => s.id === activeScenarioId) ?? null);
 
   const evaluatedModel = recalcMode === 'auto' ? model : (manualSnapshot ?? model);
-  // instancedSchema is `schema` with every live LineInstance spliced in as a real StatementLine
-  // (segments, EBITDA adjustments, KPIs) — used for anything that renders rows (the grid below),
-  // while `schema` itself stays the raw, savable definition (concept resolution, schema edits).
-  const { schema: instancedSchema, evaluation } = useMemo(() => {
-    if (!schema || !evaluatedModel) return { schema: null, evaluation: null };
+  // Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is already a real
+  // StatementLine living directly in `schema` (see lib/statementLineChildren.ts) — one plain
+  // evaluation, no separate splice step.
+  const evaluation = useMemo(() => {
+    if (!schema || !evaluatedModel) return null;
     // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
-    // layered on top via the same merge helper the compare view will batch-evaluate with —
-    // applyDynamicInstances itself never learns scenarios exist, it just reads whichever map
-    // it's handed.
+    // layered on top via the same merge helper the compare view will batch-evaluate with.
     const driverValues = activeScenario
       ? mergeScenarioDriverValues(evaluatedModel.driverValues ?? {}, activeScenario.driverValues)
       : (evaluatedModel.driverValues ?? {});
-    return applyDynamicInstances(schema, { ...evaluatedModel, driverValues }, instances);
-  }, [schema, evaluatedModel, activeScenario, instances]);
+    return evaluateModel(schema, { ...evaluatedModel, driverValues });
+  }, [schema, evaluatedModel, activeScenario]);
 
   // Persists the active scenario's live evaluation as a ComputedResult — "computed state is a
   // cache, not a source" from the architecture contract. Auto mode only: manual mode's frozen
@@ -273,14 +266,11 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // engine at all; this screen's own read-path benefit is minor by comparison, since evaluateModel
   // is already synchronous and instant at this schema's scale.
   useEffect(() => {
-    if (recalcMode !== 'auto' || !schema || !instancedSchema || !model || !evaluation) return;
-    // instancedSchema (not schema) so a cached read (e.g. the Dashboard tab) sees instance rows
-    // too — schemaUpdatedAt itself still comes from the raw schema, since instance changes are
-    // tracked separately via Model.instancesUpdatedAt (see computeVersionStamp).
-    const materialized = materializeEvaluation(instancedSchema, model, evaluation);
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation) return;
+    const materialized = materializeEvaluation(schema, model, evaluation);
     const versionStamp = computeVersionStamp(model, activeScenario, schema);
     void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
-  }, [recalcMode, schema, instancedSchema, model, evaluation, activeScenario, activeScenarioId]);
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
 
   // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
   // enabled and every required concept resolves (a partially-resolved DCF has nothing valid to
@@ -329,13 +319,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return cases.map((c) => ({
       id: c.id,
       name: c.name,
-      evaluation: applyDynamicInstances(
-        schema,
-        { ...model, driverValues: mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues) },
-        instances,
-      ).evaluation,
+      evaluation: evaluateModel(schema, { ...model, driverValues: mergeScenarioDriverValues(model.driverValues ?? {}, c.driverValues) }),
     }));
-  }, [schema, model, scenarios, instances]);
+  }, [schema, model, scenarios]);
 
   function selectScenario(id: string) {
     setActiveScenarioId(id);
@@ -504,7 +490,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         mapping,
         modelImport,
         scenarios,
-        instances,
         label: pendingSnapshotLabel.trim(),
         note: pendingSnapshotNote.trim(),
       });
@@ -543,7 +528,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
 
-  if (!model || !schema || !instancedSchema) {
+  if (!model || !schema || !evaluation) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No model to show.</span>;
   }
 
@@ -631,31 +616,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     color: `var(--chart-${(i % 12) + 1})`,
   }));
 
-  // Every instance-backed line (spliced into instancedSchema right after its parent — see
-  // withDynamicInstances.ts) is otherwise indistinguishable from an ordinary schema line once
-  // it's in schema.sections[].lines; parentLineIdByInstanceId is what lets the grid below tell
-  // them apart and indent/nest them under their parent, matching the mapping screen's own
-  // parent/child row treatment for the same instances.
-  // Matches spliceInstanceLines' own defensive check — an instance whose parent line no longer
-  // has allowsSubLines set is silently dropped from instancedSchema entirely, so it must be
-  // excluded here too, or the parent would keep showing a collapse chevron for a child that was
-  // never actually spliced in and never renders as a row.
-  const allowsSubLinesLineIds = new Set(schema.sections.flatMap((s) => s.lines).filter((l) => l.allowsSubLines).map((l) => l.id));
-  const parentLineIdByInstanceId = new Map(
-    instances.filter((i) => i.lineId !== undefined && allowsSubLinesLineIds.has(i.lineId)).map((i) => [i.id, i.lineId!]),
-  );
+  // Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is a real
+  // StatementLine living directly in `schema`, with its own `parentLineId` — no separate
+  // instance array to cross-reference, matching the mapping screen's own parent/child row
+  // treatment for the same lines.
   const childCountByParentId = new Map<string, number>();
-  for (const parentId of parentLineIdByInstanceId.values()) {
-    childCountByParentId.set(parentId, (childCountByParentId.get(parentId) ?? 0) + 1);
+  for (const line of schema.sections.flatMap((s) => s.lines)) {
+    if (line.parentLineId === undefined) continue;
+    childCountByParentId.set(line.parentLineId, (childCountByParentId.get(line.parentLineId) ?? 0) + 1);
   }
 
   const rows: Array<{ id: string; __group?: string; line?: StatementLine; isChild?: boolean; childCount?: number }> = [];
-  instancedSchema.sections.forEach((section) => {
+  schema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
     if (!section.lines.length) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
     section.lines.forEach((line) => {
-      const parentId = parentLineIdByInstanceId.get(line.id);
+      const parentId = line.parentLineId;
       if (parentId !== undefined && collapsedParentIds.has(parentId)) return;
       rows.push({ id: line.id, line, isChild: parentId !== undefined, childCount: childCountByParentId.get(line.id) });
     });
@@ -751,16 +728,16 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     id: string;
     name: string;
     isChild: boolean;
-    /** True for a parent line that has ≥1 sub-line instance — its own value is superseded by the
-     *  sum of those instances for every period (see withDynamicInstances.ts's injectRollups), so
-     *  its own driver cell, though still rendered, is locked rather than edited. */
+    /** True for a parent line that has ≥1 real child line — its own value is superseded by the
+     *  sum of those children for every period (see lib/statementLineChildren.ts), so its own
+     *  driver cell, though still rendered, is locked rather than edited. */
     hasChildren: boolean;
     childCount?: number;
     driverId?: string;
     unit?: string;
     /** Only set alongside driverId, for a row whose method has a well-defined implied historical
      *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
-     *  driver-less row, or an 'actual'/'roll-off' instance projection, all of which show a plain
+     *  driver-less row, or an 'actual'/'roll-off' child projection, all of which show a plain
      *  dash in historical columns instead of an implied number. */
     targetLineId?: string;
     method?: ProjectionMethod;
@@ -768,25 +745,39 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   }
 
   const schemaDriverByLineId = new Map(schema.drivers.map((d) => [d.targetLineId, d]));
-  const childInstancesByLineId = new Map<string, LineInstance[]>();
-  for (const instance of instances) {
-    if (instance.lineId === undefined) continue;
-    const group = childInstancesByLineId.get(instance.lineId) ?? [];
-    group.push(instance);
-    childInstancesByLineId.set(instance.lineId, group);
+  const childLinesByParentId = new Map<string, StatementLine[]>();
+  const kpiLinesBySectionId = new Map<string, StatementLine[]>();
+  for (const section of schema.sections) {
+    for (const line of section.lines) {
+      if (line.parentLineId !== undefined) {
+        const group = childLinesByParentId.get(line.parentLineId) ?? [];
+        group.push(line);
+        childLinesByParentId.set(line.parentLineId, group);
+      } else if (section.allowsFreeformLines) {
+        const group = kpiLinesBySectionId.get(section.id) ?? [];
+        group.push(line);
+        kpiLinesBySectionId.set(section.id, group);
+      }
+    }
   }
 
-  function instanceDriverUnit(method: LineInstance['projection']['method']): string {
-    if (method === 'days-of') return 'days';
-    if (method === 'actual') return 'raw';
-    return '%';
+  function childDriverFields(
+    child: StatementLine,
+    activeSchema: StatementSchema,
+  ): { driverId?: string; unit?: string; method?: ProjectionMethod; basisLineId?: string } {
+    const projection = child.projection;
+    if (!projection || projection.method === 'flat' || !('driverId' in projection)) return {};
+    const driverId = projection.driverId;
+    const driver = activeSchema.drivers.find((d) => d.id === driverId);
+    return { driverId, unit: driver?.unit, method: projection.method, basisLineId: driver?.basisLineId };
   }
 
   const driverRows: DriverRow[] = [];
   for (const section of schema.sections) {
     for (const line of section.lines) {
+      if (line.parentLineId !== undefined) continue; // rendered as a child below its parent, not its own top-level row
       const ownDriver = schemaDriverByLineId.get(line.id);
-      const children = line.allowsSubLines ? (childInstancesByLineId.get(line.id) ?? []) : [];
+      const children = line.allowsSubLines ? (childLinesByParentId.get(line.id) ?? []) : [];
       if (!ownDriver && children.length === 0) continue;
       driverRows.push({
         id: line.id, name: line.name, isChild: false, hasChildren: children.length > 0,
@@ -796,24 +787,16 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       if (collapsedDriverParentIds.has(line.id)) continue;
       for (const child of children) {
         driverRows.push({
-          id: child.id, name: child.name, isChild: true, hasChildren: false,
-          driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
-          unit: instanceDriverUnit(child.projection.method),
-          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
-          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
-          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
+          id: child.id, name: child.name, isChild: true, hasChildren: false, targetLineId: child.id,
+          ...childDriverFields(child, schema),
         });
       }
     }
     if (section.allowsFreeformLines) {
-      for (const child of instances.filter((i) => i.sectionId === section.id)) {
+      for (const child of kpiLinesBySectionId.get(section.id) ?? []) {
         driverRows.push({
-          id: child.id, name: child.name, isChild: false, hasChildren: false,
-          driverId: child.projection.method !== 'flat' ? child.projection.driverId : undefined,
-          unit: instanceDriverUnit(child.projection.method),
-          targetLineId: child.projection.method !== 'flat' ? child.id : undefined,
-          method: child.projection.method !== 'flat' ? child.projection.method : undefined,
-          basisLineId: child.projection.method !== 'flat' ? child.projection.basisLineId : undefined,
+          id: child.id, name: child.name, isChild: false, hasChildren: false, targetLineId: child.id,
+          ...childDriverFields(child, schema),
         });
       }
     }

@@ -1,23 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
-import { applyDynamicInstances } from '../lib/engine/withDynamicInstances';
-import type { LineInstance, TimelinePeriod } from './types';
+import { evaluateModel } from '../lib/engine/evaluate';
+import { addChildLine } from '../lib/statementLineChildren';
+import type { TimelinePeriod } from './types';
 
 function period(id: string): TimelinePeriod {
   return { id, type: 'FY', endDate: `${id}-12-31`, label: id, kind: 'actual' };
-}
-
-function tranche(id: string, lineId: string, name: string): LineInstance {
-  return {
-    id,
-    modelId: 'm1',
-    lineId,
-    name,
-    sourceLineIds: [],
-    projection: { method: 'flat' },
-    createdAt: 't0',
-    updatedAt: 't0',
-  };
 }
 
 describe('createDefaultStatementSchema — capital structure', () => {
@@ -34,19 +22,18 @@ describe('createDefaultStatementSchema — capital structure', () => {
     expect(lineByName.get('1L Debt')?.required).toBe(false);
   });
 
-  it('marks each tier as subLineKind "debt" — a schema-declared flag, not a hardcoded line-name check — and allows a revolver only on 1L', () => {
-    expect(lineByName.get('1L Debt')?.subLineKind).toBe('debt');
-    expect(lineByName.get('2L Debt')?.subLineKind).toBe('debt');
-    expect(lineByName.get('Unsecured Debt')?.subLineKind).toBe('debt');
-    expect(lineByName.get('1L Debt')?.allowsRevolver).toBe(true);
-    expect(lineByName.get('2L Debt')?.allowsRevolver).toBeFalsy();
-    expect(lineByName.get('Unsecured Debt')?.allowsRevolver).toBeFalsy();
-    // A line with no subLineKind at all (an ordinary sub-line-hosting line, e.g. an EBITDA
-    // bridge Delta) is not treated as a debt tier.
+  it('marks each tier as lineKind "debt" — a schema-declared flag, not a hardcoded line-name check', () => {
+    expect(lineByName.get('1L Debt')?.lineKind).toBe('debt');
+    expect(lineByName.get('2L Debt')?.lineKind).toBe('debt');
+    expect(lineByName.get('Unsecured Debt')?.lineKind).toBe('debt');
+    // A line with no lineKind at all (an ordinary sub-line-hosting line, e.g. an EBITDA
+    // bridge Delta) is not treated as a debt line — and there's no separate schema-level
+    // revolver flag at all; Term/Revolver is just part of whichever debt-properties panel a
+    // mapping-time tranche gets.
     const ebitdaSection = schema.sections.find((s) => s.name === 'EBITDA')!;
     const delta = ebitdaSection.lines.find((l) => l.name === 'Adjusted EBITDA Delta')!;
     expect(delta.allowsSubLines).toBe(true);
-    expect(delta.subLineKind).toBeUndefined();
+    expect(delta.lineKind).toBeUndefined();
   });
 
   it('Secured Debt and Total Debt are pure subtotal formulas over the tiers', () => {
@@ -75,26 +62,25 @@ describe('createDefaultStatementSchema — capital structure', () => {
     const ebitdaBridge = schema.sections.find((s) => s.name === 'EBITDA')!;
     const reportedEbitda = ebitdaBridge.lines.find((l) => l.name === 'Reported EBITDA')!;
 
-    const instances: LineInstance[] = [
-      tranche('term-loan', oneL.id, 'Term Loan B'),
-      tranche('bond', unsecured.id, 'Senior Notes'),
-    ];
+    const { schema: withTermLoan, lineId: termLoanId } = addChildLine(schema, { kind: 'line', parentLineId: oneL.id }, 'Term Loan B');
+    const { schema: withTranches, lineId: bondId } = addChildLine(withTermLoan, { kind: 'line', parentLineId: unsecured.id }, 'Senior Notes');
+
     const model = {
       timeline: [period('2024')],
       historicals: {
         [cash.id]: [50],
         [reportedEbitda.id]: [100],
-        'term-loan': [300],
-        bond: [200],
+        [termLoanId]: [300],
+        [bondId]: [200],
       } as Record<string, (number | null)[]>,
     };
 
-    const { evaluation } = applyDynamicInstances(schema, model, instances);
-    const creditMetrics = schema.sections.find((s) => s.name === 'Credit Metrics')!;
+    const evaluation = evaluateModel(withTranches, model);
+    const creditMetrics = withTranches.sections.find((s) => s.name === 'Credit Metrics')!;
     const netDebt = creditMetrics.lines.find((l) => l.name === 'Net Debt')!;
     const netLeverage = creditMetrics.lines.find((l) => l.name === 'Net Leverage')!;
 
-    expect(evaluation.getValue(lineByName.get('1L Debt')!.id, 0)).toBe(300);
+    expect(evaluation.getValue(oneL.id, 0)).toBe(300);
     expect(evaluation.getValue(lineByName.get('Secured Debt')!.id, 0)).toBe(300);
     expect(evaluation.getValue(lineByName.get('Total Debt')!.id, 0)).toBe(500);
     expect(evaluation.getValue(netDebt.id, 0)).toBe(450); // 500 total debt - 50 cash
@@ -103,10 +89,10 @@ describe('createDefaultStatementSchema — capital structure', () => {
 
   it('a single unused tier does not zero out the total — 2L Debt with no tranches is ignored, not treated as zero', () => {
     const oneL = lineByName.get('1L Debt')!;
-    const instances: LineInstance[] = [tranche('term-loan', oneL.id, 'Term Loan B')];
-    const model = { timeline: [period('2024')], historicals: { 'term-loan': [300] } as Record<string, (number | null)[]> };
+    const { schema: withTermLoan, lineId: termLoanId } = addChildLine(schema, { kind: 'line', parentLineId: oneL.id }, 'Term Loan B');
+    const model = { timeline: [period('2024')], historicals: { [termLoanId]: [300] } as Record<string, (number | null)[]> };
 
-    const { evaluation } = applyDynamicInstances(schema, model, instances);
+    const evaluation = evaluateModel(withTermLoan, model);
     expect(evaluation.getValue(lineByName.get('Secured Debt')!.id, 0)).toBe(300);
     expect(evaluation.getValue(lineByName.get('Total Debt')!.id, 0)).toBe(300);
   });

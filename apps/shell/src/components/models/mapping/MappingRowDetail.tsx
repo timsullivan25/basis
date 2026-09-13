@@ -19,9 +19,10 @@ interface MappingRowDetailProps {
   workbook: ParsedWorkbook;
   onSetSourceLines: (sourceLineIds: string[]) => void;
   onApprove: () => void;
-  /** Set once this line has ≥1 LineInstance summing into it — its value is superseded by that
-   *  sum for every period (see StatementLine.allowsSubLines' own doc comment), so direct mapping
-   *  here would silently be ignored. Disables the checklist below in favor of an explanation. */
+  /** Set once this line has ≥1 real child line (parentLineId pointing here) summing into it —
+   *  its value is superseded by that sum for every period (see StatementLine.allowsSubLines' own
+   *  doc comment), so direct mapping here would silently be ignored. Disables the checklist
+   *  below in favor of an explanation. */
   supersededByInstanceCount?: number;
 }
 

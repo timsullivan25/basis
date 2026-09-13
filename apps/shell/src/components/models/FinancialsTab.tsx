@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react';
 import { Button, Card, Dialog, Icon, IconButton } from '@basis/design-system';
 import {
   computedResultRepository,
-  lineInstanceRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
   statementSchemaRepository,
   type Company,
-  type LineInstance,
   type Mapping,
   type Model,
   type ModelImport,
@@ -23,7 +21,7 @@ import {
   versionStampMatches,
   type LineValues,
 } from '../../lib/computedCache';
-import { applyDynamicInstances } from '../../lib/engine/withDynamicInstances';
+import { evaluateModel } from '../../lib/engine/evaluate';
 import { CreateModelDialog } from './CreateModelDialog';
 import { SummaryPanel } from './SummaryPanel';
 import type { ModelMappingScreenProps } from './mapping/ModelMappingScreen';
@@ -44,13 +42,13 @@ interface FinancialsTabProps {
 /** Read-through cache lookup: a version-stamp hit skips the engine entirely — see DashboardTab's
  *  own former copy of this (moved here now that the full summary lives on Financials, not
  *  Dashboard). A miss computes live once and writes the fresh result back. */
-async function readOrComputeResult(model: Model, schema: StatementSchema, instances: LineInstance[]): Promise<LineValues> {
+async function readOrComputeResult(model: Model, schema: StatementSchema): Promise<LineValues> {
   const cached = await computedResultRepository.get(model.id, 'base');
   if (cached && versionStampMatches(cached.versionStamp, model, null, schema)) {
     return toLineValues(cached);
   }
-  const { schema: instancedSchema, evaluation } = applyDynamicInstances(schema, model, instances);
-  const materialized = materializeEvaluation(instancedSchema, model, evaluation);
+  const evaluation = evaluateModel(schema, model);
+  const materialized = materializeEvaluation(schema, model, evaluation);
   const versionStamp = computeVersionStamp(model, null, schema);
   const built = buildComputedResult(model.id, 'base', versionStamp, materialized);
   await computedResultRepository.set(built);
@@ -91,13 +89,10 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
       setSummaryResult(null);
 
       if (!existingModel) return;
-      const [existingSchema, existingInstances] = await Promise.all([
-        statementSchemaRepository.get(existingModel.statementSchemaId),
-        lineInstanceRepository.list(existingModel.id),
-      ]);
+      const existingSchema = await statementSchemaRepository.get(existingModel.statementSchemaId);
       if (cancelled || !existingSchema) return;
       setModelSchema(existingSchema);
-      const lineValues = await readOrComputeResult(existingModel, existingSchema, existingInstances);
+      const lineValues = await readOrComputeResult(existingModel, existingSchema);
       if (!cancelled) setSummaryResult(lineValues);
     })();
     return () => {
@@ -122,17 +117,16 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
   }
 
   async function loadModelDetails(savedModel: Model) {
-    const [imp, map, schema, savedInstances] = await Promise.all([
+    const [imp, map, schema] = await Promise.all([
       modelImportRepository.get(savedModel.modelImportId),
       mappingRepository.get(savedModel.mappingId),
       statementSchemaRepository.get(savedModel.statementSchemaId),
-      lineInstanceRepository.list(savedModel.id),
     ]);
     setModel(savedModel);
     setModelImport(imp ?? null);
     setMapping(map ?? null);
     setModelSchema(schema ?? null);
-    setSummaryResult(schema ? await readOrComputeResult(savedModel, schema, savedInstances) : null);
+    setSummaryResult(schema ? await readOrComputeResult(savedModel, schema) : null);
   }
 
   function startNewImport(input: { templateType: ModelTemplateType; file: File }) {
@@ -150,15 +144,13 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
 
   function startEditMapping() {
     if (!schemas || !model || !modelImport) return;
-    // `schemas` (statementSchemaRepository.list()) deliberately excludes every model's own
-    // private forked copy — see its own doc comment — so the model being edited here needs its
-    // own schema (already loaded into `modelSchema`, via a direct get() that bypasses that
-    // filter) added back in, or ModelMappingScreen's schema lookup would fail to find it.
-    const schemasForMapping =
-      modelSchema && !schemas.some((s) => s.id === modelSchema.id) ? [...schemas, modelSchema] : schemas;
+    // `schemas` (statementSchemaRepository.list(), templates only) is unused by
+    // ModelMappingScreen for the `editing` case — it fetches the model's own private schema
+    // directly by id instead — but is still required by ModelMappingScreenProps, so it's passed
+    // through unchanged.
     onOpenMapping({
       company,
-      schemas: schemasForMapping,
+      schemas,
       editing: { model, modelImport },
       onCancel: () => {},
       onSaved: (updatedModel) => {

@@ -1,66 +1,16 @@
-import type { DriverDefinition, StatementLine, StatementSchema, StatementSchemaRepository, StatementSection } from './types';
+import type { StatementSchema, StatementSchemaRepository } from './types';
 import { openBasisDb } from './db';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
-import { remapFormulaIds } from '../lib/engine/resolve';
-
-/** Every section AND line gets a fresh id on copy, all recorded in `idMap` as it goes —
- *  formulas aren't touched here, since a line's formula can reference a line defined later in
- *  the schema and the full old-id -> new-id map needs to exist before any of them are remapped.
- *  The section's own id is recorded too (not just its lines') so a caller with other state
- *  referencing a section directly (e.g. a freeform/KPI instance's sectionId) can remap it the
- *  same way. */
-function cloneSectionShallow(section: StatementSection, idMap: Map<string, string>): StatementSection {
-  const newSectionId = crypto.randomUUID();
-  idMap.set(section.id, newSectionId);
-  return {
-    ...section,
-    id: newSectionId,
-    lines: section.lines.map((l): StatementLine => {
-      const newId = crypto.randomUUID();
-      idMap.set(l.id, newId);
-      return { ...l, id: newId };
-    }),
-  };
-}
-
-/** Same idea as cloneSectionShallow, for drivers — every driver gets a fresh id too, recorded
- *  into the SAME idMap (line ids and driver ids are separate uuid pools, so one combined map
- *  is safe), since a driverRef inside some line's formula needs it remapped alongside line refs. */
-function cloneDriversShallow(drivers: DriverDefinition[], idMap: Map<string, string>): DriverDefinition[] {
-  return drivers.map((d): DriverDefinition => {
-    const newId = crypto.randomUUID();
-    idMap.set(d.id, newId);
-    return { ...d, id: newId };
-  });
-}
-
-/** Second pass, once every line AND driver in the copy has its final id — rewrites each
- *  formula's resolved refs (both ref.lineId and driverRef.driverId) to point at the copy's ids. */
-function remapSectionFormulas(section: StatementSection, idMap: Map<string, string>): StatementSection {
-  return {
-    ...section,
-    lines: section.lines.map((l) => ({ ...l, formula: l.formula ? remapFormulaIds(l.formula, idMap) : null })),
-  };
-}
-
-/** A DriverDefinition's own targetLineId/basisLineId aren't inside a ResolvedFormula tree, so
- *  remapFormulaIds doesn't touch them — rewritten here through the same idMap instead. */
-function remapDriverLineRefs(drivers: DriverDefinition[], idMap: Map<string, string>): DriverDefinition[] {
-  return drivers.map((d) => ({
-    ...d,
-    targetLineId: idMap.get(d.targetLineId) ?? d.targetLineId,
-    basisLineId: d.basisLineId ? (idMap.get(d.basisLineId) ?? d.basisLineId) : undefined,
-  }));
-}
+import { cloneStatementSchemaStructure } from '../lib/statementSchemaClone';
 
 /** First StatementSchemaRepository adapter. Swap for an API-backed one later without touching callers. */
 export class IndexedDbStatementSchemaRepository implements StatementSchemaRepository {
-  /** Real templates only — every model forks its own private copy via duplicate() at creation
-   *  (see ModelMappingScreen.handleSave), so the store fills up with one `copiedFromSchemaId`-set
-   *  row per model over time. Those are never meant to be picked as a starting point for another
-   *  model, or managed from the template library (StatementDefinitionsScreen) — a model's own
-   *  copy is only ever edited from within that model's own screen. Filtered out here, the one
-   *  place both current callers read the list from, rather than in each caller. */
+  /** Real templates only — every model forks its own private copy at creation (see
+   *  ModelMappingScreen), so the store fills up with one `copiedFromSchemaId`-set row per model
+   *  over time. Those are never meant to be picked as a starting point for another model, or
+   *  managed from the template library (StatementDefinitionsScreen) — a model's own copy is
+   *  only ever edited from within that model's own screen. Filtered out here, the one place
+   *  both current callers read the list from, rather than in each caller. */
   async list(): Promise<StatementSchema[]> {
     const db = await openBasisDb();
     const existing = await db.getAllFromIndex('statementSchema', 'by-createdAt');
@@ -93,26 +43,17 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     return schema;
   }
 
+  /** Persists immediately — for the template library's explicit "Duplicate" action. See
+   *  cloneStatementSchemaStructure for the (pure, no-DB) cloning logic itself, which
+   *  ModelMappingScreen also uses directly (without persisting) to fork a new model's schema
+   *  in-memory the moment a template is chosen. */
   async duplicate(id: string, name: string): Promise<{ schema: StatementSchema; idMap: Map<string, string> }> {
     const db = await openBasisDb();
     const source = await db.get('statementSchema', id);
     if (!source) throw new Error(`Statement schema not found: ${id}`);
-
-    const idMap = new Map<string, string>();
-    const clonedSections = source.sections.map((s) => cloneSectionShallow(s, idMap));
-    const clonedDrivers = cloneDriversShallow(source.drivers ?? [], idMap);
-    const now = new Date().toISOString();
-    const copy: StatementSchema = {
-      id: crypto.randomUUID(),
-      name,
-      copiedFromSchemaId: source.id,
-      createdAt: now,
-      updatedAt: now,
-      sections: clonedSections.map((s) => remapSectionFormulas(s, idMap)),
-      drivers: remapDriverLineRefs(clonedDrivers, idMap),
-    };
-    await db.add('statementSchema', copy);
-    return { schema: copy, idMap };
+    const { schema, idMap } = cloneStatementSchemaStructure(source, crypto.randomUUID(), name);
+    await db.add('statementSchema', schema);
+    return { schema, idMap };
   }
 
   async save(schema: StatementSchema): Promise<StatementSchema> {

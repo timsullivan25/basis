@@ -45,14 +45,13 @@ export type ResolvedFormula =
  *  and lib/engine/evaluate.ts's computeLine). 'growth'/'percent-of'/'days-of'/'roll-off' each
  *  generate a formula that reads a DriverDefinition's per-period value via a driverRef node;
  *  'flat' is a pure carry-forward (priorPeriod(self)) and needs no driver at all.
- *  'roll-off' (LineInstance projections only — see instances/projectionMethod.tsx) anchors to
- *  this line's own value at the model's last actual period (via a `lastActual` formula call, not
- *  the prior period) and holds `1 - driver` of it flat forever; the `driver` fraction is injected
- *  as a contra adjustment onto the basis line every period (see
- *  lib/engine/withDynamicInstances.ts's injectRollOffContras) — e.g. a one-time cost that
- *  permanently lowers another line's run-rate while continuing to show as a partial EBITDA
- *  add-back. 'actual' (also LineInstance-only) has no formula computation at all — the driver IS
- *  the value, a per-period hardcoded number. */
+ *  'roll-off' anchors to this line's own value at the model's last actual period (via a
+ *  `lastActual` formula call, not the prior period) and holds `1 - driver` of it flat forever;
+ *  the `driver` fraction is subtracted from the basis line's own formula every period, via a
+ *  non-destructive wrapper (see lib/statementLineChildren.ts's applyRollOffContra) — e.g. a
+ *  one-time cost that permanently lowers another line's run-rate while continuing to show as a
+ *  partial EBITDA add-back. 'actual' has no formula computation at all — the driver IS the
+ *  value, a per-period hardcoded number. */
 export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' | 'actual';
 
 /** A named, per-period leaf value (see StatementSchema.drivers) — architecturally almost
@@ -100,24 +99,66 @@ export interface StatementLine {
    *  formula is a pure `priorPeriod(self)` carry-forward); every other method does. */
   projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string } | null;
   aliases: string[];
-  /** When true, a model may grow a list of LineInstance rows under this line (a revenue
-   *  segment, an EBITDA adjustment) — see LineInstance's own doc comment. Absent/false means
-   *  this line behaves exactly as it does today; most lines never set this. Once a model has
-   *  ≥1 instance here, this line's value is the sum of its instances for every period,
-   *  superseding (not blending with) any direct mapping — see
-   *  lib/engine/withDynamicInstances.ts. */
+  /** When true, a model may grow a list of real child StatementLines under this line (a revenue
+   *  segment, an EBITDA adjustment, a debt tranche) — see `parentLineId` below and
+   *  lib/statementLineChildren.ts. Absent/false means this line behaves exactly as it does
+   *  today; most lines never set this. Once a model has ≥1 child here, this line's own formula
+   *  is regenerated to sum them for every period, superseding (not blending with) any direct
+   *  mapping. */
   allowsSubLines?: boolean;
-  /** Only meaningful when allowsSubLines is true. Declares that instances hosted under this line
-   *  are debt tranches — the schema's own way of saying "these sub-lines take the debt-specific
-   *  property fields (maturity, coupon, etc.) and flow into the future Debt Schedule," rather than
-   *  the mapping screen matching on a hardcoded line name. A schema is free to name its tiers
-   *  anything, or have any number of them; whichever lines set this are debt tiers. */
-  subLineKind?: 'debt';
-  /** Only meaningful when subLineKind is 'debt'. Declares that a tranche instance under this
-   *  specific line may be flagged as a revolver (see LineInstance.debtType) — kept separate from
-   *  subLineKind so a schema can designate exactly which tier(s) allow it, instead of the mapping
-   *  screen hardcoding "only 1L Debt". */
-  allowsRevolver?: boolean;
+  /** The parent line this is a child of, within the SAME schema. Absent for an ordinary
+   *  top-level line. Only ever set on a line living in a MODEL's own (privately-owned, forked —
+   *  see StatementSchema.copiedFromSchemaId) schema copy, never on a template's own lines,
+   *  since a template never has actual children instantiated — see ModelMappingScreen's
+   *  "+ Add sub-line"/"+ Add KPI" handling. A child with no parentLineId but living directly in
+   *  a section whose allowsFreeformLines is true is the KPI case — no separate field needed for
+   *  that, since the line simply lives in that section's own `lines` array like any other. */
+  parentLineId?: string;
+  /** 'debt' today; other kinds may exist later. Fully independent of allowsSubLines — a line can
+   *  be debt with no children (a single lump-sum balance carrying its own properties directly),
+   *  have children without being debt (a revenue segment's parent), both, or neither. A child's
+   *  EFFECTIVE kind is always its parent's (via parentLineId) — never independently set on the
+   *  child itself, so it can never drift out of sync with the parent (a rollup mixing debt and
+   *  non-debt children wouldn't mean anything). Only a line with no parentLineId has this field
+   *  mean anything on its own. */
+  lineKind?: 'debt';
+  /** Set on whichever debt-kind line (lineKind === 'debt', directly or inherited) currently has
+   *  no children of its own — a standalone debt line, or a leaf tranche. The moment a debt line
+   *  gains a real child, it becomes a pure rollup (its own formula sums the children — see
+   *  ModelMappingScreen) and stops carrying its own properties; each child carries its own
+   *  instead. Absent for a non-debt line. */
+  debtProperties?: DebtTrancheProperties;
+}
+
+/** Property bundle for one debt tranche — see StatementLine.debtProperties' own doc comment for
+ *  exactly which line carries this. */
+export interface DebtTrancheProperties {
+  debtType?: 'term' | 'revolver';
+  /** ISO date string. */
+  maturity?: string;
+  /** Annual rate, e.g. 0.08 for 8%. For a revolver, the rate on the DRAWN balance. */
+  couponRate?: number;
+  couponType?: 'fixed' | 'floating';
+  /** Free-text reference (e.g. "SOFR") — only meaningful when couponType is 'floating'. Not yet
+   *  resolved to an actual per-period rate value; that's Debt Schedule's concern. */
+  baseRate?: string;
+  frequency?: 'quarterly' | 'semiAnnual';
+  /** Overrides the "original face value" amortization is computed against (see
+   *  amortizationRate) — falls back to this line's own last-historical-period value when
+   *  absent, since original issuance size often isn't separately reported. */
+  originalFaceValue?: number;
+  /** Annual %, e.g. 0.01 for 1%/year — applied against originalFaceValue, not the current
+   *  balance. Debt Schedule's concern to actually compute; captured here as a property now. */
+  amortizationRate?: number;
+  /** Whether this tranche participates in the (future) cash-sweep repayment waterfall. Defaults
+   *  to true when absent — most tranches are repayable; a bond typically is not. */
+  repayable?: boolean;
+  /** Revolver-only: the cap on what can be drawn. This line's own historicals/driver value is
+   *  always the DRAWN amount (what rolls up into its parent), never the commitment amount. */
+  commitmentAmount?: number;
+  /** Revolver-only: annual rate on the undrawn portion (commitmentAmount minus the drawn
+   *  balance). */
+  commitmentFeeRate?: number;
 }
 
 export interface StatementSection {
@@ -126,10 +167,10 @@ export interface StatementSection {
   name: string;
   /** Array position is the display order within the section. */
   lines: StatementLine[];
-  /** When true, a model may grow a list of freestanding LineInstance rows under this section
-   *  (KPIs) — each just a real spliced-in line with no rollup target, unlike a `lineId`-scoped
-   *  instance under an `allowsSubLines` line. Only meaningful for a section with no natural
-   *  parent line to attach sub-lines to. */
+  /** When true, a model may grow a list of freestanding child StatementLines directly in this
+   *  section's own `lines` (KPIs) — each with no `parentLineId`, unlike a sub-line rolling up
+   *  into an `allowsSubLines` line. Only meaningful for a section with no natural parent line to
+   *  attach sub-lines to. */
   allowsFreeformLines?: boolean;
 }
 
@@ -290,17 +331,12 @@ export interface Model {
    *  indices; edited via the drivers panel, never resolved from a workbook. */
   driverValues: Record<string, (number | null)[]>;
   createdAt: string;
-  /** Bumped on every update() — part of a computed result's version stamp (see ComputedResult). */
+  /** Bumped on every update() — part of a computed result's version stamp (see ComputedResult).
+   *  Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is a real
+   *  StatementLine living in this model's own private schema (see lib/statementLineChildren.ts),
+   *  so a structural change to one of those is a schema save — already covered by
+   *  StatementSchema.updatedAt, with nothing extra needed here. */
   updatedAt: string;
-  /** Bumped by IndexedDbLineInstanceRepository on every create/update/remove of one of this
-   *  model's LineInstance rows — deliberately NOT part of ModelRepository.update()'s patch, since
-   *  nothing but that repository ever touches it (the same cross-store-write pattern
-   *  IndexedDbModelRepository's own cascade deletes already use). A stored aggregate, not derived
-   *  from the current instances' own updatedAt fields, so that REMOVING an instance still bumps
-   *  it — the max-of-survivors would otherwise miss exactly that case. Part of a computed
-   *  result's version stamp (see ComputedResult) so removing/editing an instance correctly
-   *  invalidates any cached result. */
-  instancesUpdatedAt: string;
 }
 
 export interface CreateModelInput {
@@ -319,115 +355,6 @@ export interface ModelRepository {
   create(input: CreateModelInput): Promise<Model>;
   update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues'>>): Promise<Model>;
   /** Cascades to the model's ModelImport, Mapping and Scenarios. */
-  remove(id: string): Promise<void>;
-}
-
-/**
- * A user-added row under one model — either a sub-line rolling up into a `StatementLine` whose
- * `allowsSubLines` is true (a revenue segment, an EBITDA adjustment), via `lineId`; or a
- * freestanding row under a `StatementSection` whose `allowsFreeformLines` is true (a KPI), via
- * `sectionId`. Exactly one of the two is ever set. Deliberately its own top-level entity, not an
- * array embedded in `Model` — same reasoning as `Scenario`/`ComputedResult`/`AnalysisSettings`:
- * `Model`'s only per-model assumption bag is `driverValues`.
- *
- * At evaluation time, every instance is spliced into a COPY of the schema as an ordinary, real
- * `StatementLine` (id = instance.id) and evaluated through the completely unmodified engine —
- * see lib/engine/withDynamicInstances.ts. This is also what makes a sibling-instance basis work:
- * `projection.basisLineId` may point at either a schema line's id or another instance's id,
- * since after splicing both are just ordinary line ids in the same schema copy.
- */
-export interface LineInstance {
-  id: string;
-  modelId: string;
-  /** The allowsSubLines line this rolls up into. Omitted for a freeform (KPI-style) instance. */
-  lineId?: string;
-  /** The allowsFreeformLines section this is a freestanding row of. Omitted for a sub-line. */
-  sectionId?: string;
-  name: string;
-  /** The uploaded workbook's source line ids this instance's historicals are derived from —
-   *  persisted directly on the instance (unlike a schema line, which has no equivalent since its
-   *  mapping lives in a separate Mapping record) so re-opening the mapping screen can show and
-   *  edit what actually produced an existing instance's values, not just the resulting numbers.
-   *  Empty means "manual": this instance's historicals are typed in directly rather than derived
-   *  from any source line — the one-time-adjustment case. Absent on rows created before this
-   *  field existed; every read site treats that the same as empty (`?? []`), which is also
-   *  correct for them (their historicals were set once at creation and are otherwise untouched). */
-  sourceLineIds: string[];
-  /** Same vocabulary StatementLine.projection already uses. driverId is a real key into the
-   *  SAME Model.driverValues / Scenario.driverValues maps every other driver already lives in —
-   *  deliberately not a separate instance-owned value bag, so scenario overrides and
-   *  mergeScenarioDriverValues work completely unchanged. */
-  projection: { method: 'flat' } | { method: ProjectionMethod; driverId: string; basisLineId?: string };
-  /** Debt-tranche fields — all absent/undefined for a non-debt instance (a revenue segment, an
-   *  EBITDA adjustment). Set only when `lineId` targets a line with `StatementLine.subLineKind ===
-   *  'debt'` — see capitalStructure.ts. Kept on LineInstance rather than a parallel entity so
-   *  tranches reuse the exact same splice/rollup mechanism (withDynamicInstances.ts) as every
-   *  other instance. */
-  debtType?: 'term' | 'revolver';
-  /** ISO date string. */
-  maturity?: string;
-  /** Annual rate, e.g. 0.08 for 8%. For a revolver, the rate on the DRAWN balance. */
-  couponRate?: number;
-  couponType?: 'fixed' | 'floating';
-  /** Free-text reference (e.g. "SOFR") — only meaningful when couponType is 'floating'. Not yet
-   *  resolved to an actual per-period rate value; that's Debt Schedule's concern. */
-  baseRate?: string;
-  frequency?: 'quarterly' | 'semiAnnual';
-  /** Overrides the "original face value" amortization is computed against (see
-   *  amortizationRate) — falls back to the instance's own last-historical-period value when
-   *  absent, since original issuance size often isn't separately reported. */
-  originalFaceValue?: number;
-  /** Annual %, e.g. 0.01 for 1%/year — applied against originalFaceValue, not the current
-   *  balance. Debt Schedule's concern to actually compute; captured here as a property now. */
-  amortizationRate?: number;
-  /** Whether this tranche participates in the (future) cash-sweep repayment waterfall. Defaults
-   *  to true when absent — most tranches are repayable; a bond typically is not. */
-  repayable?: boolean;
-  /** Revolver-only: the cap on what can be drawn. The instance's own historicals/driver value is
-   *  always the DRAWN amount (what rolls up into 1L Debt), never the commitment amount. */
-  commitmentAmount?: number;
-  /** Revolver-only: annual rate on the undrawn portion (commitmentAmount minus the drawn
-   *  balance). */
-  commitmentFeeRate?: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Every field a LineInstance can be created or updated with, other than its identity
- *  (id/modelId), timestamps, and lineId/sectionId (which line/section it targets is fixed at
- *  creation — see LineInstance's own doc comment on "exactly one of the two is ever set"). */
-export type LineInstanceContent = Pick<
-  LineInstance,
-  | 'name'
-  | 'sourceLineIds'
-  | 'projection'
-  | 'debtType'
-  | 'maturity'
-  | 'couponRate'
-  | 'couponType'
-  | 'baseRate'
-  | 'frequency'
-  | 'originalFaceValue'
-  | 'amortizationRate'
-  | 'repayable'
-  | 'commitmentAmount'
-  | 'commitmentFeeRate'
->;
-
-export interface CreateLineInstanceInput extends Partial<LineInstanceContent> {
-  modelId: string;
-  lineId?: string;
-  sectionId?: string;
-  name: string;
-  sourceLineIds: string[];
-  projection: LineInstance['projection'];
-}
-
-export interface LineInstanceRepository {
-  list(modelId: string): Promise<LineInstance[]>;
-  get(id: string): Promise<LineInstance | undefined>;
-  create(input: CreateLineInstanceInput): Promise<LineInstance>;
-  update(id: string, patch: Partial<LineInstanceContent>): Promise<LineInstance>;
   remove(id: string): Promise<void>;
 }
 
@@ -486,9 +413,6 @@ export interface ComputedResultVersionStamp {
   /** null when scenarioId is 'base' — Base has no Scenario row to stamp. */
   scenarioUpdatedAt: string | null;
   schemaUpdatedAt: string;
-  /** Mirrors Model.instancesUpdatedAt — never null, since every model has one from creation,
-   *  even with zero LineInstance rows. */
-  instancesUpdatedAt: string;
 }
 
 /**
@@ -569,11 +493,6 @@ export interface Snapshot {
   sourceFileName: string;
   sourceUploadedAt: string;
   scenarios: SnapshotScenario[];
-  /** A frozen deep copy of the model's LineInstance rows at snapshot time — same convention as
-   *  `scenarios` above. Without this, an old snapshot's NUMBERS would still be correct (they're
-   *  fully materialized at freeze time regardless), but there'd be no record of which instances
-   *  produced them or how they were configured. */
-  instances: LineInstance[];
 }
 
 export interface CreateSnapshotInput {
@@ -588,7 +507,6 @@ export interface CreateSnapshotInput {
   sourceFileName: string;
   sourceUploadedAt: string;
   scenarios: SnapshotScenario[];
-  instances: LineInstance[];
 }
 
 export interface SnapshotRepository {

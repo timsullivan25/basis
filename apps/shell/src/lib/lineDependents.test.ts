@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { findInstanceBasisDependents, findSchemaDependents, hasInstanceBasisDependents, hasSchemaDependents } from './lineDependents';
-import type { DriverDefinition, LineInstance, ResolvedFormula, StatementLine, StatementSchema } from '../data';
+import { findSchemaDependents, hasSchemaDependents } from './lineDependents';
+import type { DriverDefinition, ResolvedFormula, StatementLine, StatementSchema } from '../data';
 
-function line(id: string, name: string, formula: ResolvedFormula | null = null): StatementLine {
+function line(id: string, name: string, formula: ResolvedFormula | null = null, parentLineId?: string): StatementLine {
   return {
     id,
     name,
@@ -14,6 +14,7 @@ function line(id: string, name: string, formula: ResolvedFormula | null = null):
     formula,
     projection: null,
     aliases: [],
+    parentLineId,
   };
 }
 
@@ -23,10 +24,6 @@ function ref(lineId: string): ResolvedFormula {
 
 function driver(id: string, basisLineId?: string): DriverDefinition {
   return { id, name: id, unit: '%', targetLineId: 'target', method: 'percent-of', basisLineId };
-}
-
-function instance(id: string, projection: LineInstance['projection'] = { method: 'flat' }): Pick<LineInstance, 'id' | 'name' | 'projection'> {
-  return { id, name: id, projection };
 }
 
 describe('findSchemaDependents', () => {
@@ -72,25 +69,22 @@ describe('findSchemaDependents', () => {
     const deps = findSchemaDependents(schema, new Set(['a']));
     expect(hasSchemaDependents(deps)).toBe(false);
   });
-});
 
-describe('findInstanceBasisDependents', () => {
-  it('finds a sibling instance using the deleted instance as its basis', () => {
-    const instances = [instance('seg-a'), instance('seg-b', { method: 'percent-of', driverId: 'd1', basisLineId: 'seg-a' })];
-    const deps = findInstanceBasisDependents(instances, 'seg-a');
-    expect(deps.dependentNames).toEqual(['seg-b']);
-    expect(hasInstanceBasisDependents(deps)).toBe(true);
-  });
-
-  it('excludes the deleted instance itself from being reported as its own dependent', () => {
-    const instances = [instance('seg-a')];
-    const deps = findInstanceBasisDependents(instances, 'seg-a');
-    expect(deps.dependentNames).toEqual([]);
-  });
-
-  it('reports nothing when no sibling references the deleted instance', () => {
-    const instances = [instance('seg-a'), instance('seg-b')];
-    const deps = findInstanceBasisDependents(instances, 'seg-a');
-    expect(hasInstanceBasisDependents(deps)).toBe(false);
+  it('finds a sibling child line using the deleted child as its driver basis — the same check now covers what a separate instance-basis mechanism used to', () => {
+    const schema: StatementSchema = {
+      id: 's1', name: 'Test', createdAt: '', updatedAt: '',
+      sections: [{
+        id: 'sec', name: 'Revenue',
+        lines: [
+          line('rev', 'Revenue', null),
+          line('seg-a', 'Segment A', null, 'rev'),
+          line('seg-b', 'Segment B', ref('seg-a'), 'rev'),
+        ],
+      }],
+      drivers: [driver('seg-b-driver', 'seg-a')],
+    };
+    const deps = findSchemaDependents(schema, new Set(['seg-a']));
+    expect(deps.formulaLines).toEqual([{ id: 'seg-b', name: 'Segment B' }]);
+    expect(deps.driverBases).toEqual([{ id: 'seg-b-driver', name: 'seg-b-driver' }]);
   });
 });

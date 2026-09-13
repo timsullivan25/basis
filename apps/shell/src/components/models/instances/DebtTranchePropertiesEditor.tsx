@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Field, Input, SegmentedControl, Switch } from '@basis/design-system';
-import type { LineInstanceContent } from '../../../data';
+import type { DebtTrancheProperties } from '../../../data';
 
 function parsePercent(text: string): number | undefined {
   const trimmed = text.trim();
@@ -54,19 +54,19 @@ function NumberInput({ value, onCommit }: { value: number | undefined; onCommit:
 }
 
 interface DebtTranchePropertiesEditorProps {
-  instance: Partial<LineInstanceContent>;
-  /** Only a tranche under 1L Debt can be a revolver — a revolver is always first-lien. */
-  canBeRevolver: boolean;
-  onChange: (patch: Partial<LineInstanceContent>) => void;
+  instance: DebtTrancheProperties;
+  onChange: (patch: Partial<DebtTrancheProperties>) => void;
 }
 
-/** Property fields specific to a capital-structure debt tranche (LineInstance's optional debt
- *  fields — see its own doc comment) — maturity, coupon, and, for a revolver, its commitment
- *  amount/fee separate from the drawn balance the instance's own value/historicals represent. No
+/** Property fields for any debt-kind line's own tranche (see StatementLine.debtProperties' own
+ *  doc comment) — maturity, coupon, and, for a revolver, its commitment amount/fee separate from
+ *  the drawn balance the line's own value/historicals represent. Term vs. Revolver is always
+ *  offered here, on any debt line — there's no separate schema-level toggle gating it; a schema
+ *  simply marks a line "debt," and this panel is what a mapping-time user sees for it. No
  *  projection or interest calculation reads these yet; that's Debt Schedule's concern. */
-export function DebtTranchePropertiesEditor({ instance, canBeRevolver, onChange }: DebtTranchePropertiesEditorProps) {
+export function DebtTranchePropertiesEditor({ instance, onChange }: DebtTranchePropertiesEditorProps) {
   const debtType = instance.debtType ?? 'term';
-  const isRevolver = canBeRevolver && debtType === 'revolver';
+  const isRevolver = debtType === 'revolver';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', marginTop: 'var(--space-3)' }}>
@@ -74,16 +74,14 @@ export function DebtTranchePropertiesEditor({ instance, canBeRevolver, onChange 
         Tranche details
       </div>
 
-      {canBeRevolver ? (
-        <Field label="Type">
-          <SegmentedControl
-            size="sm"
-            value={debtType}
-            options={[{ value: 'term', label: 'Term' }, { value: 'revolver', label: 'Revolver' }]}
-            onChange={(value) => onChange({ debtType: value as 'term' | 'revolver' })}
-          />
-        </Field>
-      ) : null}
+      <Field label="Type">
+        <SegmentedControl
+          size="sm"
+          value={debtType}
+          options={[{ value: 'term', label: 'Term' }, { value: 'revolver', label: 'Revolver' }]}
+          onChange={(value) => onChange({ debtType: value as 'term' | 'revolver' })}
+        />
+      </Field>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
         <Field label="Maturity">
