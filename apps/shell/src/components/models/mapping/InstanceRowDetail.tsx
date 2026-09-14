@@ -6,6 +6,7 @@ import { ManualHistoricalsInput } from './ManualHistoricalsInput';
 import { ProjectionMethodEditor, type SchemaLineGroup } from '../instances/projectionMethod';
 import type { ChildProjectionSelection } from '../../../lib/statementLineChildren';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
+import { LineSettingsPanel, type LineSettingsSection } from '../../common/LineSettingsPanel';
 
 interface InstanceRowDetailProps {
   /** The child (or KPI) line itself — a real StatementLine living in the draft schema, not a
@@ -31,7 +32,10 @@ interface InstanceRowDetailProps {
   onChangeProjection: (selection: ChildProjectionSelection) => void;
   onChangeDebtProperties: (patch: Partial<DebtTrancheProperties>) => void;
   onDelete: () => void;
+  onClose: () => void;
 }
+
+const DEFAULT_OPEN_SECTIONS = ['mapping', 'name', 'debt'];
 
 /** The full editor for one child line's row — name, source mapping, and projection method/basis
  *  (or, for a debt-kind line, its tranche properties instead of a projection picker), all in one
@@ -43,14 +47,18 @@ interface InstanceRowDetailProps {
  *  matching every other line's "mapped value wins" rule. */
 export function InstanceRowDetail({
   line, sectionName, workbook, schemaLineGroups, basisLineId, isKpi, effectiveKind, sourceLineIds, manualHistoricals,
-  onChangeName, onChangeSourceLines, onChangeManualHistoricals, onChangeProjection, onChangeDebtProperties, onDelete,
+  onChangeName, onChangeSourceLines, onChangeManualHistoricals, onChangeProjection, onChangeDebtProperties, onDelete, onClose,
 }: InstanceRowDetailProps) {
   const [manualEntry, setManualEntry] = useState(sourceLineIds.length === 0 && manualHistoricals.some((v) => v !== null));
+  const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
+  const toggleSection = (key: string) => setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 'var(--space-9)' }}>
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+  const sections: LineSettingsSection[] = [
+    {
+      key: 'mapping',
+      label: 'Source mapping',
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {manualEntry ? (
             <ManualHistoricalsInput workbook={workbook} values={manualHistoricals} onChange={onChangeManualHistoricals} />
           ) : (
@@ -68,29 +76,36 @@ export function InstanceRowDetail({
             </Button>
           ) : null}
         </div>
-
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-          <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            {isKpi ? 'KPI' : 'Sub-line'} name
+      ),
+    },
+    {
+      key: 'name',
+      label: 'Name & projection',
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+          <div>
+            <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
+              {isKpi ? 'KPI' : 'Sub-line'} name
+            </div>
+            <Input
+              size="sm"
+              autoFocus={!line.name}
+              value={line.name}
+              onChange={(e) => onChangeName(e.target.value)}
+              placeholder={isKpi ? 'e.g. Monthly Active Users' : 'e.g. Segment A'}
+            />
           </div>
-          <Input
-            size="sm"
-            autoFocus={!line.name}
-            value={line.name}
-            onChange={(e) => onChangeName(e.target.value)}
-            placeholder={isKpi ? 'e.g. Monthly Active Users' : 'e.g. Segment A'}
-          />
 
           {effectiveKind === 'debt' ? (
-            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: 'var(--space-3)' }}>
+            <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
               This tranche's projected balance doesn't use a generic projection method — it's
               driven entirely by the Debt Schedule's own roll-forward (Beginning − Amortization −
               Repayment + Borrowing), based on the tranche details below. See the Debt Schedule
               section for the full breakdown.
             </div>
           ) : (
-            <>
-              <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
+            <div>
+              <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
                 Projection method
               </div>
               <ProjectionMethodEditor
@@ -100,20 +115,35 @@ export function InstanceRowDetail({
                 schemaLineGroups={schemaLineGroups}
                 onChange={onChangeProjection}
               />
-            </>
+            </div>
           )}
-
-          {effectiveKind === 'debt' ? (
-            <DebtTranchePropertiesEditor instance={line.debtProperties ?? {}} onChange={onChangeDebtProperties} />
-          ) : null}
-
-          <div style={{ marginTop: 'var(--space-4)' }}>
-            <Button size="sm" variant="ghost" iconLeft="trash-2" onClick={onDelete}>
-              Delete {isKpi ? 'KPI' : 'sub-line'}
-            </Button>
-          </div>
         </div>
-      </div>
-    </div>
+      ),
+    },
+  ];
+
+  if (effectiveKind === 'debt') {
+    sections.push({
+      key: 'debt',
+      label: 'Debt tranche',
+      content: <DebtTranchePropertiesEditor instance={line.debtProperties ?? {}} onChange={onChangeDebtProperties} />,
+    });
+  }
+
+  return (
+    <LineSettingsPanel
+      title={line.name || (isKpi ? 'Untitled KPI' : 'Untitled sub-line')}
+      subtitle={isKpi ? 'KPI' : 'Sub-line'}
+      icon="corner-down-right"
+      onClose={onClose}
+      openKeys={openKeys}
+      onToggleSection={toggleSection}
+      sections={sections}
+      footer={
+        <Button size="sm" variant="ghost" iconLeft="trash-2" onClick={onDelete}>
+          Delete {isKpi ? 'KPI' : 'sub-line'}
+        </Button>
+      }
+    />
   );
 }

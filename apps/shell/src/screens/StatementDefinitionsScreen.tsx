@@ -9,7 +9,7 @@ import {
   type StatementSection,
 } from '../data';
 import { DEFAULT_SCHEMA_ID } from '../data/defaultStatementSchema';
-import { SectionEditor, type ProjectionSelection } from '../components/statements/SectionEditor';
+import { SectionEditor, LineSettingsPanelContent, type ProjectionSelection } from '../components/statements/SectionEditor';
 import {
   buildDaysFormula,
   buildFlatFormula,
@@ -133,6 +133,7 @@ export function StatementDefinitionsScreen() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [pendingLineRemoval, setPendingLineRemoval] = useState<PendingLineRemoval | null>(null);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -427,6 +428,11 @@ export function StatementDefinitionsScreen() {
     [sections],
   );
 
+  // The one line shown in the shared side panel, wherever it lives — only one line can be
+  // selected across every section's DataTable at a time (see LineSettingsPanelContent).
+  const selectedLineSection = selectedLineId ? sections.find((s) => s.lines.some((l) => l.id === selectedLineId)) : undefined;
+  const selectedLine = selectedLineSection?.lines.find((l) => l.id === selectedLineId);
+
   // A stored formula is always valid when it's saved — the only way one can go stale afterward
   // is a reference to a line that's since been deleted, so that's what this counts.
   const errorLineCount = useMemo(() => {
@@ -515,35 +521,49 @@ export function StatementDefinitionsScreen() {
         </Alert>
       ) : null}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
-        {sections.map((section, index) => (
-          <SectionEditor
-            key={section.id}
-            section={section}
-            isFirst={index === 0}
-            isLast={index === sections.length - 1}
-            otherSections={sections.filter((s) => s.id !== section.id).map((s) => ({ id: s.id, name: s.name }))}
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-8)', alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
+          {sections.map((section, index) => (
+            <SectionEditor
+              key={section.id}
+              section={section}
+              isFirst={index === 0}
+              isLast={index === sections.length - 1}
+              nameIndex={nameIndex}
+              selectedLineId={selectedLineId}
+              onSelectLine={(lineId) => setSelectedLineId((prev) => (prev === lineId ? null : lineId))}
+              onRename={(name) => renameSection(section.id, name)}
+              onSetAllowsFreeformLines={(next) => setSectionAllowsFreeformLines(section.id, next)}
+              onMoveUp={() => moveSection(section.id, 'up')}
+              onMoveDown={() => moveSection(section.id, 'down')}
+              onDelete={() => deleteSection(section.id)}
+              onAddLine={() => addLine(section.id)}
+              onUpdateLine={updateLine}
+              onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
+              onMoveLine={(lineId, direction) => moveLine(section.id, lineId, direction)}
+            />
+          ))}
+
+          <Button variant="secondary" iconLeft="plus" onClick={addSection} style={{ alignSelf: 'flex-start' }}>
+            Add section
+          </Button>
+        </div>
+
+        {selectedLine && selectedLineSection ? (
+          <LineSettingsPanelContent
+            line={selectedLine}
+            otherSections={sections.filter((s) => s.id !== selectedLineSection.id).map((s) => ({ id: s.id, name: s.name }))}
             lineGroups={lineGroups}
             drivers={drivers}
             nameIndex={nameIndex}
-            onRename={(name) => renameSection(section.id, name)}
-            onSetAllowsFreeformLines={(next) => setSectionAllowsFreeformLines(section.id, next)}
-            onMoveUp={() => moveSection(section.id, 'up')}
-            onMoveDown={() => moveSection(section.id, 'down')}
-            onDelete={() => deleteSection(section.id)}
-            onAddLine={() => addLine(section.id)}
             onUpdateLine={updateLine}
             onSetProjection={setLineProjection}
-            onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
-            onMoveLine={(lineId, direction) => moveLine(section.id, lineId, direction)}
-            onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(section.id, lineId, toSectionId)}
+            onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(selectedLineSection.id, lineId, toSectionId)}
+            onClose={() => setSelectedLineId(null)}
+            style={{ position: 'sticky', top: 'var(--space-8)', maxHeight: 'calc(100vh - 160px)' }}
           />
-        ))}
+        ) : null}
       </div>
-
-      <Button variant="secondary" iconLeft="plus" onClick={addSection} style={{ alignSelf: 'flex-start' }}>
-        Add section
-      </Button>
 
       <NameDialog
         open={dialog === 'new'}

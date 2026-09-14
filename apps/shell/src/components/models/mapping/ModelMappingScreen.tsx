@@ -506,6 +506,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     });
   });
 
+  // The row shown in the shared side panel — resolved once here (rather than inside the
+  // DataTable's own render) so it can be rendered alongside the table instead of inline.
+  const selectedRow = expandedLineId ? rows.find((r) => r.id === expandedLineId) : undefined;
+
   const columns = [
     {
       key: 'expand',
@@ -833,83 +837,88 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         }
       />
 
-      <Card padding="none" icon="git-merge" title="Line item mapping">
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey="id"
-          rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-          dense
-          stickyHeader
-          maxHeight="calc(100vh - 420px)"
-          expandedKey={expandedLineId}
-          onRowClick={(row) => {
-            if (row.addInstanceTarget) {
-              requestAddChild(row.addInstanceTarget);
-              return;
-            }
-            if (row.line || row.childLine) setExpandedLineId(expandedLineId === row.id ? null : row.id);
-          }}
-          renderDetail={(row: { id: string; line?: StatementLine; sectionName?: string; childLine?: StatementLine; isKpi?: boolean }) => {
-            if (row.childLine) {
-              const child = row.childLine;
-              const m = mapping[child.id] ?? blankMapping(child.id);
-              const driverId = child.projection && 'driverId' in child.projection ? child.projection.driverId : undefined;
-              const basisLineId = driverId ? schema.drivers.find((d) => d.id === driverId)?.basisLineId : undefined;
-              return (
-                <InstanceRowDetail
-                  line={child}
-                  sectionName={row.sectionName ?? ''}
-                  workbook={workbook}
-                  schemaLineGroups={schemaLineGroups}
-                  basisLineId={basisLineId}
-                  isKpi={Boolean(row.isKpi)}
-                  effectiveKind={effectiveLineKind(schema, child)}
-                  sourceLineIds={m.sourceLineIds}
-                  manualHistoricals={manualHistoricals[child.id] ?? []}
-                  onChangeName={(name) => setDraftSchema((prev) => (prev ? patchLine(prev, child.id, { name }) : prev))}
-                  onChangeSourceLines={(sourceLineIds) => setSourceLines(child, sourceLineIds)}
-                  onChangeManualHistoricals={(values) => setManualHistoricals((prev) => ({ ...prev, [child.id]: values }))}
-                  onChangeProjection={(selection: ChildProjectionSelection) =>
-                    setDraftSchema((prev) => (prev ? setChildProjection(prev, child.id, selection) : prev))
-                  }
-                  onChangeDebtProperties={(patch: Partial<DebtTrancheProperties>) =>
-                    setDraftSchema((prev) =>
-                      prev ? applyDebtSchedule(patchLine(prev, child.id, { debtProperties: { ...child.debtProperties, ...patch } })) : prev,
-                    )
-                  }
-                  onDelete={() => requestDeleteChild(child.id)}
-                />
-              );
-            }
-            if (row.line) {
-              const line = row.line;
-              const childCount = childCountByLineId.get(line.id) ?? 0;
-              return (
-                <MappingRowDetail
-                  target={line}
-                  sectionName={row.sectionName ?? ''}
-                  mapping={mapping[line.id] ?? blankMapping(line.id)}
-                  workbook={workbook}
-                  onSetSourceLines={(ids) => setSourceLines(line, ids)}
-                  onApprove={() => updateMapping(line.id, { approved: true })}
-                  supersededByInstanceCount={childCount}
-                  calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
-                  formula={formatFormula(line.formula, nameIndex)}
-                  isDebtLine={childCount === 0 && effectiveLineKind(schema, line) === 'debt'}
-                  debtProperties={line.debtProperties}
-                  onChangeDebtProperties={(patch) =>
-                    setDraftSchema((prev) =>
-                      prev ? applyDebtSchedule(patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } })) : prev,
-                    )
-                  }
-                />
-              );
-            }
-            return null;
-          }}
-        />
-      </Card>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
+        <Card padding="none" icon="git-merge" title="Line item mapping" style={{ flex: '1 1 auto', minWidth: 0 }}>
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey="id"
+            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+            dense
+            stickyHeader
+            maxHeight="calc(100vh - 420px)"
+            expandedKey={expandedLineId}
+            onRowClick={(row) => {
+              if (row.addInstanceTarget) {
+                requestAddChild(row.addInstanceTarget);
+                return;
+              }
+              if (row.line || row.childLine) setExpandedLineId(expandedLineId === row.id ? null : row.id);
+            }}
+          />
+        </Card>
+
+        {selectedRow?.childLine ? (
+          (() => {
+            const child = selectedRow.childLine;
+            const m = mapping[child.id] ?? blankMapping(child.id);
+            const driverId = child.projection && 'driverId' in child.projection ? child.projection.driverId : undefined;
+            const basisLineId = driverId ? schema.drivers.find((d) => d.id === driverId)?.basisLineId : undefined;
+            return (
+              <InstanceRowDetail
+                line={child}
+                sectionName={selectedRow.sectionName ?? ''}
+                workbook={workbook}
+                schemaLineGroups={schemaLineGroups}
+                basisLineId={basisLineId}
+                isKpi={Boolean(selectedRow.isKpi)}
+                effectiveKind={effectiveLineKind(schema, child)}
+                sourceLineIds={m.sourceLineIds}
+                manualHistoricals={manualHistoricals[child.id] ?? []}
+                onChangeName={(name) => setDraftSchema((prev) => (prev ? patchLine(prev, child.id, { name }) : prev))}
+                onChangeSourceLines={(sourceLineIds) => setSourceLines(child, sourceLineIds)}
+                onChangeManualHistoricals={(values) => setManualHistoricals((prev) => ({ ...prev, [child.id]: values }))}
+                onChangeProjection={(selection: ChildProjectionSelection) =>
+                  setDraftSchema((prev) => (prev ? setChildProjection(prev, child.id, selection) : prev))
+                }
+                onChangeDebtProperties={(patch: Partial<DebtTrancheProperties>) =>
+                  setDraftSchema((prev) =>
+                    prev ? applyDebtSchedule(patchLine(prev, child.id, { debtProperties: { ...child.debtProperties, ...patch } })) : prev,
+                  )
+                }
+                onDelete={() => requestDeleteChild(child.id)}
+                onClose={() => setExpandedLineId(null)}
+              />
+            );
+          })()
+        ) : selectedRow?.line ? (
+          (() => {
+            const line = selectedRow.line;
+            const childCount = childCountByLineId.get(line.id) ?? 0;
+            return (
+              <MappingRowDetail
+                target={line}
+                sectionName={selectedRow.sectionName ?? ''}
+                mapping={mapping[line.id] ?? blankMapping(line.id)}
+                workbook={workbook}
+                onSetSourceLines={(ids) => setSourceLines(line, ids)}
+                onApprove={() => updateMapping(line.id, { approved: true })}
+                supersededByInstanceCount={childCount}
+                calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
+                formula={formatFormula(line.formula, nameIndex)}
+                isDebtLine={childCount === 0 && effectiveLineKind(schema, line) === 'debt'}
+                debtProperties={line.debtProperties}
+                onChangeDebtProperties={(patch) =>
+                  setDraftSchema((prev) =>
+                    prev ? applyDebtSchedule(patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } })) : prev,
+                  )
+                }
+                onClose={() => setExpandedLineId(null)}
+              />
+            );
+          })()
+        ) : null}
+      </div>
 
       <div style={{ position: 'sticky', bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-8)', padding: 'var(--space-5) 0', background: 'var(--surface-app)', borderTop: '1px solid var(--border-default)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>

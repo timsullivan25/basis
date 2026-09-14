@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Switch, Tag } from '@basis/design-system';
 import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { FormulaInput } from './FormulaInput';
 import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
+import { LineSettingsPanel } from '../common/LineSettingsPanel';
 
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
@@ -40,10 +41,11 @@ interface SectionEditorProps {
   section: StatementSection;
   isFirst: boolean;
   isLast: boolean;
-  otherSections: { id: string; name: string }[];
-  lineGroups: LineGroup[];
-  drivers: DriverDefinition[];
   nameIndex: NameIndex;
+  /** The line currently shown in the shared side panel (owned by the parent screen, since only
+   *  one panel exists across every section's own DataTable) — highlights that row here. */
+  selectedLineId: string | null;
+  onSelectLine: (lineId: string) => void;
   onRename: (name: string) => void;
   /** KPI-style sections only — see StatementSection.allowsFreeformLines' own doc comment. A
    *  section with real lines rarely needs this; it exists for a section holding nothing BUT
@@ -54,19 +56,16 @@ interface SectionEditorProps {
   onDelete: () => void;
   onAddLine: () => void;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
-  onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
   onDeleteLine: (lineId: string) => void;
   onMoveLine: (lineId: string, direction: 'up' | 'down') => void;
-  onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, otherSections, lineGroups, drivers, nameIndex,
+  section, isFirst, isLast, nameIndex,
+  selectedLineId, onSelectLine,
   onRename, onSetAllowsFreeformLines, onMoveUp, onMoveDown, onDelete,
-  onAddLine, onUpdateLine, onSetProjection, onDeleteLine, onMoveLine, onMoveLineToSection,
+  onAddLine, onUpdateLine, onDeleteLine, onMoveLine,
 }: SectionEditorProps) {
-  const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
-
   const columns = [
     {
       key: 'expand',
@@ -74,8 +73,8 @@ export function SectionEditor({
       width: 28,
       render: (_: unknown, row: StatementLine) => (
         <IconButton
-          icon={expandedLineId === row.id ? 'chevron-down' : 'chevron-right'}
-          label={expandedLineId === row.id ? 'Collapse' : 'Expand'}
+          icon={selectedLineId === row.id ? 'chevron-down' : 'chevron-right'}
+          label={selectedLineId === row.id ? 'Collapse' : 'Expand'}
           size="sm"
           variant="ghost"
         />
@@ -253,20 +252,8 @@ export function SectionEditor({
           rowKey="id"
           dense
           rowStyle={getLineRowStyle}
-          expandedKey={expandedLineId}
-          onRowClick={(row) => setExpandedLineId(expandedLineId === row.id ? null : row.id)}
-          renderDetail={(row: StatementLine) => (
-            <LineDetail
-              line={row}
-              otherSections={otherSections}
-              lineGroups={lineGroups}
-              drivers={drivers}
-              nameIndex={nameIndex}
-              onUpdateLine={onUpdateLine}
-              onSetProjection={onSetProjection}
-              onMoveLineToSection={onMoveLineToSection}
-            />
-          )}
+          expandedKey={selectedLineId}
+          onRowClick={(row) => onSelectLine(row.id)}
         />
       ) : (
         <div style={{ padding: 'var(--space-8)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
@@ -321,7 +308,7 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
   );
 }
 
-interface LineDetailProps {
+export interface LineSettingsPanelContentProps {
   line: StatementLine;
   otherSections: { id: string; name: string }[];
   lineGroups: LineGroup[];
@@ -330,6 +317,8 @@ interface LineDetailProps {
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
+  onClose: () => void;
+  style?: CSSProperties;
 }
 
 function methodOf(line: StatementLine): 'none' | 'flat' | ProjectionMethod {
@@ -340,11 +329,21 @@ function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is '
   return method === 'percent-of' || method === 'days-of';
 }
 
-function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection }: LineDetailProps) {
+const DEFAULT_OPEN_SECTIONS = ['projection', 'structure', 'aliases'];
+
+/** The side panel shown for whichever line is selected in any of a schema's sections — rendered
+ *  once by the parent screen (StatementDefinitionsScreen), not per-SectionEditor, since only one
+ *  line can be selected across the whole schema at a time. Groups the same controls SectionEditor
+ *  used to show inline into collapsible sections so a line with a lot going on (e.g. a debt-kind
+ *  line's projection + structure + aliases) doesn't require scrolling a giant expanded row. */
+export function LineSettingsPanelContent({
+  line, otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection, onClose, style,
+}: LineSettingsPanelContentProps) {
   const [aliasDraft, setAliasDraft] = useState('');
   // A method that needs a basis line isn't committed to the line until one is picked — held here
   // locally in the meantime rather than writing a half-configured projection onto the line.
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
+  const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
 
   const currentMethod = pendingMethod ?? methodOf(line);
   const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
@@ -379,142 +378,151 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
     onUpdateLine(line.id, { aliases: line.aliases.filter((a) => a !== alias) });
   }
 
+  function toggleSection(key: string) {
+    setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: 560 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-6)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Projection method
-          </span>
-          <Select
-            size="sm"
-            fullWidth={false}
-            style={{ width: 220 }}
-            options={PROJECTION_METHOD_OPTIONS}
-            value={currentMethod}
-            onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
-          />
-        </div>
+    <LineSettingsPanel
+      title={line.name || 'Untitled line'}
+      subtitle="Line settings"
+      icon="settings-2"
+      onClose={onClose}
+      openKeys={openKeys}
+      onToggleSection={toggleSection}
+      style={style}
+      sections={[
+        {
+          key: 'projection',
+          label: 'Projection',
+          content: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  Projection method
+                </span>
+                <Select
+                  size="sm"
+                  options={PROJECTION_METHOD_OPTIONS}
+                  value={currentMethod}
+                  onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
+                />
+              </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Sub-lines
-          </span>
-          <Switch
-            size="sm"
-            label="Allow sub-lines"
-            checked={line.allowsSubLines ?? false}
-            onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
-          />
-        </div>
+              {needsBasisLine(currentMethod) ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                  <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                    Basis line
+                  </span>
+                  <Select
+                    size="sm"
+                    value={basisLineId}
+                    options={[{ value: '', label: 'None / N/A' }]}
+                    groups={lineGroups
+                      .map((g) => ({
+                        label: g.sectionName,
+                        options: g.lines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
+                      }))
+                      .filter((g) => g.options.length > 0)}
+                    onChange={(e) => handleBasisLineChange(e.target.value)}
+                  />
+                </div>
+              ) : null}
 
-        {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
-            single lump-sum balance carrying its own properties), have children without being
-            debt, both, or neither. Revolver is not a separate toggle here at all — it's just
-            part of whichever debt-properties panel a mapping-time tranche gets, on any
-            debt-kind line, always. */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Line kind
-          </span>
-          <Switch
-            size="sm"
-            label="Is debt"
-            checked={line.lineKind === 'debt'}
-            onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
-          />
-        </div>
-
-        {needsBasisLine(currentMethod) ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-              Basis line
-            </span>
-            <Select
-              size="sm"
-              fullWidth={false}
-              style={{ width: 220 }}
-              value={basisLineId}
-              options={[{ value: '', label: 'None / N/A' }]}
-              groups={lineGroups
-                .map((g) => ({
-                  label: g.sectionName,
-                  options: g.lines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
-                }))
-                .filter((g) => g.options.length > 0)}
-              onChange={(e) => handleBasisLineChange(e.target.value)}
-            />
-          </div>
-        ) : null}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-          Formula
-        </span>
-        {currentMethod === 'none' ? (
-          <FormulaInput
-            value={line.formula}
-            onChange={(formula) => onUpdateLine(line.id, { formula })}
-            nameIndex={nameIndex}
-            ownLineId={line.id}
-          />
-        ) : currentMethod === 'flat' ? (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Holds the last actual value.</span>
-        ) : pendingMethod ? (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Choose a basis line to generate the formula.</span>
-        ) : (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-            {formatFormula(line.formula, nameIndex)}
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-          Aliases
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-          {line.aliases.map((alias) => (
-            <Tag key={alias} onRemove={() => removeAlias(alias)}>
-              {alias}
-            </Tag>
-          ))}
-          <Input
-            size="sm"
-            value={aliasDraft}
-            onChange={(e) => setAliasDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addAlias();
-              }
-            }}
-            placeholder="Add alias"
-            fullWidth={false}
-            style={{ width: 160 }}
-          />
-          <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
-        </div>
-      </div>
-
-      {otherSections.length > 0 ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Move to
-          </span>
-          <Select
-            size="sm"
-            fullWidth={false}
-            style={{ width: 200 }}
-            value=""
-            options={[{ value: '', label: 'Select a section…' }, ...otherSections.map((s) => ({ value: s.id, label: s.name }))]}
-            onChange={(e) => {
-              if (e.target.value) onMoveLineToSection(line.id, e.target.value);
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  Formula
+                </span>
+                {currentMethod === 'none' ? (
+                  <FormulaInput
+                    value={line.formula}
+                    onChange={(formula) => onUpdateLine(line.id, { formula })}
+                    nameIndex={nameIndex}
+                    ownLineId={line.id}
+                  />
+                ) : currentMethod === 'flat' ? (
+                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Holds the last actual value.</span>
+                ) : pendingMethod ? (
+                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Choose a basis line to generate the formula.</span>
+                ) : (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                    {formatFormula(line.formula, nameIndex)}
+                  </span>
+                )}
+              </div>
+            </div>
+          ),
+        },
+        {
+          key: 'structure',
+          label: 'Structure',
+          content: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+              <Switch
+                size="sm"
+                label="Allow sub-lines"
+                checked={line.allowsSubLines ?? false}
+                onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
+              />
+              {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
+                  single lump-sum balance carrying its own properties), have children without
+                  being debt, both, or neither. Revolver is not a separate toggle here at all —
+                  it's just part of whichever debt-properties panel a mapping-time tranche gets,
+                  on any debt-kind line, always. */}
+              <Switch
+                size="sm"
+                label="Is debt"
+                checked={line.lineKind === 'debt'}
+                onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
+              />
+              {otherSections.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                  <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                    Move to section
+                  </span>
+                  <Select
+                    size="sm"
+                    value=""
+                    options={[{ value: '', label: 'Select a section…' }, ...otherSections.map((s) => ({ value: s.id, label: s.name }))]}
+                    onChange={(e) => {
+                      if (e.target.value) onMoveLineToSection(line.id, e.target.value);
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ),
+        },
+        {
+          key: 'aliases',
+          label: 'Aliases',
+          summary: line.aliases.length ? String(line.aliases.length) : undefined,
+          content: (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+              {line.aliases.map((alias) => (
+                <Tag key={alias} onRemove={() => removeAlias(alias)}>
+                  {alias}
+                </Tag>
+              ))}
+              <Input
+                size="sm"
+                value={aliasDraft}
+                onChange={(e) => setAliasDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addAlias();
+                  }
+                }}
+                placeholder="Add alias"
+                fullWidth={false}
+                style={{ width: 160 }}
+              />
+              <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
+            </div>
+          ),
+        },
+      ]}
+    />
   );
 }
