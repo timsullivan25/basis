@@ -434,6 +434,15 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     return true;
   }
 
+  // Computed once and reused by every column (target/source/status/match) so a superseded
+  // parent reads consistently across the whole row, not just the one column that happened to
+  // check for it — see the "source"/"match" column fix below.
+  const childCountByLineId = new Map<string, number>();
+  for (const line of schema.sections.flatMap((s) => s.lines)) {
+    if (line.parentLineId === undefined) continue;
+    childCountByLineId.set(line.parentLineId, (childCountByLineId.get(line.parentLineId) ?? 0) + 1);
+  }
+
   const rows: Array<{
     id: string; __group?: string; line?: StatementLine; sectionName?: string;
     addInstanceTarget?: InstanceTarget; childLine?: StatementLine; isKpi?: boolean;
@@ -499,7 +508,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         }
         if (!row.line) return null;
         const m = mapping[row.line.id];
-        const childCount = row.line.allowsSubLines ? childrenOf(schema, row.line.id).length : 0;
+        const childCount = childCountByLineId.get(row.line.id) ?? 0;
         const missing = !childCount && isMissingRequired(row.line, m);
         const low = !childCount && isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
@@ -546,6 +555,18 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{summary}</span>;
         }
         if (!row.line) return null;
+        const childCount = childCountByLineId.get(row.line.id) ?? 0;
+        // A retained mapping is inactive, not gone, the moment this line has real children — its
+        // own historicals still exist (so removing every child reverts to it, per
+        // injectRollups/regenerateParentSumFormula's own "no children ⇒ no formula override"
+        // behavior) but showing its stale mapped source here would look like it's still active.
+        if (childCount > 0) {
+          return (
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+              Aggregating {childCount} sub-line{childCount > 1 ? 's' : ''}
+            </span>
+          );
+        }
         // A structural formula (no projection) is never expected to be mapped — an empty cell
         // for it is a non-event, not worth a "Not mapped" label competing for attention with a
         // genuinely missing line.
@@ -590,6 +611,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 130,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
+        if ((childCountByLineId.get(row.line.id) ?? 0) > 0) return null;
         const m = mapping[row.line.id];
         const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
         if ((!m || m.method === 'none') && !expectsMapping) return null;
@@ -810,16 +832,22 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
               );
             }
             if (row.line) {
-              const childCount = row.line.allowsSubLines ? childrenOf(schema, row.line.id).length : 0;
+              const line = row.line;
+              const childCount = childCountByLineId.get(line.id) ?? 0;
               return (
                 <MappingRowDetail
-                  target={row.line}
+                  target={line}
                   sectionName={row.sectionName ?? ''}
-                  mapping={mapping[row.line.id]}
+                  mapping={mapping[line.id]}
                   workbook={workbook}
-                  onSetSourceLines={(ids) => setSourceLines(row.line as StatementLine, ids)}
-                  onApprove={() => updateMapping((row.line as StatementLine).id, { approved: true })}
+                  onSetSourceLines={(ids) => setSourceLines(line, ids)}
+                  onApprove={() => updateMapping(line.id, { approved: true })}
                   supersededByInstanceCount={childCount}
+                  isDebtLine={childCount === 0 && effectiveLineKind(schema, line) === 'debt'}
+                  debtProperties={line.debtProperties}
+                  onChangeDebtProperties={(patch) =>
+                    setDraftSchema((prev) => (prev ? patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } }) : prev))
+                  }
                 />
               );
             }

@@ -1,7 +1,8 @@
 import { Button } from '@basis/design-system';
-import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
+import type { DebtTrancheProperties, LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
 import { isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
 import { SourceLineChecklist } from './SourceLineChecklist';
+import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 
 const METHOD_DESCRIPTIONS: Record<string, string> = {
   exact: 'Exact name match',
@@ -24,10 +25,20 @@ interface MappingRowDetailProps {
    *  doc comment), so direct mapping here would silently be ignored. Disables the checklist
    *  below in favor of an explanation. */
   supersededByInstanceCount?: number;
+  /** True when this line's effective kind is 'debt' (see lib/statementLineChildren.ts's
+   *  effectiveLineKind) and it currently has no children — a standalone debt line, acting as its
+   *  own single tranche until a real sub-line is added (at which point supersededByInstanceCount
+   *  takes over and this panel moves to each child instead — see StatementLine.debtProperties'
+   *  own doc comment). Shows the debt-properties panel (including Term/Revolver) alongside the
+   *  normal mapping checklist, since this line still needs its own mapped/manual value too. */
+  isDebtLine?: boolean;
+  debtProperties?: DebtTrancheProperties;
+  onChangeDebtProperties?: (patch: Partial<DebtTrancheProperties>) => void;
 }
 
 export function MappingRowDetail({
   target, sectionName, mapping, workbook, onSetSourceLines, onApprove, supersededByInstanceCount,
+  isDebtLine, debtProperties, onChangeDebtProperties,
 }: MappingRowDetailProps) {
   if (supersededByInstanceCount) {
     return (
@@ -79,6 +90,10 @@ export function MappingRowDetail({
               Confirms {methodMeta.label.toLowerCase()} match {mapping.confidence.toFixed(2)} without changing the source lines.
             </p>
           </div>
+        ) : null}
+
+        {isDebtLine ? (
+          <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties!} />
         ) : null}
       </div>
     </div>
