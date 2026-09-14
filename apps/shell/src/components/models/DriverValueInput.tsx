@@ -3,11 +3,12 @@ import { Input } from '@basis/design-system';
 
 /** A driver's stored value is always the raw number the engine reads (0.1 for a 10% growth
  *  rate) — these two convert to/from the units a person actually wants to type ("10" for 10%,
- *  a plain day count for "days"). Three units exist: '%', 'days', and 'raw' (a hardcoded number
- *  as-is — the Actual projection method, and manual historical-actuals entry), 'multiple-of'
- *  having been dropped as redundant with 'percent-of'. Shared by the workspace's Drivers card for
- *  both a schema line's own driver and a sub-line instance's (the latter reuses the exact same
- *  value bag and vocabulary — see LineInstance.projection's own doc comment). */
+ *  a plain day count for "days"). Units are '%', 'days', 'raw' (a hardcoded number as-is), and ''
+ *  (used by every 'actual'-method driver — manual historical-actuals entry) — 'multiple-of'
+ *  having been dropped as redundant with 'percent-of'. Anything but '%'/'days' is displayed and
+ *  parsed as a plain number. Shared by the workspace's Drivers card for both a schema line's own
+ *  driver and a sub-line instance's (the latter reuses the exact same value bag and vocabulary —
+ *  see LineInstance.projection's own doc comment). */
 export function toDisplayValue(stored: number | null, unit: string): string {
   if (stored === null) return '';
   return unit === '%' ? String(stored * 100) : String(stored);
@@ -22,8 +23,8 @@ export function fromDisplayValue(display: string, unit: string): number | null {
 export function formatDriverValue(value: number | null, unit: string): string {
   if (value === null) return '—';
   if (unit === '%') return `${(value * 100).toFixed(1)}%`;
-  if (unit === 'raw') return value.toLocaleString();
-  return `${value.toFixed(1)} days`;
+  if (unit === 'days') return `${value.toFixed(1)} days`;
+  return value.toLocaleString();
 }
 
 /** Local text buffer + commit-on-blur, same pattern FormulaInput already uses — committing a
