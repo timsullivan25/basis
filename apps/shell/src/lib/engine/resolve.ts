@@ -291,3 +291,150 @@ export function buildRollOffFormula(lineId: string, driverId: string): ResolvedF
 export function buildActualFormula(driverId: string): ResolvedFormula {
   return driverRef(driverId);
 }
+
+// ---- Debt schedule formula builders --------------------------------------------------------
+// Used only by lib/debtSchedule.ts's regenerateDebtSchedule to construct each generated line's
+// formula directly — same "hand-build a ResolvedFormula, never parsed from text" convention as
+// the projection-method builders above. No new engine capability: everything here is expressible
+// with the existing ref/bin/call('sum'|'min'|'max'|'avg')/priorPeriod/lastActual nodes, and the
+// same-period circularity a cash sweep + circular interest need (Ending depends on Repayment
+// depends on cash flow depends on Interest depends on Ending) is exactly what evaluate.ts's
+// existing Gauss-Seidel cyclic-group solver already exists to handle.
+
+function sumOf(args: ResolvedFormula[]): ResolvedFormula {
+  return { kind: 'call', fn: 'sum', args };
+}
+function minOf(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'call', fn: 'min', args: [a, b] };
+}
+function maxOf(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'call', fn: 'max', args: [a, b] };
+}
+function avgOf(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'call', fn: 'avg', args: [a, b] };
+}
+function sub(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'bin', op: '-', left: a, right: b };
+}
+function add(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'bin', op: '+', left: a, right: b };
+}
+function mul(a: ResolvedFormula, b: ResolvedFormula): ResolvedFormula {
+  return { kind: 'bin', op: '*', left: a, right: b };
+}
+
+/** priorPeriod(tranche) — a tranche's own prior-period value IS its beginning balance, whether
+ *  that prior period was actual (its real mapped historical) or projected (its own prior Ending
+ *  Balance, since the tranche's own formula becomes `ref(endingBalanceLineId)` once the schedule
+ *  is live — see regenerateDebtSchedule). */
+export function buildDebtBeginningBalanceFormula(trancheLineId: string): ResolvedFormula {
+  return priorPeriodOf(ref(trancheLineId));
+}
+
+/** Beginning − Amortization − Repayment + Borrowing — the standard roll-forward. */
+export function buildDebtEndingBalanceFormula(
+  beginningId: string,
+  amortizationId: string,
+  repaymentId: string,
+  borrowingId: string,
+): ResolvedFormula {
+  return add(sub(sub(ref(beginningId), ref(amortizationId)), ref(repaymentId)), ref(borrowingId));
+}
+
+/** (an explicit original-face-value override, else this tranche's own value at the model's last
+ *  actual period) × amortizationRate, prorated to the model's own period frequency. */
+export function buildDebtAmortizationFormula(
+  trancheLineId: string,
+  originalFaceValue: number | undefined,
+  amortizationRate: number,
+  periodsPerYear: number,
+): ResolvedFormula {
+  const base = originalFaceValue !== undefined ? num(originalFaceValue) : lastActualOf(ref(trancheLineId));
+  return mul(base, num(amortizationRate / periodsPerYear));
+}
+
+/** couponRate/periodsPerYear × (avg(Beginning, Ending) if circularCalcsEnabled, else Beginning
+ *  alone). The avg() case is the genuine same-period circularity described above — nothing here
+ *  special-cases it, the graph/evaluator already do. */
+export function buildDebtInterestFormula(
+  couponRate: number,
+  periodsPerYear: number,
+  beginningId: string,
+  endingId: string,
+  circularCalcsEnabled: boolean,
+): ResolvedFormula {
+  const balance = circularCalcsEnabled ? avgOf(ref(beginningId), ref(endingId)) : ref(beginningId);
+  return mul(num(couponRate / periodsPerYear), balance);
+}
+
+/** Same balance-basis convention as interest — commitmentFeeRate/periodsPerYear × the undrawn
+ *  portion of the commitment (commitmentAmount − drawn balance). */
+export function buildDebtCommitmentFeeFormula(
+  commitmentFeeRate: number,
+  periodsPerYear: number,
+  commitmentAmount: number,
+  beginningId: string,
+  endingId: string,
+  circularCalcsEnabled: boolean,
+): ResolvedFormula {
+  const drawn = circularCalcsEnabled ? avgOf(ref(beginningId), ref(endingId)) : ref(beginningId);
+  return mul(num(commitmentFeeRate / periodsPerYear), sub(num(commitmentAmount), drawn));
+}
+
+/** max(0, priorCash + FCF − minimumCashTarget) — the pool available to sweep toward repayment
+ *  this period, before any tranche's own share is carved out (see buildDebtRepaymentFormula). */
+export function buildCashAvailableForRepaymentFormula(
+  cashLineId: string,
+  fcfLineId: string,
+  minimumCashDriverId: string,
+): ResolvedFormula {
+  return maxOf(num(0), sub(add(priorPeriodOf(ref(cashLineId)), ref(fcfLineId)), driverRef(minimumCashDriverId)));
+}
+
+/** max(0, minimumCashTarget − (priorCash + FCF)) — the gap a revolver draw needs to close. */
+export function buildCashShortfallFormula(
+  cashLineId: string,
+  fcfLineId: string,
+  minimumCashDriverId: string,
+): ResolvedFormula {
+  return maxOf(num(0), sub(driverRef(minimumCashDriverId), add(priorPeriodOf(ref(cashLineId)), ref(fcfLineId))));
+}
+
+/** min(max(0, cash remaining after every more-senior tranche's own Repayment), this tranche's own
+ *  balance after mandatory amortization) — one link in the seniority waterfall chain; a
+ *  non-repayable tranche never calls this (its Repayment is a flat 0 — see regenerateDebtSchedule),
+ *  so the chain passes through it with no special case needed here. */
+export function buildDebtRepaymentFormula(
+  cashAvailableId: string,
+  moreSeniorRepaymentIds: string[],
+  beginningId: string,
+  amortizationId: string,
+): ResolvedFormula {
+  const remaining =
+    moreSeniorRepaymentIds.length === 0
+      ? ref(cashAvailableId)
+      : maxOf(num(0), sub(ref(cashAvailableId), sumOf(moreSeniorRepaymentIds.map(ref))));
+  return minOf(remaining, sub(ref(beginningId), ref(amortizationId)));
+}
+
+/** min(shortfall, remaining undrawn capacity) — capped so a draw can never push the revolver past
+ *  its own commitment. */
+export function buildRevolverBorrowingFormula(
+  cashShortfallId: string,
+  commitmentAmount: number,
+  beginningId: string,
+): ResolvedFormula {
+  return minOf(ref(cashShortfallId), sub(num(commitmentAmount), ref(beginningId)));
+}
+
+/** max(0, shortfall − remaining undrawn capacity) — nonzero exactly when the shortfall exceeds
+ *  what the revolver can fund. With no revolver at all, the caller omits `beginningId`, collapsing
+ *  capacity to 0 so this reduces to the shortfall itself — every unfunded dollar is a breach. */
+export function buildRevolverBreachFormula(
+  cashShortfallId: string,
+  commitmentAmount: number,
+  beginningId: string | undefined,
+): ResolvedFormula {
+  const capacity = beginningId ? sub(num(commitmentAmount), ref(beginningId)) : num(0);
+  return maxOf(num(0), sub(ref(cashShortfallId), capacity));
+}

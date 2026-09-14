@@ -26,6 +26,7 @@ import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine
 import { evaluateModel } from '../../../lib/engine/evaluate';
 import { cloneStatementSchemaStructure } from '../../../lib/statementSchemaClone';
 import { addChildLine, childrenOf, effectiveLineKind, removeChildLine, setChildProjection, type ChildProjectionSelection } from '../../../lib/statementLineChildren';
+import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../../lib/lineDependents';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import type { InstanceTarget, SchemaLineGroup } from '../instances/projectionMethod';
@@ -42,6 +43,18 @@ const STEPS = ['Upload model', 'Map line items', 'Save'];
  *  line the moment it exists. */
 function blankMapping(lineId: string): LineMapping {
   return { targetLineId: lineId, sourceLineIds: [], method: 'none', confidence: 0, note: '', approved: false };
+}
+
+/** True for a line lib/debtSchedule.ts's regenerateDebtSchedule generated directly (a tranche's
+ *  own Beginning/Interest/.../Ending Balance, or one of the three schedule-level totals) — never
+ *  directly mappable, since its value comes entirely from other generated lines' formulas. Read-
+ *  only here — see the mapping table's target/source/match columns and MappingRowDetail's
+ *  calculatedByDebtSchedule branch. A line that merely REFERENCES a debt-schedule total by
+ *  ordinary formula (Net Interest Expense, say) isn't tagged and needs no special handling at
+ *  all — it's just a normal structural calculated line, same as Gross Profit, already covered by
+ *  the existing isCalculated(line) && !line.projection treatment below. */
+function isDebtScheduleGenerated(line: StatementLine): boolean {
+  return Boolean(line.debtScheduleRole);
 }
 
 export interface ModelMappingScreenProps {
@@ -131,7 +144,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         const ownSchema = await statementSchemaRepository.get(editing.model.statementSchemaId);
         if (cancelled || !ownSchema) return;
         const clonedDraft = structuredClone(ownSchema);
-        setDraftSchema(clonedDraft);
+        // Defensive, not load-bearing — the persisted schema's debt schedule should already be
+        // fresh (see ModelWorkspaceScreen's circular-calc toggle, which regenerates on save), but
+        // regenerating here is cheap/idempotent and guards against any drift.
+        setDraftSchema(regenerateDebtSchedule(clonedDraft, periodsPerYearFor(buildTimeline(workbook.periods)[0]?.type ?? 'FY'), editing.model.circularCalcsEnabled ?? false));
 
         const savedMapping = await mappingRepository.get(editing.model.mappingId);
         if (cancelled) return;
@@ -239,7 +255,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // projection-carrying calculated line (still needs one for its actual periods). A purely
   // structural formula (no projection) never needs one — it's mappable too (an issuer-reported
   // subtotal can still be matched), just not required to be.
-  const mappableLines = useMemo(() => allLines.filter(({ line }) => !isCalculated(line) || line.projection), [allLines]);
+  const mappableLines = useMemo(
+    () => allLines.filter(({ line }) => !isDebtScheduleGenerated(line) && (!isCalculated(line) || line.projection)),
+    [allLines],
+  );
   const mappedCount = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) > 0).length;
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
@@ -257,6 +276,21 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // evaluation, since every child line is already a real, evaluable line in `schema` (no more
   // separate splice-and-rollup pass).
   const evaluation = useMemo(() => (schema ? evaluateModel(schema, { timeline, historicals }) : null), [schema, timeline, historicals]);
+
+  // The circular-calc toggle lives on the model, edited from ModelWorkspaceScreen's settings
+  // popover (see Model.circularCalcsEnabled's own doc comment) — this screen only reads whatever
+  // it's currently set to (false for a brand-new, not-yet-created model) so every tranche edit
+  // here keeps regenerating a schedule consistent with it.
+  const circularCalcsEnabled = editing?.model.circularCalcsEnabled ?? false;
+
+  /** Re-derives the "Debt Schedule" section from the current tranches/properties — cheap and
+   *  idempotent (see regenerateDebtSchedule's own doc comment), so every mutation that could
+   *  possibly affect it (add/remove a tranche, edit its properties) just runs it again rather
+   *  than trying to special-case which specific change actually matters. */
+  function applyDebtSchedule(next: StatementSchema): StatementSchema {
+    const periodType = timeline[0]?.type ?? 'FY';
+    return regenerateDebtSchedule(next, periodsPerYearFor(periodType), circularCalcsEnabled);
+  }
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
     setMapping((prev) => ({ ...prev, [targetLineId]: { ...prev[targetLineId], ...patch } }));
@@ -282,7 +316,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       target.kind === 'line' ? { kind: 'line', parentLineId: target.id } : { kind: 'section', sectionId: target.id },
       '',
     );
-    setDraftSchema(next);
+    setDraftSchema(applyDebtSchedule(next));
     setMapping((prev) => ({ ...prev, [lineId]: blankMapping(lineId) }));
     setExpandedLineId(`child-${lineId}`);
   }
@@ -302,7 +336,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   }
 
   function commitDeleteChild(lineId: string) {
-    setDraftSchema((prev) => (prev ? removeChildLine(prev, lineId) : prev));
+    setDraftSchema((prev) => (prev ? applyDebtSchedule(removeChildLine(prev, lineId)) : prev));
     setMapping((prev) => {
       const next = { ...prev };
       delete next[lineId];
@@ -509,8 +543,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         if (!row.line) return null;
         const m = mapping[row.line.id];
         const childCount = childCountByLineId.get(row.line.id) ?? 0;
-        const missing = !childCount && isMissingRequired(row.line, m);
-        const low = !childCount && isLowConfidence(m);
+        const byDebtSchedule = isDebtScheduleGenerated(row.line);
+        const superseded = childCount > 0 || byDebtSchedule;
+        const missing = !superseded && isMissingRequired(row.line, m);
+        const low = !superseded && isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
         const rowLineStyle = getLineRowStyle(row.line);
         return (
@@ -522,7 +558,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             <span
               style={{
                 fontSize: 'var(--text-sm)', whiteSpace: 'nowrap', fontWeight: 'var(--weight-medium)',
-                color: childCount ? 'var(--text-tertiary)' : 'var(--text-primary)', ...rowLineStyle, background: undefined, borderTop: undefined,
+                color: superseded ? 'var(--text-tertiary)' : 'var(--text-primary)', ...rowLineStyle, background: undefined, borderTop: undefined,
               }}
             >
               {row.line.name}
@@ -530,6 +566,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
             {childCount ? (
               <span title={`Superseded by ${childCount} sub-line${childCount > 1 ? 's' : ''} — direct mapping disabled`}>
                 <Icon name="git-branch" size={11} color="var(--text-tertiary)" />
+              </span>
+            ) : byDebtSchedule ? (
+              <span title="Auto-generated by the Debt Schedule — expand for its formula">
+                <Icon name="sparkles" size={11} color="var(--text-tertiary)" />
               </span>
             ) : isCalculated(row.line) && !row.line.projection ? (
               <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
@@ -564,6 +604,15 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           return (
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
               Aggregating {childCount} sub-line{childCount > 1 ? 's' : ''}
+            </span>
+          );
+        }
+        if (isDebtScheduleGenerated(row.line)) {
+          // Formula shown only in the expanded detail panel (MappingRowDetail's "Formula" field),
+          // same as every other calculated line — this column is just a status, not a preview.
+          return (
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+              Auto-generated by the Debt Schedule
             </span>
           );
         }
@@ -611,7 +660,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       width: 130,
       render: (_: unknown, row: { line?: StatementLine }) => {
         if (!row.line) return null;
-        if ((childCountByLineId.get(row.line.id) ?? 0) > 0) return null;
+        if ((childCountByLineId.get(row.line.id) ?? 0) > 0 || isDebtScheduleGenerated(row.line)) return null;
         const m = mapping[row.line.id];
         const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
         if ((!m || m.method === 'none') && !expectsMapping) return null;
@@ -825,7 +874,9 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                     setDraftSchema((prev) => (prev ? setChildProjection(prev, child.id, selection) : prev))
                   }
                   onChangeDebtProperties={(patch: Partial<DebtTrancheProperties>) =>
-                    setDraftSchema((prev) => (prev ? patchLine(prev, child.id, { debtProperties: { ...child.debtProperties, ...patch } }) : prev))
+                    setDraftSchema((prev) =>
+                      prev ? applyDebtSchedule(patchLine(prev, child.id, { debtProperties: { ...child.debtProperties, ...patch } })) : prev,
+                    )
                   }
                   onDelete={() => requestDeleteChild(child.id)}
                 />
@@ -838,15 +889,19 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 <MappingRowDetail
                   target={line}
                   sectionName={row.sectionName ?? ''}
-                  mapping={mapping[line.id]}
+                  mapping={mapping[line.id] ?? blankMapping(line.id)}
                   workbook={workbook}
                   onSetSourceLines={(ids) => setSourceLines(line, ids)}
                   onApprove={() => updateMapping(line.id, { approved: true })}
                   supersededByInstanceCount={childCount}
+                  calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
+                  formula={formatFormula(line.formula, nameIndex)}
                   isDebtLine={childCount === 0 && effectiveLineKind(schema, line) === 'debt'}
                   debtProperties={line.debtProperties}
                   onChangeDebtProperties={(patch) =>
-                    setDraftSchema((prev) => (prev ? patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } }) : prev))
+                    setDraftSchema((prev) =>
+                      prev ? applyDebtSchedule(patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } })) : prev,
+                    )
                   }
                 />
               );

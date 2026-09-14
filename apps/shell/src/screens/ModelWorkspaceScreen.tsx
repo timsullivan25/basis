@@ -64,6 +64,7 @@ import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
+import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
 interface ModelWorkspaceScreenProps {
@@ -468,6 +469,22 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     setRecalcMode(mode);
   }
 
+  /** The one write path this screen needs outside the mapping flow — a model-level setting (see
+   *  Model.circularCalcsEnabled's own doc comment) whose only effect is which formula shape every
+   *  debt tranche's interest/commitment-fee line gets, so flipping it has to regenerate the
+   *  schedule and persist the schema alongside the model, not just flip a flag. */
+  async function handleCircularCalcsChange(enabled: boolean) {
+    if (!model || !schema) return;
+    const periodType = model.timeline[0]?.type ?? 'FY';
+    const nextSchema = regenerateDebtSchedule(schema, periodsPerYearFor(periodType), enabled);
+    const [savedSchema, updatedModel] = await Promise.all([
+      statementSchemaRepository.save(nextSchema),
+      modelRepository.update(model.id, { circularCalcsEnabled: enabled }),
+    ]);
+    setSchema(savedSchema);
+    setModel(updatedModel);
+  }
+
   function recalculate() {
     setManualSnapshot(model ?? null);
   }
@@ -626,15 +643,31 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     childCountByParentId.set(line.parentLineId, (childCountByParentId.get(line.parentLineId) ?? 0) + 1);
   }
 
+  // Debt Schedule's generated lines (see lib/debtSchedule.ts) group by tranche via
+  // debtScheduleRole.trancheLineId — a different relationship from parentLineId (see that
+  // field's own doc comment), so it needs its own sub-header insertion here rather than reusing
+  // the parent/child collapse logic above. A schedule-level line (no trancheLineId, e.g.
+  // "Minimum Cash Target") renders ungrouped, same as any ordinary top-level line.
+  const lineNameById = new Map(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l.name]));
+
   const rows: Array<{ id: string; __group?: string; line?: StatementLine; isChild?: boolean; childCount?: number }> = [];
   schema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
     if (!section.lines.length) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
+    let lastTrancheHeaderId: string | undefined;
     section.lines.forEach((line) => {
       const parentId = line.parentLineId;
       if (parentId !== undefined && collapsedParentIds.has(parentId)) return;
-      rows.push({ id: line.id, line, isChild: parentId !== undefined, childCount: childCountByParentId.get(line.id) });
+      const trancheLineId = line.debtScheduleRole?.trancheLineId;
+      if (trancheLineId !== undefined && trancheLineId !== lastTrancheHeaderId) {
+        rows.push({ id: `debt-tranche-${trancheLineId}`, __group: lineNameById.get(trancheLineId) ?? 'Tranche' });
+      }
+      lastTrancheHeaderId = trancheLineId;
+      rows.push({
+        id: line.id, line, isChild: parentId !== undefined || trancheLineId !== undefined,
+        childCount: childCountByParentId.get(line.id),
+      });
     });
   });
 
@@ -1011,6 +1044,25 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
                 Recalculate
               </Button>
             ) : null}
+            <div style={{ borderTop: '1px solid var(--border-default)', paddingTop: 'var(--space-3)', marginTop: 'var(--space-1)' }}>
+              <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-3)' }}>
+                Debt Schedule
+              </div>
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: 'beginning', label: 'Beginning only' },
+                  { value: 'circular', label: 'Avg. balance' },
+                ]}
+                value={model?.circularCalcsEnabled ? 'circular' : 'beginning'}
+                onChange={(value) => void handleCircularCalcsChange(value === 'circular')}
+                fullWidth
+              />
+              <p style={{ margin: 'var(--space-2) 0 0', fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+                Whether tranche interest accrues on the average of Beginning/Ending balance (a
+                circular calc, solved automatically) or Beginning balance alone.
+              </p>
+            </div>
           </div>
         </Popover>
       </div>

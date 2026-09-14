@@ -22,7 +22,9 @@ export type SummaryConcept =
   | 'da'
   | 'capex'
   | 'nwc'
-  | 'taxRate';
+  | 'taxRate'
+  | 'cash'
+  | 'fcf';
 
 /** Candidate names per concept, tried in order — e.g. EBITDA prefers "Adjusted EBITDA" (the
  *  bridge's final line) and only falls back to a plain "EBITDA" line if no adjusted one exists. */
@@ -43,6 +45,8 @@ const CANDIDATES: Record<SummaryConcept, string[]> = {
   capex: ['Capex'],
   nwc: ['Net Working Capital'],
   taxRate: ['Effective Tax Rate', 'Tax Rate'],
+  cash: ['Cash & Equivalents'],
+  fcf: ['Free Cash Flow', 'FCF'],
 };
 
 /** The single canonical alias string to write when a user assigns a line to satisfy a concept

@@ -40,6 +40,7 @@ export type {
   CreateSnapshotInput,
   DcfInputs,
   DcfOutput,
+  DebtScheduleRole,
   DebtTrancheProperties,
   DriverDefinition,
   LineAggregation,

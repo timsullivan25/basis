@@ -67,4 +67,11 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
     const db = await openBasisDb();
     await db.delete('statementSchema', id);
   }
+
+  async resetDefault(): Promise<StatementSchema> {
+    const db = await openBasisDb();
+    const fresh = createDefaultStatementSchema();
+    await db.put('statementSchema', fresh);
+    return fresh;
+  }
 }

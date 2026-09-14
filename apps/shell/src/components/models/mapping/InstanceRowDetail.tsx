@@ -83,9 +83,10 @@ export function InstanceRowDetail({
 
           {effectiveKind === 'debt' ? (
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: 'var(--space-3)' }}>
-              Projected as a flat carry-forward until Debt Schedule ships — a debt tranche's
-              balance doesn't fit growth/percent-of/days-of/roll-off, and will instead be driven
-              entirely by Debt Schedule's roll-forward once that exists.
+              This tranche's projected balance doesn't use a generic projection method — it's
+              driven entirely by the Debt Schedule's own roll-forward (Beginning − Amortization −
+              Repayment + Borrowing), based on the tranche details below. See the Debt Schedule
+              section for the full breakdown.
             </div>
           ) : (
             <>

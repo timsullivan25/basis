@@ -30,7 +30,7 @@ export class IndexedDbModelRepository implements ModelRepository {
     return model;
   }
 
-  async update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues'>>): Promise<Model> {
+  async update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues' | 'circularCalcsEnabled'>>): Promise<Model> {
     const db = await openBasisDb();
     const existing = await db.get('models', id);
     if (!existing) throw new Error(`Model not found: ${id}`);
