@@ -135,12 +135,16 @@ export function DebtTranchePropertiesEditor({ instance, onChange }: DebtTrancheP
           </>
         ) : null}
 
-        <Field label="Original face value" hint="Falls back to this tranche's last historical value if left blank">
-          <NumberInput value={instance.originalFaceValue} onCommit={(originalFaceValue) => onChange({ originalFaceValue })} />
-        </Field>
-        <Field label="Amortization" hint="Annual %, applied against original face value">
-          <PercentInput value={instance.amortizationRate} onCommit={(amortizationRate) => onChange({ amortizationRate })} />
-        </Field>
+        {!isRevolver ? (
+          <>
+            <Field label="Original face value" hint="Falls back to this tranche's last historical value if left blank">
+              <NumberInput value={instance.originalFaceValue} onCommit={(originalFaceValue) => onChange({ originalFaceValue })} />
+            </Field>
+            <Field label="Amortization" hint="Annual %, applied against original face value">
+              <PercentInput value={instance.amortizationRate} onCommit={(amortizationRate) => onChange({ amortizationRate })} />
+            </Field>
+          </>
+        ) : null}
       </div>
 
       <Switch
