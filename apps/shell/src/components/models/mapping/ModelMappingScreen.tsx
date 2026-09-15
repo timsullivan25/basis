@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, IconButton, Input, Select, SegmentedControl, Tabs, Toast } from '@basis/design-system';
 import {
   mappingRepository,
@@ -251,40 +251,6 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook, selectedTemplateId, editing?.modelImport.id]);
-
-  // Debounced eager persistence for Edit-schema-mode edits, `editing` only — a brand-new import
-  // has no durable model/schema row yet to save eagerly against, so it stays exactly as before
-  // (nothing persists until "Save mapping"). For an existing model, this is what makes "(a) save
-  // the mapping, (b) save the schema/settings" genuinely independent acts: a structural edit here
-  // survives even if the mapping is never (re-)saved, or the session is simply closed. Skips the
-  // very first run after (re)loading a model — that setDraftSchema call is the initial load, not
-  // a user edit, and re-saving an unchanged schema would just bump its updatedAt for no reason.
-  // Never writes `draftSchema` back from the save's result — a fast edit landing during the
-  // in-flight save would otherwise be silently clobbered by the save's now-stale snapshot; the
-  // small resulting imprecision in the cached schemaUpdatedAt only ever costs one extra recompute
-  // later (see lib/computedCache.ts's versionStampMatches), never wrong displayed numbers.
-  const skipNextEagerSaveRef = useRef(true);
-  useEffect(() => {
-    skipNextEagerSaveRef.current = true;
-  }, [editing?.model.id]);
-  useEffect(() => {
-    if (!editing || !draftSchema) return;
-    if (skipNextEagerSaveRef.current) {
-      skipNextEagerSaveRef.current = false;
-      return;
-    }
-    const scheduled = draftSchema;
-    const model = editing.model;
-    const timer = setTimeout(() => {
-      void (async () => {
-        const saved = await statementSchemaRepository.save(scheduled);
-        const freshEvaluation = evaluateModel(saved, model);
-        await recomputeAndCacheModel(saved, model, freshEvaluation);
-      })();
-    }, 500);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftSchema, editing]);
 
   function handleSchemaSelect(id: string) {
     if (id === selectedTemplateId) return;
@@ -1141,21 +1107,19 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         open={cancelConfirmOpen}
         onClose={() => setCancelConfirmOpen(false)}
         icon="alert-triangle"
-        title={editing ? 'Stop editing this model?' : 'Discard this import?'}
+        title="Discard this import?"
         subtitle={company.name}
         footer={
           <>
             <Button onClick={() => setCancelConfirmOpen(false)}>Keep editing</Button>
             <Button variant="danger" iconLeft="trash-2" onClick={onCancel}>
-              {editing ? 'Close without saving mapping' : 'Discard import'}
+              Discard import
             </Button>
           </>
         }
       >
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
-          {editing
-            ? 'Any unsaved mapping changes will be discarded. Schema changes (added/renamed/removed lines, projections, tranche details) are already saved.'
-            : 'The parsed file and any mapping changes will be discarded. Nothing is written until you save.'}
+          The parsed file and any mapping changes will be discarded. Nothing is written until you save.
         </p>
       </Dialog>
 
