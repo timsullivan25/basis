@@ -62,8 +62,11 @@ function isDebtScheduleGenerated(line: StatementLine): boolean {
 export interface ModelMappingScreenProps {
   company: Company;
   /** Every TEMPLATE available to start a new model from (never a model's own private fork —
-   *  see statementSchemaRepository.list()'s own doc comment). Unused when `editing`. */
-  schemas: StatementSchema[];
+   *  see statementSchemaRepository.list()'s own doc comment). Unused when `editing` — optional
+   *  for exactly that case, so a caller that only ever opens `editing` sessions (e.g.
+   *  ModelWorkspaceScreen's own "Edit statement" button) isn't forced to fetch the template list
+   *  just to satisfy this prop. */
+  schemas?: StatementSchema[];
   /** Re-reviewing an already-saved model's existing file — Save updates its mapping/schema in place. */
   editing?: { model: Model; modelImport: ModelImport };
   /** A freshly-picked, not-yet-saved file — Save creates a new model (template choice editable until saved). */
@@ -73,11 +76,15 @@ export interface ModelMappingScreenProps {
     /** The company's current model, if any — seeds prior-mapping hints and triggers the replace confirm on save. */
     existingModel?: Model;
   };
+  /** Which mode the Edit mapping/Edit schema toggle opens on — defaults to 'mapping' (reviewing
+   *  an import) unless a caller has a reason to jump straight to schema editing (e.g. the
+   *  workspace's own "Edit statement" button, which is about structure, not a fresh import). */
+  initialMode?: 'mapping' | 'schema';
   onCancel: () => void;
   onSaved: (model: Model) => void;
 }
 
-export function ModelMappingScreen({ company, schemas, editing, draft, onCancel, onSaved }: ModelMappingScreenProps) {
+export function ModelMappingScreen({ company, schemas = [], editing, draft, initialMode, onCancel, onSaved }: ModelMappingScreenProps) {
   const file = editing?.modelImport.file ?? draft?.file;
   const fileName = editing?.modelImport.fileName ?? draft?.file.name ?? '';
   if (!file) throw new Error('ModelMappingScreen requires either editing or draft.');
@@ -118,7 +125,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   // "Edit mapping" (the historical default) vs "Edit schema" — same rows either way (see
   // buildSectionRows), only the columns and the side panel differ. See changeSchema's own
   // comment for how a schema-mode edit gets persisted.
-  const [mode, setMode] = useState<'mapping' | 'schema'>('mapping');
+  const [mode, setMode] = useState<'mapping' | 'schema'>(initialMode ?? 'mapping');
   // Held between "delete clicked" and the user confirming/cancelling, only when something else in
   // the schema actually depends on what's being removed — see requestDeleteChild/requestDeleteLine's
   // own comments. A 'child' removal (a sub-line/KPI) needs no sectionId — see

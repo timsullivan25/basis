@@ -50,6 +50,7 @@ import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
 import type { LineValues } from '../lib/computedCache';
 import { recomputeAndCacheModel } from '../lib/modelRecompute';
+import type { ModelMappingScreenProps } from '../components/models/mapping/ModelMappingScreen';
 import {
   computeDcfOutputs,
   computeSensitivityGrid,
@@ -75,6 +76,9 @@ interface ModelWorkspaceScreenProps {
    *  concept-assignment escape hatch, same top-level nav-switch shape as SettingsIndexScreen's own
    *  onNavigate. */
   onOpenStatementDefinitions: () => void;
+  /** Opens the mapping/schema overlay — see AppShell's own openMapping. Lets "Edit statement"
+   *  below jump straight there without a detour back through the company page's Financials tab. */
+  onOpenMapping: (props: ModelMappingScreenProps) => void;
 }
 
 /** Shared, fully-controlled name-prompt dialog for "New scenario", "Duplicate" and "Rename" —
@@ -137,7 +141,7 @@ const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
-export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions }: ModelWorkspaceScreenProps) {
+export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions, onOpenMapping }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
@@ -488,6 +492,39 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       : (updatedModel.driverValues ?? {});
     const freshEvaluation = evaluateModel(savedSchema, { ...updatedModel, driverValues });
     await recomputeAndCacheModel(savedSchema, updatedModel, freshEvaluation, activeScenario, activeScenarioId);
+  }
+
+  /** Re-fetches just the pieces a mapping/schema session could have changed — same scope as
+   *  FinancialsTab's own loadModelDetails — deliberately not the full company.id-keyed load
+   *  effect above, which would also reset scenario/compare selections the user has nothing to do
+   *  with here. */
+  async function refreshAfterMappingSession(savedModel: Model) {
+    const [existingSchema, existingMapping, existingModelImport] = await Promise.all([
+      statementSchemaRepository.get(savedModel.statementSchemaId),
+      mappingRepository.get(savedModel.mappingId),
+      modelImportRepository.get(savedModel.modelImportId),
+    ]);
+    setModel(savedModel);
+    setSchema(existingSchema ?? null);
+    setMapping(existingMapping ?? null);
+    setModelImport(existingModelImport ?? null);
+  }
+
+  /** Opens the same mapping/schema overlay FinancialsTab's "Edit mapping" button does, straight
+   *  from the workspace — no detour back through the company page. Jumps to Edit-schema mode
+   *  since restructuring, not reviewing a fresh import, is almost always why this gets clicked
+   *  from here. */
+  function startEditStatement() {
+    if (!model || !modelImport) return;
+    onOpenMapping({
+      company,
+      editing: { model, modelImport },
+      initialMode: 'schema',
+      onCancel: () => {},
+      onSaved: (updatedModel) => {
+        void refreshAfterMappingSession(updatedModel);
+      },
+    });
   }
 
   function recalculate() {
@@ -1021,6 +1058,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </Popover>
         </div>
         <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
+        <Button iconLeft="git-merge" size="sm" onClick={startEditStatement} disabled={!model || !modelImport}>
+          Edit statement
+        </Button>
         <IconButton icon="history" label="History" size="sm" variant="ghost" onClick={openHistory} />
         <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
           Snapshot
