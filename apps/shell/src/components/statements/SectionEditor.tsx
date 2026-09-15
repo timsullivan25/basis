@@ -1,10 +1,14 @@
 import { useState, type CSSProperties } from 'react';
 import { Badge, Button, DataTable, Icon, IconButton, Input, Select, Switch, Tag } from '@basis/design-system';
-import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSection } from '../../data';
+import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
+import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
+import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
 import { NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
-import { LineSettingsPanel } from '../common/LineSettingsPanel';
+import { LineSettingsPanel, type LineSettingsSection } from '../common/LineSettingsPanel';
+import { DebtTranchePropertiesEditor } from '../models/instances/DebtTranchePropertiesEditor';
+import type { DebtTrancheProperties } from '../../data';
 
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
@@ -14,8 +18,12 @@ const REQUIRED_OPTIONS = [
   { value: 'optional', label: 'Optional' },
 ];
 
-/** What the "Projection method" control in LineDetail commits — mirrors StatementLine.projection
- *  plus the 'none' case, and carries a basisLineId only for the two methods that need one. */
+/** What the "Projection method" control in LineSettingsPanelContent commits — mirrors
+ *  StatementLine.projection plus the 'none' case, and carries a basisLineId only for the two
+ *  methods that need one. Deliberately the same simplified set for a top-level line and a child
+ *  line here — 'roll-off'/'actual' (child-only, mapping-time concepts that reference reported
+ *  values) aren't offered by this editor; a child already on one of those shows a read-only note
+ *  instead (see LineSettingsPanelContent). */
 export type ProjectionSelection =
   | { method: 'none' }
   | { method: 'flat' }
@@ -38,14 +46,18 @@ const PROJECTION_METHOD_OPTIONS: { value: 'none' | 'flat' | ProjectionMethod; la
 ];
 
 interface SectionEditorProps {
+  schema: StatementSchema;
   section: StatementSection;
   isFirst: boolean;
   isLast: boolean;
   nameIndex: NameIndex;
-  /** The line currently shown in the shared side panel (owned by the parent screen, since only
-   *  one panel exists across every section's own DataTable) — highlights that row here. */
+  /** The row currently shown in the shared side panel (owned by the parent screen, since only
+   *  one panel exists across every section's own DataTable) — highlights that row here. A plain
+   *  line/section id for a top-level line, or `child-<id>` for a sub-line/KPI (see
+   *  lib/statementRowBuilder.ts). */
   selectedLineId: string | null;
-  onSelectLine: (lineId: string) => void;
+  onSelectLine: (rowId: string) => void;
+  onAddSubLine: (target: InstanceTarget) => void;
   onRename: (name: string) => void;
   /** KPI-style sections only — see StatementSection.allowsFreeformLines' own doc comment. A
    *  section with real lines rarely needs this; it exists for a section holding nothing BUT
@@ -61,31 +73,55 @@ interface SectionEditorProps {
 }
 
 export function SectionEditor({
-  section, isFirst, isLast, nameIndex,
-  selectedLineId, onSelectLine,
+  schema, section, isFirst, isLast, nameIndex,
+  selectedLineId, onSelectLine, onAddSubLine,
   onRename, onSetAllowsFreeformLines, onMoveUp, onMoveDown, onDelete,
   onAddLine, onUpdateLine, onDeleteLine, onMoveLine,
 }: SectionEditorProps) {
+  const rows = buildSectionRows(schema, section);
+
   const columns = [
     {
       key: 'expand',
       label: '',
       width: 28,
-      render: (_: unknown, row: StatementLine) => (
-        <IconButton
-          icon={selectedLineId === row.id ? 'chevron-down' : 'chevron-right'}
-          label={selectedLineId === row.id ? 'Collapse' : 'Expand'}
-          size="sm"
-          variant="ghost"
-        />
-      ),
+      render: (_: unknown, row: SectionRow) =>
+        row.line || row.childLine ? (
+          <IconButton
+            icon={selectedLineId === row.id ? 'chevron-down' : 'chevron-right'}
+            label={selectedLineId === row.id ? 'Collapse' : 'Expand'}
+            size="sm"
+            variant="ghost"
+          />
+        ) : null,
     },
     {
       key: 'name',
       label: 'Line name',
       emphasis: true,
-      render: (_: unknown, row: StatementLine) => {
-        const hasFormula = isCalculated(row);
+      canEdit: (row: SectionRow) => Boolean(row.line),
+      render: (_: unknown, row: SectionRow) => {
+        if (row.addInstanceTarget) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-brand)' }}>
+              <Icon name="plus" size={12} color="var(--text-brand)" />
+              Add {row.addInstanceTarget.kind === 'section' ? 'KPI' : 'sub-line'}
+            </span>
+          );
+        }
+        if (row.childLine) {
+          const name = row.childLine.name.trim();
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)', paddingLeft: 'var(--space-7)' }}>
+              <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
+              <span style={{ fontSize: 'var(--text-sm)', color: name ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                {name || 'Untitled — click to name'}
+              </span>
+            </span>
+          );
+        }
+        if (!row.line) return null;
+        const hasFormula = isCalculated(row.line);
         // A stored formula is always syntactically valid (it was compiled before being saved) —
         // the one way it can go stale is a reference to a line deleted since, so that's the
         // only thing worth flagging here rather than re-validating text that no longer exists.
@@ -94,138 +130,152 @@ export function SectionEditor({
         // it's only for a genuine structural formula, since a projection-carrying line already
         // shows its (non-"Calculated") status in the Required column and its formula in the
         // expanded row detail — showing the icon on every projected line too would just be noise.
-        const dangling = hasFormula ? collectRefIds(row.formula!).filter((id) => !nameIndex.describe(id)) : [];
+        const dangling = hasFormula ? collectRefIds(row.line.formula!).filter((id) => !nameIndex.describe(id)) : [];
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            {row.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
+            {row.line.name || <span style={{ color: 'var(--text-tertiary)' }}>Untitled line</span>}
             {dangling.length > 0 ? (
               <span title="References a line that no longer exists">
                 <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
               </span>
-            ) : hasFormula && !row.projection ? (
-              <span title={`Formula: ${formatFormula(row.formula, nameIndex)}`}>
+            ) : hasFormula && !row.line.projection ? (
+              <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="sigma" size={12} color="var(--text-tertiary)" />
               </span>
             ) : null}
-            {row.aliases.length > 0 ? (
+            {row.line.aliases.length > 0 ? (
               <span
-                title={`Aliases: ${row.aliases.join(', ')}`}
+                title={`Aliases: ${row.line.aliases.join(', ')}`}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--text-tertiary)' }}
               >
                 <Icon name="tags" size={12} color="var(--text-tertiary)" />
                 <span style={{ fontSize: 'var(--text-3xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)' }}>
-                  {row.aliases.length}
+                  {row.line.aliases.length}
                 </span>
               </span>
             ) : null}
           </span>
         );
       },
-      renderEdit: (_: unknown, row: StatementLine) => (
-        <Input
-          size="sm"
-          autoFocus
-          selectOnFocus
-          value={row.name}
-          onChange={(e) => onUpdateLine(row.id, { name: e.target.value })}
-          placeholder="Line name"
-        />
-      ),
+      renderEdit: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Input
+            size="sm"
+            autoFocus
+            selectOnFocus
+            value={row.line.name}
+            onChange={(e) => onUpdateLine(row.line!.id, { name: e.target.value })}
+            placeholder="Line name"
+          />
+        ) : null,
     },
     {
       key: 'required',
       label: 'Required',
       width: 120,
       // A line with a projection method still needs a real mapped value for actual periods —
-      // only a genuine structural formula (no projection attached) locks this.
-      canEdit: (row: StatementLine) => !isCalculated(row) || Boolean(row.projection),
-      render: (_: unknown, row: StatementLine) => {
-        const meta = getRequiredMeta(row);
+      // only a genuine structural formula (no projection attached) locks this. Only a top-level
+      // line shows this at all — a child/KPI's status lives in the mapping screen instead.
+      canEdit: (row: SectionRow) => Boolean(row.line) && (!isCalculated(row.line!) || Boolean(row.line!.projection)),
+      render: (_: unknown, row: SectionRow) => {
+        if (!row.line) return null;
+        const meta = getRequiredMeta(row.line);
         return (
           <Badge tone={meta.tone} size="sm">
             {meta.label}
           </Badge>
         );
       },
-      renderEdit: (_: unknown, row: StatementLine) => (
-        <Select
-          size="sm"
-          autoFocus
-          options={REQUIRED_OPTIONS}
-          value={row.required ? 'required' : 'optional'}
-          onChange={(e) => onUpdateLine(row.id, { required: e.target.value === 'required' })}
-        />
-      ),
+      renderEdit: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Select
+            size="sm"
+            autoFocus
+            options={REQUIRED_OPTIONS}
+            value={row.line.required ? 'required' : 'optional'}
+            onChange={(e) => onUpdateLine(row.line!.id, { required: e.target.value === 'required' })}
+          />
+        ) : null,
     },
     {
       key: 'rowFormat',
       label: 'Row format',
       width: 130,
-      render: (_: unknown, row: StatementLine) => (
-        <Badge tone={ROW_FORMAT_META[row.rowFormat].tone} size="sm">
-          {ROW_FORMAT_META[row.rowFormat].label}
-        </Badge>
-      ),
-      renderEdit: (_: unknown, row: StatementLine) => (
-        <Select
-          size="sm"
-          autoFocus
-          options={ROW_FORMAT_OPTIONS}
-          value={row.rowFormat}
-          onChange={(e) => onUpdateLine(row.id, { rowFormat: e.target.value as LineRowFormat })}
-        />
-      ),
+      canEdit: (row: SectionRow) => Boolean(row.line),
+      render: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Badge tone={ROW_FORMAT_META[row.line.rowFormat].tone} size="sm">
+            {ROW_FORMAT_META[row.line.rowFormat].label}
+          </Badge>
+        ) : null,
+      renderEdit: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Select
+            size="sm"
+            autoFocus
+            options={ROW_FORMAT_OPTIONS}
+            value={row.line.rowFormat}
+            onChange={(e) => onUpdateLine(row.line!.id, { rowFormat: e.target.value as LineRowFormat })}
+          />
+        ) : null,
     },
     {
       key: 'numberFormat',
       label: 'Number format',
       width: 140,
-      render: (_: unknown, row: StatementLine) => (
-        <Badge tone={NUMBER_FORMAT_META[row.numberFormat].tone} size="sm">
-          {NUMBER_FORMAT_META[row.numberFormat].label}
-        </Badge>
-      ),
-      renderEdit: (_: unknown, row: StatementLine) => (
-        <Select
-          size="sm"
-          autoFocus
-          options={NUMBER_FORMAT_OPTIONS}
-          value={row.numberFormat}
-          onChange={(e) => onUpdateLine(row.id, { numberFormat: e.target.value as LineNumberFormat })}
-        />
-      ),
+      canEdit: (row: SectionRow) => Boolean(row.line),
+      render: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Badge tone={NUMBER_FORMAT_META[row.line.numberFormat].tone} size="sm">
+            {NUMBER_FORMAT_META[row.line.numberFormat].label}
+          </Badge>
+        ) : null,
+      renderEdit: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Select
+            size="sm"
+            autoFocus
+            options={NUMBER_FORMAT_OPTIONS}
+            value={row.line.numberFormat}
+            onChange={(e) => onUpdateLine(row.line!.id, { numberFormat: e.target.value as LineNumberFormat })}
+          />
+        ) : null,
     },
     {
       key: 'sign',
       label: 'Sign',
       width: 110,
-      render: (_: unknown, row: StatementLine) => (
-        <Badge tone={SIGN_META[row.sign].tone} size="sm">
-          {SIGN_META[row.sign].label}
-        </Badge>
-      ),
-      renderEdit: (_: unknown, row: StatementLine) => (
-        <Select
-          size="sm"
-          autoFocus
-          options={SIGN_OPTIONS}
-          value={row.sign}
-          onChange={(e) => onUpdateLine(row.id, { sign: e.target.value as LineSign })}
-        />
-      ),
+      canEdit: (row: SectionRow) => Boolean(row.line),
+      render: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Badge tone={SIGN_META[row.line.sign].tone} size="sm">
+            {SIGN_META[row.line.sign].label}
+          </Badge>
+        ) : null,
+      renderEdit: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <Select
+            size="sm"
+            autoFocus
+            options={SIGN_OPTIONS}
+            value={row.line.sign}
+            onChange={(e) => onUpdateLine(row.line!.id, { sign: e.target.value as LineSign })}
+          />
+        ) : null,
     },
     {
       key: 'actions',
       label: '',
       width: 100,
       align: 'right' as const,
-      render: (_: unknown, row: StatementLine) => (
-        <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-1)' }}>
-          <IconButton icon="arrow-up" label="Move line up" size="sm" variant="ghost" onClick={() => onMoveLine(row.id, 'up')} />
-          <IconButton icon="arrow-down" label="Move line down" size="sm" variant="ghost" onClick={() => onMoveLine(row.id, 'down')} />
-          <IconButton icon="trash-2" label="Delete line" size="sm" variant="ghost" onClick={() => onDeleteLine(row.id)} />
-        </div>
-      ),
+      render: (_: unknown, row: SectionRow) =>
+        row.line ? (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-1)' }}>
+            <IconButton icon="arrow-up" label="Move line up" size="sm" variant="ghost" onClick={() => onMoveLine(row.line!.id, 'up')} />
+            <IconButton icon="arrow-down" label="Move line down" size="sm" variant="ghost" onClick={() => onMoveLine(row.line!.id, 'down')} />
+            <IconButton icon="trash-2" label="Delete line" size="sm" variant="ghost" onClick={() => onDeleteLine(row.line!.id)} />
+          </div>
+        ) : null,
     },
   ];
 
@@ -245,15 +295,21 @@ export function SectionEditor({
         <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />
       </div>
 
-      {section.lines.length > 0 ? (
+      {rows.length > 0 ? (
         <DataTable
           columns={columns}
-          rows={section.lines}
+          rows={rows}
           rowKey="id"
           dense
-          rowStyle={getLineRowStyle}
+          rowStyle={(row: SectionRow) => (row.line ? getLineRowStyle(row.line) : row.childLine ? getLineRowStyle(row.childLine) : {})}
           expandedKey={selectedLineId}
-          onRowClick={(row) => onSelectLine(row.id)}
+          onRowClick={(row: SectionRow) => {
+            if (row.addInstanceTarget) {
+              onAddSubLine(row.addInstanceTarget);
+              return;
+            }
+            if (row.line || row.childLine) onSelectLine(row.id);
+          }}
         />
       ) : (
         <div style={{ padding: 'var(--space-8)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
@@ -310,6 +366,20 @@ function SectionName({ name, onRename }: { name: string; onRename: (name: string
 
 export interface LineSettingsPanelContentProps {
   line: StatementLine;
+  /** True for a sub-line/KPI (StatementLine.parentLineId set) — hides "Allow sub-lines"/"Move to
+   *  section" (a child can't itself have children, and doesn't move independently of its parent),
+   *  shows a read-only "inherited from parent" debt note instead of an editable toggle, and adds
+   *  a "Delete sub-line/KPI" footer action. */
+  isChild: boolean;
+  /** Only meaningful when isChild — a freeform section's child is a KPI, an ordinary section's is
+   *  a sub-line; changes the footer button's wording only. */
+  isKpi?: boolean;
+  /** Whether this line's effective kind is 'debt' (own or, for a child, inherited from its
+   *  parent — see lib/statementLineChildren.ts's effectiveLineKind) — shows the Debt tranche
+   *  section when true. */
+  isDebtLine: boolean;
+  debtProperties?: DebtTrancheProperties;
+  onChangeDebtProperties: (patch: Partial<DebtTrancheProperties>) => void;
   otherSections: { id: string; name: string }[];
   lineGroups: LineGroup[];
   drivers: DriverDefinition[];
@@ -317,6 +387,7 @@ export interface LineSettingsPanelContentProps {
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
   onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
+  onDeleteChildLine?: (lineId: string) => void;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -329,15 +400,26 @@ function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is '
   return method === 'percent-of' || method === 'days-of';
 }
 
-const DEFAULT_OPEN_SECTIONS = ['projection', 'structure', 'aliases'];
+/** A method this simplified editor doesn't offer at all — reachable only via the mapping screen's
+ *  own ProjectionMethodEditor (roll-off/actual read reported values that don't exist yet at
+ *  schema-definition time). Shown as a read-only note instead of a Select with an out-of-range
+ *  value, so switching it away can't silently skip the roll-off-contra cleanup setChildProjection
+ *  would otherwise do. */
+function isSchemaEditorMethod(method: string): method is 'none' | 'flat' | ProjectionMethod {
+  return method === 'none' || method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of';
+}
 
-/** The side panel shown for whichever line is selected in any of a schema's sections — rendered
- *  once by the parent screen (StatementDefinitionsScreen), not per-SectionEditor, since only one
- *  line can be selected across the whole schema at a time. Groups the same controls SectionEditor
- *  used to show inline into collapsible sections so a line with a lot going on (e.g. a debt-kind
- *  line's projection + structure + aliases) doesn't require scrolling a giant expanded row. */
+const DEFAULT_OPEN_SECTIONS = ['projection', 'structure', 'debt', 'aliases'];
+
+/** The side panel shown for whichever line (or sub-line/KPI) is selected in any of a schema's
+ *  sections — rendered once by the parent screen (StatementDefinitionsScreen, or the model
+ *  workspace's own schema-edit mode), not per-SectionEditor, since only one line can be selected
+ *  across the whole schema at a time. Groups the same controls SectionEditor used to show inline
+ *  into collapsible sections so a line with a lot going on (e.g. a debt-kind line's projection +
+ *  structure + tranche properties) doesn't require scrolling a giant expanded row. */
 export function LineSettingsPanelContent({
-  line, otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection, onClose, style,
+  line, isChild, isKpi, isDebtLine, debtProperties, onChangeDebtProperties,
+  otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection, onDeleteChildLine, onClose, style,
 }: LineSettingsPanelContentProps) {
   const [aliasDraft, setAliasDraft] = useState('');
   // A method that needs a basis line isn't committed to the line until one is picked — held here
@@ -345,7 +427,8 @@ export function LineSettingsPanelContent({
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
   const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
 
-  const currentMethod = pendingMethod ?? methodOf(line);
+  const rawMethod = methodOf(line);
+  const currentMethod = pendingMethod ?? (isSchemaEditorMethod(rawMethod) ? rawMethod : 'none');
   const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
   const currentDriver = drivers.find((d) => d.id === currentDriverId);
   // Blank while a new basis-needing method is pending (nothing chosen yet); otherwise reflects
@@ -382,21 +465,33 @@ export function LineSettingsPanelContent({
     setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   }
 
-  return (
-    <LineSettingsPanel
-      title={line.name || 'Untitled line'}
-      subtitle="Line settings"
-      icon="settings-2"
-      onClose={onClose}
-      openKeys={openKeys}
-      onToggleSection={toggleSection}
-      style={style}
-      sections={[
-        {
-          key: 'projection',
-          label: 'Projection',
-          content: (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+  const sections: LineSettingsSection[] = [
+    {
+      key: 'projection',
+      label: 'Projection',
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          {isChild ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                {isKpi ? 'KPI' : 'Sub-line'} name
+              </span>
+              <Input
+                size="sm"
+                autoFocus={!line.name}
+                value={line.name}
+                onChange={(e) => onUpdateLine(line.id, { name: e.target.value })}
+                placeholder={isKpi ? 'e.g. Monthly Active Users' : 'e.g. Segment A'}
+              />
+            </div>
+          ) : null}
+
+          {!isSchemaEditorMethod(rawMethod) ? (
+            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+              Uses a mapping-time projection method ({rawMethod}) — change it from the mapping screen instead.
+            </p>
+          ) : (
+            <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                 <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
                   Projection method
@@ -450,79 +545,123 @@ export function LineSettingsPanelContent({
                   </span>
                 )}
               </div>
-            </div>
-          ),
-        },
-        {
-          key: 'structure',
-          label: 'Structure',
-          content: (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-              <Switch
+            </>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  if (!isChild) {
+    sections.push({
+      key: 'structure',
+      label: 'Structure',
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          <Switch
+            size="sm"
+            label="Allow sub-lines"
+            checked={line.allowsSubLines ?? false}
+            onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
+          />
+          {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
+              single lump-sum balance carrying its own properties), have children without
+              being debt, both, or neither. Revolver is not a separate toggle here at all —
+              it's just part of whichever debt-properties panel a debt-kind line gets, always. */}
+          <Switch
+            size="sm"
+            label="Is debt"
+            checked={line.lineKind === 'debt'}
+            onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
+          />
+          {otherSections.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+              <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                Move to section
+              </span>
+              <Select
                 size="sm"
-                label="Allow sub-lines"
-                checked={line.allowsSubLines ?? false}
-                onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
-              />
-              {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
-                  single lump-sum balance carrying its own properties), have children without
-                  being debt, both, or neither. Revolver is not a separate toggle here at all —
-                  it's just part of whichever debt-properties panel a mapping-time tranche gets,
-                  on any debt-kind line, always. */}
-              <Switch
-                size="sm"
-                label="Is debt"
-                checked={line.lineKind === 'debt'}
-                onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
-              />
-              {otherSections.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                  <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-                    Move to section
-                  </span>
-                  <Select
-                    size="sm"
-                    value=""
-                    options={[{ value: '', label: 'Select a section…' }, ...otherSections.map((s) => ({ value: s.id, label: s.name }))]}
-                    onChange={(e) => {
-                      if (e.target.value) onMoveLineToSection(line.id, e.target.value);
-                    }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ),
-        },
-        {
-          key: 'aliases',
-          label: 'Aliases',
-          summary: line.aliases.length ? String(line.aliases.length) : undefined,
-          content: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-              {line.aliases.map((alias) => (
-                <Tag key={alias} onRemove={() => removeAlias(alias)}>
-                  {alias}
-                </Tag>
-              ))}
-              <Input
-                size="sm"
-                value={aliasDraft}
-                onChange={(e) => setAliasDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addAlias();
-                  }
+                value=""
+                options={[{ value: '', label: 'Select a section…' }, ...otherSections.map((s) => ({ value: s.id, label: s.name }))]}
+                onChange={(e) => {
+                  if (e.target.value) onMoveLineToSection(line.id, e.target.value);
                 }}
-                placeholder="Add alias"
-                fullWidth={false}
-                style={{ width: 160 }}
               />
-              <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
             </div>
-          ),
-        },
-      ]}
+          ) : null}
+        </div>
+      ),
+    });
+  } else if (isDebtLine) {
+    // A child's kind is always inherited, never independently stored (see effectiveLineKind's
+    // own doc comment) — nothing to toggle here, just a note explaining why the tranche section
+    // below is showing.
+    sections.push({
+      key: 'structure',
+      label: 'Structure',
+      content: (
+        <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+          Debt (inherited from its parent line).
+        </p>
+      ),
+    });
+  }
+
+  if (isDebtLine) {
+    sections.push({
+      key: 'debt',
+      label: 'Debt tranche',
+      content: <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties} />,
+    });
+  }
+
+  sections.push({
+    key: 'aliases',
+    label: 'Aliases',
+    summary: line.aliases.length ? String(line.aliases.length) : undefined,
+    content: (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        {line.aliases.map((alias) => (
+          <Tag key={alias} onRemove={() => removeAlias(alias)}>
+            {alias}
+          </Tag>
+        ))}
+        <Input
+          size="sm"
+          value={aliasDraft}
+          onChange={(e) => setAliasDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addAlias();
+            }
+          }}
+          placeholder="Add alias"
+          fullWidth={false}
+          style={{ width: 160 }}
+        />
+        <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
+      </div>
+    ),
+  });
+
+  return (
+    <LineSettingsPanel
+      title={line.name || (isChild ? `Untitled ${isKpi ? 'KPI' : 'sub-line'}` : 'Untitled line')}
+      subtitle={isChild ? (isKpi ? 'KPI' : 'Sub-line') : 'Line settings'}
+      icon="settings-2"
+      onClose={onClose}
+      openKeys={openKeys}
+      onToggleSection={toggleSection}
+      style={style}
+      sections={sections}
+      footer={
+        isChild && onDeleteChildLine ? (
+          <Button size="sm" variant="ghost" iconLeft="trash-2" onClick={() => onDeleteChildLine(line.id)}>
+            Delete {isKpi ? 'KPI' : 'sub-line'}
+          </Button>
+        ) : undefined
+      }
     />
   );
 }

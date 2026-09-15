@@ -31,9 +31,15 @@ export function periodsPerYearFor(type: PeriodType): number {
  *  parentLineId/allowsSubLines).
  *
  *  Every PER-TRANCHE line's id is deterministic, derived from its tranche's own id (see roleId
- *  below) — safe because a tranche's own id is already final by the time it exists (tranches are
- *  only ever added at mapping time, on a model's own already-forked schema, never on a shared
- *  template). The seven SCHEDULE-LEVEL lines (not tied to a tranche) are different: they're
+ *  below) — safe because a tranche's own id is already final by the time this function ever runs
+ *  against it. A tranche (a debt-kind line, with or without children) can now be authored directly
+ *  on a template too (see SchemaStructureEditor's own Debt tranche section) — but this function
+ *  itself is still only ever called in a model's own context (see ModelMappingScreen's
+ *  applyDebtSchedule/changeSchema), never against a bare template, which has no timeline to run it
+ *  against. A template-authored tranche's id is simply re-keyed like every other line the moment a
+ *  model forks its own private copy (see cloneStatementSchemaStructure), so it's already final by
+ *  the time regeneration first sees it. The seven SCHEDULE-LEVEL lines (not tied to a tranche) are
+ *  different: they're
  *  seeded once inside the default TEMPLATE (see defaultStatementSchema.ts), and a template gets
  *  re-keyed with fresh ids every time a model forks its own private copy (see
  *  cloneStatementSchemaStructure) — so this function never assumes one of *those* ids by a fixed

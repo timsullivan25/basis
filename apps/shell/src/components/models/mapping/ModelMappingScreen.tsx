@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, Input, Select, Tabs, Toast } from '@basis/design-system';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, IconButton, Input, Select, SegmentedControl, Tabs, Toast } from '@basis/design-system';
 import {
-  computedResultRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -19,18 +18,21 @@ import {
 import { DEFAULT_ADJUSTMENT_INSTANCE_SEEDS, DEFAULT_ADJUSTMENT_TARGET_LINE_NAME, DEFAULT_SCHEMA_ID } from '../../../data/defaultStatementSchema';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
-import { buildComputedResult, computeVersionStamp, materializeEvaluation } from '../../../lib/computedCache';
+import { recomputeAndCacheModel } from '../../../lib/modelRecompute';
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
 import { evaluateModel } from '../../../lib/engine/evaluate';
 import { cloneStatementSchemaStructure } from '../../../lib/statementSchemaClone';
-import { addChildLine, childrenOf, effectiveLineKind, removeChildLine, setChildProjection, type ChildProjectionSelection } from '../../../lib/statementLineChildren';
+import { addChildLine, effectiveLineKind, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../../lib/lineDependents';
+import { buildSectionRows } from '../../../lib/statementRowBuilder';
+import * as schemaEdit from '../../../lib/statementSchemaEdit';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
+import { LineSettingsPanelContent } from '../../statements/SectionEditor';
 import type { InstanceTarget, SchemaLineGroup } from '../instances/projectionMethod';
-import { InstanceRowDetail } from './InstanceRowDetail';
+import { InstanceMappingDetail } from './InstanceMappingDetail';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
@@ -113,9 +115,19 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
-  // Held between "delete clicked" on a child line and the user confirming/cancelling, only when
-  // something else in the schema actually depends on it — see requestDeleteChild's own comment.
-  const [pendingLineRemoval, setPendingLineRemoval] = useState<{ lineId: string; dependents: SchemaLineDependents } | null>(null);
+  // "Edit mapping" (the historical default) vs "Edit schema" — same rows either way (see
+  // buildSectionRows), only the columns and the side panel differ. See changeSchema's own
+  // comment for how a schema-mode edit gets persisted.
+  const [mode, setMode] = useState<'mapping' | 'schema'>('mapping');
+  // Held between "delete clicked" and the user confirming/cancelling, only when something else in
+  // the schema actually depends on what's being removed — see requestDeleteChild/requestDeleteLine's
+  // own comments. A 'child' removal (a sub-line/KPI) needs no sectionId — see
+  // lib/statementLineChildren.ts's removeChildLine.
+  const [pendingRemoval, setPendingRemoval] = useState<
+    | { kind: 'child'; lineId: string; dependents: SchemaLineDependents }
+    | { kind: 'line'; sectionId: string; lineId: string; dependents: SchemaLineDependents }
+    | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,6 +245,40 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook, selectedTemplateId, editing?.modelImport.id]);
 
+  // Debounced eager persistence for Edit-schema-mode edits, `editing` only — a brand-new import
+  // has no durable model/schema row yet to save eagerly against, so it stays exactly as before
+  // (nothing persists until "Save mapping"). For an existing model, this is what makes "(a) save
+  // the mapping, (b) save the schema/settings" genuinely independent acts: a structural edit here
+  // survives even if the mapping is never (re-)saved, or the session is simply closed. Skips the
+  // very first run after (re)loading a model — that setDraftSchema call is the initial load, not
+  // a user edit, and re-saving an unchanged schema would just bump its updatedAt for no reason.
+  // Never writes `draftSchema` back from the save's result — a fast edit landing during the
+  // in-flight save would otherwise be silently clobbered by the save's now-stale snapshot; the
+  // small resulting imprecision in the cached schemaUpdatedAt only ever costs one extra recompute
+  // later (see lib/computedCache.ts's versionStampMatches), never wrong displayed numbers.
+  const skipNextEagerSaveRef = useRef(true);
+  useEffect(() => {
+    skipNextEagerSaveRef.current = true;
+  }, [editing?.model.id]);
+  useEffect(() => {
+    if (!editing || !draftSchema) return;
+    if (skipNextEagerSaveRef.current) {
+      skipNextEagerSaveRef.current = false;
+      return;
+    }
+    const scheduled = draftSchema;
+    const model = editing.model;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const saved = await statementSchemaRepository.save(scheduled);
+        const freshEvaluation = evaluateModel(saved, model);
+        await recomputeAndCacheModel(saved, model, freshEvaluation);
+      })();
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSchema, editing]);
+
   function handleSchemaSelect(id: string) {
     if (id === selectedTemplateId) return;
     setPendingTemplateId(id);
@@ -292,6 +338,16 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     return regenerateDebtSchedule(next, periodsPerYearFor(periodType), circularCalcsEnabled);
   }
 
+  /** The single entry point for every Edit-schema-mode mutation (and the pre-existing add/delete-
+   *  child paths, which are schema edits too) — regenerates the Debt Schedule, same as every
+   *  other schema write here, and updates the draft. For `editing`, a debounced effect below
+   *  eagerly persists this independently of "Save mapping" (see that effect's own comment); for a
+   *  brand-new import there's no durable schema row yet, so it just stays in the draft until Save,
+   *  unchanged from before this mode existed. */
+  function changeSchema(next: StatementSchema) {
+    setDraftSchema(applyDebtSchedule(next));
+  }
+
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
     setMapping((prev) => ({ ...prev, [targetLineId]: { ...prev[targetLineId], ...patch } }));
   }
@@ -329,7 +385,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     if (!schema) return;
     const dependents = findSchemaDependents(schema, new Set([lineId]));
     if (hasSchemaDependents(dependents)) {
-      setPendingLineRemoval({ lineId, dependents });
+      setPendingRemoval({ kind: 'child', lineId, dependents });
     } else {
       commitDeleteChild(lineId);
     }
@@ -350,10 +406,54 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     setExpandedLineId(null);
   }
 
-  function confirmPendingLineRemoval() {
-    if (!pendingLineRemoval) return;
-    commitDeleteChild(pendingLineRemoval.lineId);
-    setPendingLineRemoval(null);
+  /** Edit-schema-mode counterpart of requestDeleteChild, for a top-level line — same dependency-
+   *  check-then-confirm split, reused from lib/lineDependents.ts as-is. */
+  function requestDeleteLine(sectionId: string, lineId: string) {
+    if (!schema) return;
+    const dependents = findSchemaDependents(schema, new Set([lineId]));
+    if (hasSchemaDependents(dependents)) {
+      setPendingRemoval({ kind: 'line', sectionId, lineId, dependents });
+    } else {
+      changeSchema(schemaEdit.removeLine(schema, sectionId, lineId));
+    }
+  }
+
+  function confirmPendingRemoval() {
+    if (!pendingRemoval || !schema) return;
+    if (pendingRemoval.kind === 'child') commitDeleteChild(pendingRemoval.lineId);
+    else changeSchema(schemaEdit.removeLine(schema, pendingRemoval.sectionId, pendingRemoval.lineId));
+    setPendingRemoval(null);
+  }
+
+  // Edit-schema-mode mutations — thin wrappers over lib/statementSchemaEdit.ts's pure functions,
+  // same pattern SchemaStructureEditor uses, routed through changeSchema so every one of them
+  // regenerates the Debt Schedule and (for `editing`) eagerly persists. Section-level management
+  // (rename/reorder/delete/freeform toggle) is deliberately out of scope here — this screen's flat,
+  // tab-filtered table has no per-section header to host those controls, and a model's sections
+  // rarely need restructuring on their own (unlike lines); use the template builder for that, or
+  // change templates before creating the model. Only "add a line" and "add a section" are offered.
+  function addSection() {
+    if (schema) changeSchema(schemaEdit.addSection(schema));
+  }
+  function addLine(sectionId: string) {
+    if (schema) changeSchema(schemaEdit.addLine(schema, sectionId));
+  }
+  function updateLineSchema(lineId: string, patch: Partial<StatementLine>) {
+    if (schema) changeSchema(schemaEdit.updateLine(schema, lineId, patch));
+  }
+  function setLineProjectionSchema(lineId: string, selection: schemaEdit.ProjectionSelection) {
+    if (schema) changeSchema(schemaEdit.setLineProjection(schema, lineId, selection));
+  }
+  function moveLine(sectionId: string, lineId: string, direction: 'up' | 'down') {
+    if (schema) changeSchema(schemaEdit.moveLine(schema, sectionId, lineId, direction));
+  }
+  function moveLineToSection(fromSectionId: string, lineId: string, toSectionId: string) {
+    if (schema) changeSchema(schemaEdit.moveLineToSection(schema, fromSectionId, lineId, toSectionId));
+  }
+  function changeDebtPropertiesSchema(lineId: string, patch: Partial<DebtTrancheProperties>) {
+    if (!schema) return;
+    const line = schemaEdit.findLine(schema, lineId);
+    changeSchema(schemaEdit.updateLine(schema, lineId, { debtProperties: { ...line?.debtProperties, ...patch } }));
   }
 
   function handleSaveClick() {
@@ -422,9 +522,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
       // cache rather than re-running the engine itself) has real numbers right after a save, not
       // just after someone happens to open the workspace next.
       const savedEvaluation = evaluateModel(savedSchema, savedModel);
-      const materialized = materializeEvaluation(savedSchema, savedModel, savedEvaluation);
-      const versionStamp = computeVersionStamp(savedModel, null, savedSchema);
-      await computedResultRepository.set(buildComputedResult(savedModel.id, 'base', versionStamp, materialized));
+      await recomputeAndCacheModel(savedSchema, savedModel, savedEvaluation);
 
       setSavedToast(true);
       onSaved(savedModel);
@@ -467,6 +565,10 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
     }
     return true;
   }
+  // Schema mode has no mapping status to filter by — just a plain name search.
+  function passesSchemaSearch(line: StatementLine): boolean {
+    return !query || line.name.toLowerCase().includes(query);
+  }
 
   // Computed once and reused by every column (target/source/status/match) so a superseded
   // parent reads consistently across the whole row, not just the one column that happened to
@@ -478,32 +580,19 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
   }
 
   const rows: Array<{
-    id: string; __group?: string; line?: StatementLine; sectionName?: string;
+    id: string; __group?: string; line?: StatementLine; sectionName?: string; sectionId?: string;
     addInstanceTarget?: InstanceTarget; childLine?: StatementLine; isKpi?: boolean;
   }> = [];
   schema.sections.forEach((section) => {
     if (tab !== 'all' && tab !== section.id) return;
-
-    if (section.allowsFreeformLines) {
-      // Every line in a freeform section IS a KPI child (added via "+ Add KPI") — there's no
-      // "ordinary" line here at all, unlike a ordinary section's top-level lines.
-      rows.push({ id: `group-${section.id}`, __group: section.name });
-      section.lines.filter(passes).forEach((child) => rows.push({ id: `child-${child.id}`, childLine: child, sectionName: section.name, isKpi: true }));
-      rows.push({ id: `add-section-${section.id}`, addInstanceTarget: { id: section.id, name: section.name, kind: 'section' }, sectionName: section.name });
-      return;
-    }
-
-    const topLevelLines = section.lines.filter((l) => !l.parentLineId);
-    const visible = topLevelLines.filter(passes);
-    if (!visible.length) return;
+    // "+ Add sub-line/KPI" rows are schema-mode-only now — adding a line is a structural edit,
+    // not a mapping act (see Edit-schema mode's own "+ Add" affordances).
+    const sectionRows = buildSectionRows(schema, section, mode === 'schema' ? passesSchemaSearch : passes).filter(
+      (row) => mode === 'schema' || !row.addInstanceTarget,
+    );
+    if (!sectionRows.length) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
-    visible.forEach((line) => {
-      rows.push({ id: line.id, line, sectionName: section.name });
-      if (line.allowsSubLines) {
-        childrenOf(schema, line.id).forEach((child) => rows.push({ id: `child-${child.id}`, childLine: child, sectionName: section.name, isKpi: false }));
-        rows.push({ id: `add-line-${line.id}`, addInstanceTarget: { id: line.id, name: line.name, kind: 'line' }, sectionName: section.name });
-      }
-    });
+    sectionRows.forEach((row) => rows.push({ ...row, sectionName: section.name, sectionId: section.id }));
   });
 
   // The row shown in the shared side panel — resolved once here (rather than inside the
@@ -584,6 +673,27 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         );
       },
     },
+    ...(mode === 'schema'
+      ? [
+          {
+            key: 'actions',
+            label: '',
+            width: 100,
+            align: 'right' as const,
+            render: (_: unknown, row: { line?: StatementLine; sectionId?: string }) =>
+              row.line && row.sectionId ? (
+                <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-1)' }}>
+                  <IconButton icon="arrow-up" label="Move line up" size="sm" variant="ghost" onClick={() => moveLine(row.sectionId!, row.line!.id, 'up')} />
+                  <IconButton icon="arrow-down" label="Move line down" size="sm" variant="ghost" onClick={() => moveLine(row.sectionId!, row.line!.id, 'down')} />
+                  <IconButton icon="trash-2" label="Delete line" size="sm" variant="ghost" onClick={() => requestDeleteLine(row.sectionId!, row.line!.id)} />
+                </div>
+              ) : null,
+          },
+        ]
+      : []),
+    ...(mode !== 'mapping'
+      ? []
+      : [
     {
       key: 'source',
       label: 'Source line',
@@ -684,6 +794,7 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         );
       },
     },
+      ]),
     ...workbook.periods.map((period, i) => ({
       key: `p${i}`,
       label: period.name,
@@ -829,16 +940,55 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         size="sm"
         actions={
           <>
-            <Input size="sm" iconLeft="search" placeholder="Find target or source line" value={search} onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />
-            <Button size="sm" iconLeft="filter" selected={onlyReview} onClick={() => setOnlyReview(!onlyReview)}>
-              Needs review · {reviewLines.length}
-            </Button>
+            <Input
+              size="sm"
+              iconLeft="search"
+              placeholder={mode === 'schema' ? 'Find a line' : 'Find target or source line'}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ width: 220 }}
+            />
+            {mode === 'mapping' ? (
+              <Button size="sm" iconLeft="filter" selected={onlyReview} onClick={() => setOnlyReview(!onlyReview)}>
+                Needs review · {reviewLines.length}
+              </Button>
+            ) : null}
           </>
         }
       />
 
       <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
-        <Card padding="none" icon="git-merge" title="Line item mapping" style={{ flex: '1 1 auto', minWidth: 0 }}>
+        <Card
+          padding="none"
+          icon={mode === 'schema' ? 'layout-list' : 'git-merge'}
+          title={mode === 'schema' ? 'Statement structure' : 'Line item mapping'}
+          actions={
+            <SegmentedControl
+              size="sm"
+              options={[
+                { value: 'mapping', label: 'Edit mapping' },
+                { value: 'schema', label: 'Edit schema' },
+              ]}
+              value={mode}
+              onChange={(value) => setMode(value as 'mapping' | 'schema')}
+            />
+          }
+          footer={
+            mode === 'schema' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                <Button size="sm" variant="ghost" iconLeft="plus" onClick={addSection}>
+                  Add section
+                </Button>
+                {tab !== 'all' ? (
+                  <Button size="sm" variant="ghost" iconLeft="plus" onClick={() => addLine(tab)}>
+                    Add line to {schema.sections.find((s) => s.id === tab)?.name || 'this section'}
+                  </Button>
+                ) : null}
+              </div>
+            ) : undefined
+          }
+          style={{ flex: '1 1 auto', minWidth: 0 }}
+        >
           <DataTable
             columns={columns}
             rows={rows}
@@ -858,40 +1008,49 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
           />
         </Card>
 
-        {selectedRow?.childLine ? (
+        {mode === 'schema' && (selectedRow?.line || selectedRow?.childLine) ? (
           (() => {
-            const child = selectedRow.childLine;
-            const m = mapping[child.id] ?? blankMapping(child.id);
-            const driverId = child.projection && 'driverId' in child.projection ? child.projection.driverId : undefined;
-            const basisLineId = driverId ? schema.drivers.find((d) => d.id === driverId)?.basisLineId : undefined;
+            const line = (selectedRow!.line ?? selectedRow!.childLine)!;
+            const isChild = Boolean(selectedRow!.childLine);
             return (
-              <InstanceRowDetail
-                line={child}
-                sectionName={selectedRow.sectionName ?? ''}
-                workbook={workbook}
-                schemaLineGroups={schemaLineGroups}
-                basisLineId={basisLineId}
-                isKpi={Boolean(selectedRow.isKpi)}
-                effectiveKind={effectiveLineKind(schema, child)}
-                sourceLineIds={m.sourceLineIds}
-                manualHistoricals={manualHistoricals[child.id] ?? []}
-                onChangeName={(name) => setDraftSchema((prev) => (prev ? patchLine(prev, child.id, { name }) : prev))}
-                onChangeSourceLines={(sourceLineIds) => setSourceLines(child, sourceLineIds)}
-                onChangeManualHistoricals={(values) => setManualHistoricals((prev) => ({ ...prev, [child.id]: values }))}
-                onChangeProjection={(selection: ChildProjectionSelection) =>
-                  setDraftSchema((prev) => (prev ? setChildProjection(prev, child.id, selection) : prev))
-                }
-                onChangeDebtProperties={(patch: Partial<DebtTrancheProperties>) =>
-                  setDraftSchema((prev) =>
-                    prev ? applyDebtSchedule(patchLine(prev, child.id, { debtProperties: { ...child.debtProperties, ...patch } })) : prev,
-                  )
-                }
-                onDelete={() => requestDeleteChild(child.id)}
+              <LineSettingsPanelContent
+                line={line}
+                isChild={isChild}
+                isKpi={selectedRow!.isKpi}
+                isDebtLine={effectiveLineKind(schema, line) === 'debt'}
+                debtProperties={line.debtProperties}
+                onChangeDebtProperties={(patch) => changeDebtPropertiesSchema(line.id, patch)}
+                otherSections={schema.sections.filter((s) => s.id !== selectedRow!.sectionId).map((s) => ({ id: s.id, name: s.name }))}
+                lineGroups={schemaLineGroups}
+                drivers={schema.drivers}
+                nameIndex={nameIndex}
+                onUpdateLine={updateLineSchema}
+                onSetProjection={setLineProjectionSchema}
+                onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(selectedRow!.sectionId!, lineId, toSectionId)}
+                onDeleteChildLine={isChild ? requestDeleteChild : undefined}
                 onClose={() => setExpandedLineId(null)}
               />
             );
           })()
-        ) : selectedRow?.line ? (
+        ) : mode === 'mapping' && selectedRow?.childLine ? (
+          (() => {
+            const child = selectedRow.childLine;
+            const m = mapping[child.id] ?? blankMapping(child.id);
+            return (
+              <InstanceMappingDetail
+                line={child}
+                sectionName={selectedRow.sectionName ?? ''}
+                workbook={workbook}
+                isKpi={Boolean(selectedRow.isKpi)}
+                sourceLineIds={m.sourceLineIds}
+                manualHistoricals={manualHistoricals[child.id] ?? []}
+                onChangeSourceLines={(sourceLineIds) => setSourceLines(child, sourceLineIds)}
+                onChangeManualHistoricals={(values) => setManualHistoricals((prev) => ({ ...prev, [child.id]: values }))}
+                onClose={() => setExpandedLineId(null)}
+              />
+            );
+          })()
+        ) : mode === 'mapping' && selectedRow?.line ? (
           (() => {
             const line = selectedRow.line;
             const childCount = childCountByLineId.get(line.id) ?? 0;
@@ -906,13 +1065,6 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 supersededByInstanceCount={childCount}
                 calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
                 formula={formatFormula(line.formula, nameIndex)}
-                isDebtLine={childCount === 0 && effectiveLineKind(schema, line) === 'debt'}
-                debtProperties={line.debtProperties}
-                onChangeDebtProperties={(patch) =>
-                  setDraftSchema((prev) =>
-                    prev ? applyDebtSchedule(patchLine(prev, line.id, { debtProperties: { ...line.debtProperties, ...patch } })) : prev,
-                  )
-                }
                 onClose={() => setExpandedLineId(null)}
               />
             );
@@ -982,38 +1134,40 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
         open={cancelConfirmOpen}
         onClose={() => setCancelConfirmOpen(false)}
         icon="alert-triangle"
-        title="Discard this import?"
+        title={editing ? 'Stop editing this model?' : 'Discard this import?'}
         subtitle={company.name}
         footer={
           <>
             <Button onClick={() => setCancelConfirmOpen(false)}>Keep editing</Button>
             <Button variant="danger" iconLeft="trash-2" onClick={onCancel}>
-              Discard import
+              {editing ? 'Close without saving mapping' : 'Discard import'}
             </Button>
           </>
         }
       >
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
-          The parsed file and any mapping changes will be discarded. Nothing is written until you save.
+          {editing
+            ? 'Any unsaved mapping changes will be discarded. Schema changes (added/renamed/removed lines, projections, tranche details) are already saved.'
+            : 'The parsed file and any mapping changes will be discarded. Nothing is written until you save.'}
         </p>
       </Dialog>
 
       <Dialog
-        open={pendingLineRemoval !== null}
-        onClose={() => setPendingLineRemoval(null)}
+        open={pendingRemoval !== null}
+        onClose={() => setPendingRemoval(null)}
         icon="alert-triangle"
-        title="Delete this sub-line?"
-        subtitle={pendingLineRemoval ? schema.sections.flatMap((s) => s.lines).find((l) => l.id === pendingLineRemoval.lineId)?.name : undefined}
+        title="Delete this line?"
+        subtitle={pendingRemoval ? schema.sections.flatMap((s) => s.lines).find((l) => l.id === pendingRemoval.lineId)?.name : undefined}
         footer={
           <>
-            <Button onClick={() => setPendingLineRemoval(null)}>Cancel</Button>
-            <Button variant="danger" iconLeft="trash-2" onClick={confirmPendingLineRemoval}>
+            <Button onClick={() => setPendingRemoval(null)}>Cancel</Button>
+            <Button variant="danger" iconLeft="trash-2" onClick={confirmPendingRemoval}>
               Delete anyway
             </Button>
           </>
         }
       >
-        {pendingLineRemoval ? (
+        {pendingRemoval ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
             {/* Two genuinely different outcomes, from findSchemaDependents' two checks — a
                 driver using this line as its basis (percent-of/days-of/roll-off) falls back to
@@ -1022,26 +1176,26 @@ export function ModelMappingScreen({ company, schemas, editing, draft, onCancel,
                 lib/statementLineChildren.ts) has that formula automatically regenerated instead,
                 not reset to flat. Conflating the two here would misdescribe exactly the roll-off
                 case this mechanism exists for. */}
-            {pendingLineRemoval.dependents.driverBases.length > 0 ? (
+            {pendingRemoval.dependents.driverBases.length > 0 ? (
               <div>
                 <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
                   These will switch to "Flat (holds last actual)" since their basis will no longer exist:
                 </p>
                 <ul style={{ margin: 0, paddingLeft: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
-                  {pendingLineRemoval.dependents.driverBases.map((d) => (
+                  {pendingRemoval.dependents.driverBases.map((d) => (
                     <li key={d.id}>{d.name}</li>
                   ))}
                 </ul>
               </div>
             ) : null}
-            {pendingLineRemoval.dependents.formulaLines.length > 0 ? (
+            {pendingRemoval.dependents.formulaLines.length > 0 ? (
               <div>
                 <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
                   These lines' formulas reference it and will be updated automatically (a rollup sum shrinks, or a
                   roll-off basis line's adjustment is removed):
                 </p>
                 <ul style={{ margin: 0, paddingLeft: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
-                  {pendingLineRemoval.dependents.formulaLines.map((l) => (
+                  {pendingRemoval.dependents.formulaLines.map((l) => (
                     <li key={l.id}>{l.name}</li>
                   ))}
                 </ul>

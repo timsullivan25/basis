@@ -62,8 +62,12 @@ interface DebtTranchePropertiesEditorProps {
  *  doc comment) — maturity, coupon, and, for a revolver, its commitment amount/fee separate from
  *  the drawn balance the line's own value/historicals represent. Term vs. Revolver is always
  *  offered here, on any debt line — there's no separate schema-level toggle gating it; a schema
- *  simply marks a line "debt," and this panel is what a mapping-time user sees for it. No
- *  projection or interest calculation reads these yet; that's Debt Schedule's concern. */
+ *  simply marks a line "debt," and this is the one editor shown for it wherever a line's settings
+ *  are editable: the template builder and a model's own Edit-schema mode (see
+ *  SectionEditor.tsx's LineSettingsPanelContent). The mapping screen's own panel no longer shows
+ *  this — mapping is strictly the mapping act now, tranche properties are a schema-editing
+ *  concern. No projection or interest calculation reads these directly; that's Debt Schedule's
+ *  concern. */
 export function DebtTranchePropertiesEditor({ instance, onChange }: DebtTranchePropertiesEditorProps) {
   const debtType = instance.debtType ?? 'term';
   const isRevolver = debtType === 'revolver';

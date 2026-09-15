@@ -21,7 +21,6 @@ import {
 import {
   analysisResultRepository,
   analysisSettingsRepository,
-  computedResultRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -49,7 +48,8 @@ import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
-import { buildComputedResult, computeVersionStamp, materializeEvaluation, type LineValues } from '../lib/computedCache';
+import type { LineValues } from '../lib/computedCache';
+import { recomputeAndCacheModel } from '../lib/modelRecompute';
 import {
   computeDcfOutputs,
   computeSensitivityGrid,
@@ -268,9 +268,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // is already synchronous and instant at this schema's scale.
   useEffect(() => {
     if (recalcMode !== 'auto' || !schema || !model || !evaluation) return;
-    const materialized = materializeEvaluation(schema, model, evaluation);
-    const versionStamp = computeVersionStamp(model, activeScenario, schema);
-    void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
+    void recomputeAndCacheModel(schema, model, evaluation, activeScenario, activeScenarioId);
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
 
   // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
@@ -483,6 +481,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     ]);
     setSchema(savedSchema);
     setModel(updatedModel);
+    // The auto-recalc effect above only fires in 'auto' recalc mode — recompute explicitly here
+    // so a manual-mode session's cache doesn't go stale until the user happens to switch back.
+    const driverValues = activeScenario
+      ? mergeScenarioDriverValues(updatedModel.driverValues ?? {}, activeScenario.driverValues)
+      : (updatedModel.driverValues ?? {});
+    const freshEvaluation = evaluateModel(savedSchema, { ...updatedModel, driverValues });
+    await recomputeAndCacheModel(savedSchema, updatedModel, freshEvaluation, activeScenario, activeScenarioId);
   }
 
   function recalculate() {
