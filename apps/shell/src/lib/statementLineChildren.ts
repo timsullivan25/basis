@@ -40,7 +40,7 @@ export function childrenOf(schema: StatementSchema, parentLineId: string): State
 /** A child's effective kind is always its parent's, walked live off the schema — never
  *  independently stored on the child (see StatementLine.lineKind's own doc comment), so it can
  *  never drift out of sync with the parent. */
-export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | undefined {
+export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | 'check' | undefined {
   if (!line.parentLineId) return line.lineKind;
   const parent = findLine(schema, line.parentLineId);
   return parent ? effectiveLineKind(schema, parent) : undefined;

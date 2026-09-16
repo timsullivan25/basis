@@ -23,7 +23,7 @@ interface LineOptions {
   /** See StatementLine.allowsSubLines' own doc comment. */
   allowsSubLines?: boolean;
   /** See StatementLine.lineKind' own doc comment. */
-  lineKind?: 'debt';
+  lineKind?: 'debt' | 'check';
 }
 
 /** Authored with a raw formula string for readability — resolved into a real ResolvedFormula
@@ -216,6 +216,32 @@ function creditMetrics(): DraftSection {
   ]);
 }
 
+/** Flags whether the statements actually tie out — ordinary formulas over lines that already
+ *  exist, nothing generated/overlay-like needed (contrast lib/debtSchedule.ts, which exists
+ *  because tranches are per-model instance data). Each is a relative (% of Total Assets, not raw
+ *  dollars) difference so one materiality threshold works across companies of very different
+ *  scale; lineKind 'check' + checkTolerance (see types.ts) is what the workspace grid reads to
+ *  flag a failing period red instead of just showing the number like any other metric. Both read
+ *  0.1%+ as a real tie-out gap worth investigating, not rounding noise. */
+function checks(): DraftSection {
+  return section('Checks', [
+    line('Balance Sheet Check', {
+      formula: 'abs(Total Assets - Total Liabilities - Total Equity) / Total Assets',
+      rowFormat: 'normal',
+      numberFormat: 'percentage',
+      aggregation: 'none',
+      lineKind: 'check',
+    }),
+    line('Cash Flow Check', {
+      formula: 'abs(Cash Flow Statement.Net Change in Cash - (Balance Sheet.Cash & Equivalents - priorPeriod(Balance Sheet.Cash & Equivalents))) / Total Assets',
+      rowFormat: 'normal',
+      numberFormat: 'percentage',
+      aggregation: 'none',
+      lineKind: 'check',
+    }),
+  ]);
+}
+
 /** Fixed (not random) so concurrent seed attempts on an empty store converge on one row instead of racing to create duplicates — see IndexedDbStatementSchemaRepository.list(). */
 export const DEFAULT_SCHEMA_ID = 'seed-basis-default';
 
@@ -398,6 +424,7 @@ export function createDefaultStatementSchema(): StatementSchema {
     ebitdaBridge(),
     workingCapital(),
     creditMetrics(),
+    checks(),
   ];
   const index = buildNameIndex({ sections: draftSections });
   const now = new Date().toISOString();

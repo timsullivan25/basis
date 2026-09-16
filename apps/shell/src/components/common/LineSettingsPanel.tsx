@@ -17,6 +17,9 @@ interface LineSettingsPanelProps {
   sections: LineSettingsSection[];
   openKeys: string[];
   onToggleSection: (key: string) => void;
+  /** Fixed, non-collapsible content shown above the accordion — e.g. a line-type selector whose
+   *  choice determines which sections even apply below it, so it isn't itself one of them. */
+  beforeSections?: ReactNode;
   /** A persistent action (e.g. "Delete sub-line") that isn't itself a collapsible setting. */
   footer?: ReactNode;
   /** Lets each screen control height/position (sticky vs. matching a table's own maxHeight) —
@@ -27,7 +30,7 @@ interface LineSettingsPanelProps {
 /** Shared side-panel shell for a selected line's controls, replacing the inline expanded-row
  *  pattern in both SectionEditor and ModelMappingScreen. Purely presentational — each screen
  *  supplies its own accordion sections built from its existing detail components. */
-export function LineSettingsPanel({ title, subtitle, icon, onClose, sections, openKeys, onToggleSection, footer, style }: LineSettingsPanelProps) {
+export function LineSettingsPanel({ title, subtitle, icon, onClose, sections, openKeys, onToggleSection, beforeSections, footer, style }: LineSettingsPanelProps) {
   return (
     <div style={{ width: 420, flex: '0 0 auto', ...style }}>
       <Card
@@ -40,6 +43,9 @@ export function LineSettingsPanel({ title, subtitle, icon, onClose, sections, op
         style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
         bodyStyle={{ overflow: 'auto', minHeight: 0 }}
       >
+        {beforeSections ? (
+          <div style={{ padding: 'var(--space-5) var(--space-6)', borderBottom: '1px solid var(--border-subtle)' }}>{beforeSections}</div>
+        ) : null}
         <Accordion
           items={sections}
           openKeys={openKeys}

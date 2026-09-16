@@ -97,3 +97,55 @@ describe('createDefaultStatementSchema — capital structure', () => {
     expect(evaluation.getValue(lineByName.get('Total Debt')!.id, 0)).toBe(300);
   });
 });
+
+describe('createDefaultStatementSchema — Checks', () => {
+  const schema = createDefaultStatementSchema();
+  const checks = schema.sections.find((s) => s.name === 'Checks')!;
+  const balanceSheet = schema.sections.find((s) => s.name === 'Balance Sheet')!;
+  const lineByName = new Map(balanceSheet.lines.map((l) => [l.name, l]));
+
+  it('tags both check lines as lineKind "check", not debt', () => {
+    expect(checks.lines.map((l) => l.name)).toEqual(['Balance Sheet Check', 'Cash Flow Check']);
+    for (const l of checks.lines) expect(l.lineKind).toBe('check');
+  });
+
+  it('Balance Sheet Check reads exactly 0 while Total Equity is still a plug', () => {
+    // Every source (non-formula) Balance Sheet line needs a real value here — Total
+    // Assets/Total Liabilities are built with "+", not sum(), so a single unmapped (null) input
+    // anywhere in the chain would make the whole total null rather than the 0 this test needs.
+    const model = {
+      timeline: [period('2024')],
+      historicals: {
+        [lineByName.get('Cash & Equivalents')!.id]: [200],
+        [lineByName.get('Accounts Receivable')!.id]: [100],
+        [lineByName.get('Other Current Assets')!.id]: [0],
+        [lineByName.get('Goodwill & Intangibles')!.id]: [50],
+        [lineByName.get('Other Long Term Assets')!.id]: [0],
+        [lineByName.get('Accounts Payable')!.id]: [40],
+        [lineByName.get('Deferred Revenue')!.id]: [0],
+        [lineByName.get('Other Current Liabilities')!.id]: [0],
+        [lineByName.get('1L Debt')!.id]: [0],
+        [lineByName.get('2L Debt')!.id]: [0],
+        [lineByName.get('Unsecured Debt')!.id]: [0],
+        [lineByName.get('Other Long Term Liabilities')!.id]: [0],
+      } as Record<string, (number | null)[]>,
+    };
+    const evaluation = evaluateModel(schema, model);
+    const bsCheck = checks.lines.find((l) => l.name === 'Balance Sheet Check')!;
+    expect(evaluation.getValue(lineByName.get('Total Assets')!.id, 0)).toBe(350);
+    expect(evaluation.getValue(bsCheck.id, 0)).toBe(0);
+  });
+
+  it('Cash Flow Check is null (not a false failure) in the first period — nothing to diff against yet, not an error', () => {
+    const model = {
+      timeline: [period('2024')],
+      historicals: {
+        [lineByName.get('Cash & Equivalents')!.id]: [100],
+        [lineByName.get('Goodwill & Intangibles')!.id]: [50],
+      } as Record<string, (number | null)[]>,
+    };
+    const evaluation = evaluateModel(schema, model);
+    const cfCheck = checks.lines.find((l) => l.name === 'Cash Flow Check')!;
+    expect(evaluation.getValue(cfCheck.id, 0)).toBeNull();
+  });
+});

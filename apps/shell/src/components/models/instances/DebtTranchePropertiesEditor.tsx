@@ -10,8 +10,10 @@ function parsePercent(text: string): number | undefined {
 }
 
 /** Commit-on-blur/Enter, same convention as DcfPanel's WACC/terminal-growth inputs — a buffered
- *  local value that only calls back once it parses, so an in-progress "8." isn't clobbered. */
-function PercentInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number | undefined) => void }) {
+ *  local value that only calls back once it parses, so an in-progress "8." isn't clobbered.
+ *  Exported for reuse anywhere else a fraction needs editing as a whole percent (e.g. a check
+ *  line's tolerance — see SectionEditor.tsx). */
+export function PercentInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number | undefined) => void }) {
   const [text, setText] = useState(() => (value === undefined ? '' : String(value * 100)));
   return (
     <Input
@@ -29,7 +31,8 @@ function PercentInput({ value, onCommit }: { value: number | undefined; onCommit
   );
 }
 
-function NumberInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number | undefined) => void }) {
+/** See PercentInput's own doc comment — same reuse rationale, for a raw (non-percent) number. */
+export function NumberInput({ value, onCommit }: { value: number | undefined; onCommit: (next: number | undefined) => void }) {
   const [text, setText] = useState(() => (value === undefined ? '' : String(value)));
   function commit() {
     const trimmed = text.trim();

@@ -31,6 +31,18 @@ export function getRequiredMeta(line: StatementLine): { label: string; tone: Bad
   return line.required ? { label: 'Required', tone: 'caution' } : { label: 'Optional', tone: 'neutral' };
 }
 
+/** Applied when a lineKind 'check' line sets no checkTolerance of its own. */
+export const DEFAULT_CHECK_TOLERANCE = 0.001;
+
+/** 'unknown' means "not yet computable" (e.g. the first period, with no prior period to diff
+ *  against, or a divide-by-zero guard upstream returning null) — never a failure. Only
+ *  meaningful for a lineKind === 'check' line; every other line is always 'unknown'. */
+export type CheckStatus = 'pass' | 'fail' | 'unknown';
+export function getCheckStatus(line: StatementLine, value: number | null): CheckStatus {
+  if (line.lineKind !== 'check' || value === null) return 'unknown';
+  return Math.abs(value) > (line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE) ? 'fail' : 'pass';
+}
+
 /** How a line renders in the actual statement preview, driven by its row format. */
 export function getLineRowStyle(line: StatementLine): CSSProperties {
   if (line.rowFormat === 'total') {
