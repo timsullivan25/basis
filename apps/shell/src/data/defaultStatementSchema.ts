@@ -132,7 +132,22 @@ function balanceSheet(): DraftSection {
     // "Total Debt" also exists as a Credit Metrics pull-through — qualified so this reads the
     // Balance Sheet's own raw line, not that ambiguity.
     line('Total Liabilities', { formula: 'Total Current Liabilities + Balance Sheet.Total Debt + Other Long Term Liabilities' }),
-    line('Total Equity', { formula: 'Total Assets - Total Liabilities', aliases: ["Stockholders' equity"] }),
+    line('Common Stock & APIC', { aliases: ['Common stock and additional paid-in capital', 'Additional paid-in capital', 'APIC'] }),
+    // A genuine roll-forward (prior + Net Income − Dividends), same "always meant to be a
+    // formula" convention as Cash & Equivalents above — this is what lets Total Equity below sum
+    // real components instead of plugging. Self-reference qualified for the same reason Cash &
+    // Equivalents' is. Dividends Paid lives in the Cash Flow Statement — an ordinary
+    // cross-section reference, same mechanism Net Interest Expense uses for the Debt Schedule.
+    line('Retained Earnings', {
+      formula: 'priorPeriod(Balance Sheet.Retained Earnings) + Income Statement.Net Income - Cash Flow Statement.Dividends Paid',
+      required: true,
+      aliases: ['Accumulated deficit', 'Retained earnings (deficit)'],
+    }),
+    // No longer a plug (Total Assets − Total Liabilities) — a real subtotal over the two equity
+    // components above. Only covers what most companies report; a real one with AOCI, treasury
+    // stock, or non-controlling interests won't fully tie out here, and that's the Balance Sheet
+    // Check's job to surface, not something to model speculatively ahead of a real need.
+    line('Total Equity', { formula: 'sum(Common Stock & APIC, Retained Earnings)', aliases: ["Stockholders' equity"] }),
   ]);
 }
 
@@ -141,10 +156,20 @@ function cashFlowStatement(): DraftSection {
     line('Net Income', { formula: 'Net Income', required: false }),
     line('Depreciation & Amortization', { formula: 'Depreciation & Amortization', required: false, rowFormat: 'normal' }),
     line('Stock Based Compensation', { sign: 'absolute', aliases: ['SBC'] }),
+    // The balance-sheet movements a pure income-statement-driven build misses: an increase in AR
+    // is a cash outflow, an increase in AP/Deferred Revenue is a cash inflow. Each term uses
+    // priorPeriod the same way Cash & Equivalents' own roll-forward does in the Balance Sheet —
+    // null in the first period (nothing to diff against yet), same as any other roll-forward's
+    // first period, not a bug.
+    line('Change in Net Working Capital', {
+      formula:
+        '(Accounts Payable - priorPeriod(Accounts Payable)) + (Deferred Revenue - priorPeriod(Deferred Revenue)) - (Accounts Receivable - priorPeriod(Accounts Receivable))',
+    }),
     // "Net Income" and "Depreciation & Amortization" are also Income Statement lines — qualified
     // so this reads the Cash Flow Statement's own pull-through lines defined just above.
     line('Cash Flow from Operations', {
-      formula: 'Cash Flow Statement.Net Income + Cash Flow Statement.Depreciation & Amortization + Stock Based Compensation',
+      formula:
+        'Cash Flow Statement.Net Income + Cash Flow Statement.Depreciation & Amortization + Stock Based Compensation + Change in Net Working Capital',
     }),
     line('Capital Expenditures', { sign: 'absolute', aliases: ['Capex'] }),
     line('Free Cash Flow', { formula: 'Cash Flow from Operations - Capital Expenditures', aliases: ['FCF'] }),
@@ -155,7 +180,8 @@ function cashFlowStatement(): DraftSection {
     // nothing — no special "blank until" handling needed.
     line('Debt Borrowings', { required: false }),
     line('Debt Repayments', { sign: 'absolute', required: false }),
-    line('Net Cash from Financing Activities', { formula: 'Debt Borrowings - Debt Repayments' }),
+    line('Dividends Paid', { sign: 'absolute', required: false, aliases: ['Dividends paid', 'Common dividends paid', 'Cash dividends paid'] }),
+    line('Net Cash from Financing Activities', { formula: 'Debt Borrowings - Debt Repayments - Dividends Paid' }),
     line('Net Change in Cash', { formula: 'Free Cash Flow + Net Cash from Financing Activities' }),
   ]);
 }
@@ -312,8 +338,10 @@ const DEFAULT_PROJECTION_SEEDS: DefaultProjectionSeed[] = [
   { sectionName: 'Balance Sheet', lineName: 'Deferred Revenue', method: 'percent-of', basisLineName: 'Revenue' },
   { sectionName: 'Balance Sheet', lineName: 'Other Current Liabilities', method: 'percent-of', basisLineName: 'Revenue' },
   { sectionName: 'Balance Sheet', lineName: 'Other Long Term Liabilities', method: 'flat' },
+  { sectionName: 'Balance Sheet', lineName: 'Common Stock & APIC', method: 'flat' },
   { sectionName: 'Cash Flow Statement', lineName: 'Stock Based Compensation', method: 'percent-of', basisLineName: 'Revenue' },
   { sectionName: 'Cash Flow Statement', lineName: 'Capital Expenditures', method: 'percent-of', basisLineName: 'Revenue' },
+  { sectionName: 'Cash Flow Statement', lineName: 'Dividends Paid', method: 'flat' },
 ];
 
 function findSeedLine(schema: StatementSchema, sectionName: string, lineName: string): StatementLine {
