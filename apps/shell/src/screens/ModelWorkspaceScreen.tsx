@@ -59,7 +59,7 @@ import {
   lastActualIndex,
 } from '../lib/dcf';
 import { extendTimeline } from '../lib/periodTimeline';
-import { mergeScenarioDriverValues } from '../lib/scenario';
+import { mergeScenarioDriverValues, promoteScenarioDriverLine } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
 import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
@@ -347,9 +347,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       if (scenarioId) {
         const latest = await scenarioRepository.get(scenarioId);
         if (!latest) return;
-        const nextValues = [...(latest.driverValues[driverId] ?? [])];
-        while (nextValues.length <= periodIndex) nextValues.push(null);
-        nextValues[periodIndex] = value;
+        let nextValues: (number | null)[];
+        if (driverId in latest.driverValues) {
+          // Already promoted — a plain single-cell splice, same as before.
+          nextValues = [...latest.driverValues[driverId]];
+          while (nextValues.length <= periodIndex) nextValues.push(null);
+          nextValues[periodIndex] = value;
+        } else {
+          // First edit on this line for this scenario — promote the whole line by snapshotting
+          // Base's current stored values into every period, then apply the edit on top.
+          const baseModel = await modelRepository.getForCompany(company.id);
+          nextValues = promoteScenarioDriverLine(
+            baseModel?.driverValues?.[driverId] ?? [],
+            baseModel?.timeline.length ?? periodIndex + 1,
+            periodIndex,
+            value,
+          );
+        }
         const updated = await scenarioRepository.update(scenarioId, { driverValues: { ...latest.driverValues, [driverId]: nextValues } });
         setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
         return;
@@ -363,6 +377,24 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       nextValues[periodIndex] = value;
       const updated = await modelRepository.update(modelId, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
       setModel(updated);
+    });
+    driverWriteQueueRef.current = run.catch(() => {});
+    await run;
+  }
+
+  // Returns a promoted (fully explicit) driver line to tracking Base live — the inverse of the
+  // promotion updateDriverValue does on first edit. Routed through the same write queue to avoid
+  // racing an in-flight edit on the same scenario.
+  async function resetScenarioDriver(driverId: string) {
+    if (!activeScenario) return;
+    const scenarioId = activeScenario.id;
+    const run = driverWriteQueueRef.current.then(async () => {
+      const latest = await scenarioRepository.get(scenarioId);
+      if (!latest) return;
+      const { [driverId]: _removed, ...rest } = latest.driverValues;
+      const updated = await scenarioRepository.update(scenarioId, { driverValues: rest });
+      setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+      setToast('Reset to Base case');
     });
     driverWriteQueueRef.current = run.catch(() => {});
     await run;
@@ -921,19 +953,42 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     });
   }
 
+  // A line is "promoted" (fully explicit for this scenario) the moment its driverId is a key in
+  // the scenario's own driverValues at all — see lib/scenario.ts's doc comment for the per-line,
+  // all-or-nothing contract. Always false for Base itself (nothing to inherit from).
+  function isDriverPromoted(row: DriverRow): boolean {
+    return activeScenario !== null && Boolean(row.driverId) && row.driverId! in activeScenario.driverValues;
+  }
+
   const driverColumns = [
     {
       key: 'name',
       label: 'Driver',
       width: 240,
-      render: (_: unknown, row: DriverRow) => (
-        <TreeRowLabel
-          label={row.name}
-          isChild={row.isChild}
-          hasChildren={row.hasChildren}
-          collapsed={collapsedDriverParentIds.has(row.id)}
-          onToggleCollapse={() => toggleDriverParentCollapsed(row.id)}
-        />
+      render: (_: unknown, row: DriverRow, isRowHovered: boolean) => (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-2)' }}>
+          <TreeRowLabel
+            label={row.name}
+            isChild={row.isChild}
+            hasChildren={row.hasChildren}
+            collapsed={collapsedDriverParentIds.has(row.id)}
+            onToggleCollapse={() => toggleDriverParentCollapsed(row.id)}
+          />
+          {isDriverPromoted(row) ? (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: 'flex', flex: '0 0 auto', opacity: isRowHovered ? 1 : 0, transition: 'opacity var(--dur-instant) var(--ease-out)' }}
+            >
+              <IconButton
+                icon="refresh-ccw"
+                label="Reset to Base case"
+                size="sm"
+                variant="ghost"
+                onClick={() => resetScenarioDriver(row.driverId!)}
+              />
+            </div>
+          ) : null}
+        </div>
       ),
     },
     // Every period, actual and projected — not just projectedPeriods — so this table's columns
@@ -989,13 +1044,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         }
         const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
         const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
-        const baseStored = model.driverValues?.[row.driverId]?.[index] ?? null;
-        // Two different reasons a cell can be non-explicit, not one — this scenario is tracking
-        // Base's own explicit number (will move if Base's does), or nothing at any level has an
-        // explicit number and the engine computed one (0% growth, or the last actual period's own
-        // implied ratio). Collapsing both into one italic look was the original design; feedback
-        // after real use was that it's impossible to tell which is happening without this.
-        const isInherited = stored === null && activeScenario !== null && baseStored !== null;
+        // Two different reasons a cell can be non-explicit, not one — this whole LINE is tracking
+        // Base live (nothing on it promoted yet for this scenario — see isDriverPromoted/lib/
+        // scenario.ts's per-line contract), or nothing at any level has an explicit number and the
+        // engine computed one (0% growth, or the last actual period's own implied ratio).
+        // Collapsing both into one italic look was the original design; feedback after real use
+        // was that it's impossible to tell which is happening without this.
+        const isInherited = activeScenario !== null && !isDriverPromoted(row);
         const isSoft = stored === null && effective !== null;
         const title = isInherited
           ? `Tracking Base case — enter a value here to override it for "${activeScenario!.name}"`

@@ -417,17 +417,18 @@ export interface ModelRepository {
 
 /**
  * A named fork of a model's driver assumptions — same lines and formulas as the model (scenarios
- * never diverge structurally), only `driverValues` differ. `driverValues` is a SPARSE override
- * layer, same shape as `Model.driverValues` and index-aligned to the same `timeline`: a `null` (or
- * an entirely absent driverId/index) means "not overridden here", cascading down to the model's
- * own `driverValues` at that cell (which may itself be explicit or fall further to the engine's
- * computed default — see evaluate.ts's `defaultDriverValue`). There is deliberately no way to say
- * "ignore the model's value here, use the pure computed default instead" — clearing a scenario
- * cell always falls through to the model, never past it. A real but narrow gap (documented, not
- * fixed): a scenario can't revert a single driver to trend while the model still assumes momentum.
- * The implicit "Base case" (the model's own driverValues) is never itself a Scenario row — see
- * lib/scenario.ts's mergeScenarioDriverValues, used to compute an effective driverValues map for
- * evaluateModel without the engine ever needing to know scenarios exist.
+ * never diverge structurally), only `driverValues` differ. `driverValues` overrides the model's own
+ * `driverValues` (same shape, index-aligned to the same `timeline`) on a **per-line, all-or-nothing**
+ * basis: if a driverId key is entirely absent from this map, that whole line tracks the model's
+ * (Base's) values live; if the key is present, this scenario's array is used verbatim for every
+ * period — there is no per-cell mixing of explicit and inherited within one line. A line is
+ * "promoted" from inherited to explicit the moment any one of its periods is edited (see
+ * ModelWorkspaceScreen's `updateDriverValue` and lib/scenario.ts's `promoteScenarioDriverLine`),
+ * which snapshots the model's current stored values into every period at once. "Reset to Base"
+ * removes the key entirely, returning the whole line to live tracking. The implicit "Base case"
+ * (the model's own driverValues) is never itself a Scenario row — see lib/scenario.ts's
+ * mergeScenarioDriverValues, used to compute an effective driverValues map for evaluateModel
+ * without the engine ever needing to know scenarios exist.
  */
 export interface Scenario {
   id: string;
