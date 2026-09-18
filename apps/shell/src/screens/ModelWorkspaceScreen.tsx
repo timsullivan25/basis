@@ -825,6 +825,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     id: string;
     name: string;
     isChild: boolean;
+    /** Set only on a section-header divider row — every other field is meaningless on that row,
+     *  since DataTable renders a __group row specially and never calls a column's `render` for
+     *  it (same convention as the statement grid's own `rows` array above). */
+    __group?: string;
     /** True for a parent line that has ≥1 real child line — its own value is superseded by the
      *  sum of those children for every period (see lib/statementLineChildren.ts), so its own
      *  driver cell, though still rendered, is locked rather than edited. */
@@ -871,6 +875,12 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   const driverRows: DriverRow[] = [];
   for (const section of schema.sections) {
+    // Track where this section's own rows start so a group-header divider (same __group
+    // convention the statement grid's own `rows` array uses) can be spliced in front of them —
+    // but only once we know the section actually produced at least one row, so a section with
+    // no drivers/instances anywhere in it (e.g. one that's pure ratios) doesn't get an empty
+    // header floating above nothing, mirroring driverRows' existing "no placeholder rows" rule.
+    const sectionStartIndex = driverRows.length;
     for (const line of section.lines) {
       if (line.parentLineId !== undefined) continue; // rendered as a child below its parent, not its own top-level row
       const ownDriver = schemaDriverByLineId.get(line.id);
@@ -896,6 +906,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           ...childDriverFields(child, schema),
         });
       }
+    }
+    if (driverRows.length > sectionStartIndex) {
+      driverRows.splice(sectionStartIndex, 0, { id: `driver-group-${section.id}`, name: section.name, isChild: false, hasChildren: false, __group: section.name });
     }
   }
 
