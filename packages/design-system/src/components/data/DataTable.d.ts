@@ -76,7 +76,10 @@ export interface DataTableProps extends React.HTMLAttributes<HTMLDivElement> {
    *  insertion-line indicator. Off by default; requires `onReorder` to actually do anything. */
   draggableRows?: boolean;
   /** 'hover' (default) shows a row's handle only while that row (or its handle) is hovered;
-   *  'always' keeps every handle visible. Only meaningful when `draggableRows` is set. */
+   *  'always' keeps every handle visible. Only meaningful when `draggableRows` is set. Column 0's
+   *  own gutter for the handle is reserved for the WHOLE table regardless of this — only the
+   *  icon's opacity follows hover — so text never shifts as the mouse moves down the column; a
+   *  table with `draggableRows` off entirely keeps the ordinary padding, unaffected either way. */
   dragHandleMode?: 'hover' | 'always';
   /** Gates which rows get an actual drag handle (are a drag SOURCE) — e.g. exclude a nested
    *  sub-row that has no independent order of its own. Defaults to every non-group row. Group

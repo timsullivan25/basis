@@ -602,16 +602,24 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         const childCount = childCountByLineId.get(row.line.id) ?? 0;
         const byDebtSchedule = isDebtScheduleGenerated(row.line);
         const superseded = childCount > 0 || byDebtSchedule;
-        const missing = !superseded && isMissingRequired(row.line, m);
-        const low = !superseded && isLowConfidence(m);
+        // "Missing required"/"low confidence" are mapping concepts — meaningless while editing
+        // structure, so schema mode skips both the computation and (more importantly for the
+        // drag handle's own spacing) reserving this dot's width + gap at all, rather than
+        // rendering it transparent. A transparent-but-present dot was invisible in either mode,
+        // but its reserved space combined with the handle's own gutter looked like a second,
+        // uneven padding next to the handle — schema mode is the one place that visibly showed.
+        const missing = mode === 'mapping' && !superseded && isMissingRequired(row.line, m);
+        const low = mode === 'mapping' && !superseded && isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
         const rowLineStyle = getLineRowStyle(row.line);
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
-            <span
-              title={missing ? 'Missing required line' : low ? 'Low confidence match' : undefined}
-              style={{ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: dot ?? 'transparent' }}
-            />
+            {mode === 'mapping' ? (
+              <span
+                title={missing ? 'Missing required line' : low ? 'Low confidence match' : undefined}
+                style={{ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: dot ?? 'transparent' }}
+              />
+            ) : null}
             <span
               style={{
                 fontSize: 'var(--text-sm)', whiteSpace: 'nowrap', fontWeight: 'var(--weight-medium)',

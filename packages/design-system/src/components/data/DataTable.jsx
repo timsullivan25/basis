@@ -10,10 +10,12 @@ const DROP_AT_END = '__basis-datatable-drop-end__';
 /** The grip icon itself (see Icon size below) plus equal breathing room on both sides of it —
  *  deliberately NOT layered on top of the column's own `var(--space-6)` padding (that would give
  *  the icon less room on its left than the text gets on its right of it, an off-center look).
- *  Column 0's left padding is replaced with exactly this width whenever draggableRows is on, so
- *  the icon sits centered in its own gutter and the text after it starts with the same gap on
- *  its left as the icon has on both of its sides. Reserved on every row (not just draggable ones)
- *  so column-0 text still lines up regardless of which particular rows get an actual handle. */
+ *  Column 0's left padding is widened to exactly this for the WHOLE table whenever draggableRows
+ *  is on — a constant, not tied to any one row's hover state, so text never shifts left/right as
+ *  the mouse moves down the column; only the icon's own opacity fades with hover (see
+ *  dragHandleMode below). A table that isn't draggable at all keeps the ordinary `var(--space-6)`
+ *  padding, untouched — this widened gutter is reserved only for a table that has one, not
+ *  compared against or matched to some other, unrelated non-draggable table's own padding. */
 const HANDLE_ICON_SIZE_PX = 14;
 const HANDLE_GAP_PX = 6;
 const HANDLE_COLUMN_PADDING_PX = HANDLE_GAP_PX * 2 + HANDLE_ICON_SIZE_PX;
@@ -153,8 +155,11 @@ export function DataTable({
                     position: stickyHeader || stickyLeft ? 'sticky' : 'static',
                     top: stickyHeader ? 0 : undefined, left: stickyLeft ? 0 : undefined,
                     zIndex: stickyLeft ? (stickyHeader ? 3 : 2) : (stickyHeader ? 2 : undefined),
-                    height: 'var(--subbar-h)', padding: '0 var(--space-6)', width: c.width,
-                    paddingLeft: dragActive && ci === 0 ? `${HANDLE_COLUMN_PADDING_PX}px` : undefined,
+                    // No `padding` shorthand — see the body cell's own comment on why it mixes
+                    // badly with a `paddingLeft` that needs to vary (here, by column).
+                    height: 'var(--subbar-h)', paddingTop: 0, paddingBottom: 0, paddingRight: 'var(--space-6)',
+                    paddingLeft: dragActive && ci === 0 ? `${HANDLE_COLUMN_PADDING_PX}px` : 'var(--space-6)',
+                    width: c.width,
                     textAlign: align(c), whiteSpace: 'nowrap',
                     fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)',
                     letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase',
@@ -235,6 +240,10 @@ export function DataTable({
                     const editable = Boolean(c.renderEdit) && (c.canEdit ? c.canEdit(r) : true);
                     const editing = editable && activeCell === cellId;
                     const stickyLeft = stickyFirstColumn && ci === 0;
+                    // Constant for the whole draggable table, not tied to this one row's hover
+                    // state — text must not shift left/right as the mouse moves down the column.
+                    // Only the icon's own opacity (below) fades with hover; the gutter it fades
+                    // into is always there.
                     const isHandleCol = dragActive && ci === 0;
                     const bgShadow = c.background ? `inset 0 0 0 999px ${c.background}` : null;
                     const cellShadow = [bgShadow, dropShadow].filter(Boolean).join(', ') || undefined;
@@ -250,8 +259,14 @@ export function DataTable({
                         onClick={editable && !editOnDblClick ? activateEdit : undefined}
                         onDoubleClick={editable && editOnDblClick ? activateEdit : undefined}
                         style={{
-                          height: h, padding: '0 var(--space-6)', textAlign: align(c),
-                          paddingLeft: isHandleCol ? `${HANDLE_COLUMN_PADDING_PX}px` : undefined,
+                          // No `padding` shorthand here — React warns against mixing it with the
+                          // `paddingLeft` longhand this column needs to vary per row (the
+                          // shorthand always wins that argument, so a plain `undefined` on the
+                          // longhand doesn't fall back to the shorthand's value, it just clears
+                          // that side to 0). Every side gets its own explicit longhand instead.
+                          height: h, paddingTop: 0, paddingBottom: 0, paddingRight: 'var(--space-6)',
+                          paddingLeft: isHandleCol ? `${HANDLE_COLUMN_PADDING_PX}px` : 'var(--space-6)',
+                          textAlign: align(c),
                           position: isHandleCol ? 'relative' : undefined,
                           borderBottom: '1px solid var(--border-subtle)',
                           fontFamily: c.numeric ? 'var(--font-mono)' : 'var(--font-sans)',
