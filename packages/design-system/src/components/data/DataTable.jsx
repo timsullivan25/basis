@@ -2,15 +2,39 @@ import React from 'react';
 import { Icon } from '../primitives/Icon.jsx';
 import { Checkbox } from '../forms/Checkbox.jsx';
 
-/** Dense sortable table with optional group rows, expandable detail, and click-to-edit cells. */
+/** Sentinel `dragOverKey` value meaning "insert at the very end of the table" — distinct from
+ *  `null` (no drag in progress), and safe as a literal since a real row key is a data value
+ *  (typically a uuid), never this exact string. */
+const DROP_AT_END = '__basis-datatable-drop-end__';
+
+/** The grip icon itself (see Icon size below) plus equal breathing room on both sides of it —
+ *  deliberately NOT layered on top of the column's own `var(--space-6)` padding (that would give
+ *  the icon less room on its left than the text gets on its right of it, an off-center look).
+ *  Column 0's left padding is replaced with exactly this width whenever draggableRows is on, so
+ *  the icon sits centered in its own gutter and the text after it starts with the same gap on
+ *  its left as the icon has on both of its sides. Reserved on every row (not just draggable ones)
+ *  so column-0 text still lines up regardless of which particular rows get an actual handle. */
+const HANDLE_ICON_SIZE_PX = 14;
+const HANDLE_GAP_PX = 6;
+const HANDLE_COLUMN_PADDING_PX = HANDLE_GAP_PX * 2 + HANDLE_ICON_SIZE_PX;
+
+/** Dense sortable table with optional group rows, expandable detail, click-to-edit cells, and
+ *  optional drag-to-reorder rows. */
 export function DataTable({
   columns = [], rows = [], rowKey = 'id', dense = false, striped = false,
   sort, onSortChange, selectable = false, selected = [], onSelectedChange,
-  expandedKey, onRowClick, renderDetail, rowStyle, stickyHeader = true, stickyFirstColumn = false, maxHeight, style, ...rest
+  expandedKey, onRowClick, renderDetail, rowStyle, stickyHeader = true, stickyFirstColumn = false, maxHeight, style,
+  draggableRows = false, dragHandleMode = 'hover', canDragRow, canDropBeforeRow, onReorder,
+  ...rest
 }) {
   const h = dense ? 'var(--row-h-dense)' : 'var(--row-h)';
   const [hoverRow, setHoverRow] = React.useState(null);
   const [activeCell, setActiveCell] = React.useState(null);
+  // The row (or DROP_AT_END) currently under the drag, purely for the insertion-line indicator —
+  // the actual dragged row's identity is read from the native DataTransfer payload only at drop
+  // (browsers don't expose it during dragover, for security), so this never needs to track it.
+  const [dragOverKey, setDragOverKey] = React.useState(null);
+  const dragActive = draggableRows && Boolean(onReorder);
   // Escape should discard an in-flight edit rather than commit it, but deactivating the cell
   // unmounts its renderEdit'd Input — and a browser fires a native blur on an element removed
   // from the DOM while focused, which would otherwise run the input's own onBlur-commit handler
@@ -23,6 +47,42 @@ export function DataTable({
   const toggleAll = () => onSelectedChange && onSelectedChange(allSel ? [] : rows.map((r) => r[rowKey]));
   const toggleRow = (k) => onSelectedChange && onSelectedChange(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
   const align = (c) => c.align || (c.numeric ? 'right' : 'left');
+
+  // Dropping in a row's top half targets "before this row"; the bottom half targets "before the
+  // NEXT row" (or DROP_AT_END, past the last one) — this is what lets the very last row's bottom
+  // half mean "append to the end" with no separate always-there drop zone required. Any row is a
+  // valid boundary (group header, sub-line, whatever) unless canDropBeforeRow says otherwise —
+  // the caller alone knows which rows are real content vs. an "add line" affordance and the like.
+  function dragOverRow(e, index) {
+    if (!dragActive) return;
+    const row = rows[index];
+    if (canDropBeforeRow && !canDropBeforeRow(row)) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const topHalf = e.clientY - rect.top < rect.height / 2;
+    const next = rows[index + 1];
+    setDragOverKey(topHalf ? row[rowKey] : next ? next[rowKey] : DROP_AT_END);
+  }
+
+  function dropOnRow(e) {
+    if (!dragActive) return;
+    e.preventDefault();
+    const draggedKey = e.dataTransfer.getData('text/plain');
+    const target = dragOverKey === DROP_AT_END ? null : dragOverKey;
+    if (draggedKey && draggedKey !== target) onReorder(draggedKey, target);
+    setDragOverKey(null);
+  }
+
+  // A row's own top/bottom border would shift its height by the indicator's width as you drag
+  // over different rows — an inset box-shadow reads the same visually with no layout reflow, and
+  // composes with a column's own background tint (see the `c.background` shadow below) rather
+  // than clobbering it.
+  function dropIndicatorShadow(key, isLastRow) {
+    if (!dragActive) return null;
+    if (dragOverKey === key) return 'inset 0 2px 0 0 var(--border-focus)';
+    if (isLastRow && dragOverKey === DROP_AT_END) return 'inset 0 -2px 0 0 var(--border-focus)';
+    return null;
+  }
 
   // Every editable cell in reading order, across every non-group row — Tab walks this list
   // exactly like a spreadsheet, wrapping from a row's last editable column to the next row's
@@ -94,6 +154,7 @@ export function DataTable({
                     top: stickyHeader ? 0 : undefined, left: stickyLeft ? 0 : undefined,
                     zIndex: stickyLeft ? (stickyHeader ? 3 : 2) : (stickyHeader ? 2 : undefined),
                     height: 'var(--subbar-h)', padding: '0 var(--space-6)', width: c.width,
+                    paddingLeft: dragActive && ci === 0 ? `${HANDLE_COLUMN_PADDING_PX}px` : undefined,
                     textAlign: align(c), whiteSpace: 'nowrap',
                     fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)',
                     letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase',
@@ -120,13 +181,14 @@ export function DataTable({
             const isGroup = r.__group;
             const expanded = expandedKey === k;
             if (isGroup) {
-              const groupCellStyle = { height: h, padding: '0 var(--space-6)', background: 'var(--surface-strong)', borderBottom: '1px solid var(--border-default)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-primary)' };
+              const groupCellStyle = { height: h, padding: '0 var(--space-6)', background: 'var(--surface-strong)', borderBottom: '1px solid var(--border-default)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-primary)', boxShadow: dropIndicatorShadow(k, i === rows.length - 1) || undefined };
+              const groupRowEvents = dragActive ? { onDragOver: (e) => dragOverRow(e, i), onDrop: dropOnRow } : null;
               if (stickyFirstColumn) {
                 // Split into a sticky label cell plus a plain continuation cell, so the group
                 // label stays pinned with the rest of the first column instead of scrolling
                 // away as one wide colSpan cell would.
                 return (
-                  <tr key={k}>
+                  <tr key={k} {...groupRowEvents}>
                     <td style={{ ...groupCellStyle, position: 'sticky', left: 0, zIndex: 1, width: columns[0]?.width, whiteSpace: 'nowrap', borderRight: '1px solid var(--border-default)' }}>
                       {r.__group}
                     </td>
@@ -135,7 +197,7 @@ export function DataTable({
                 );
               }
               return (
-                <tr key={k}>
+                <tr key={k} {...groupRowEvents}>
                   <td colSpan={columns.length + (selectable ? 1 : 0)} style={groupCellStyle}>
                     {r.__group}
                   </td>
@@ -144,6 +206,8 @@ export function DataTable({
             }
             const hovered = hoverRow === k;
             const rowOverrides = rowStyle ? rowStyle(r) : null;
+            const dropShadow = dropIndicatorShadow(k, i === rows.length - 1);
+            const draggable = dragActive && (!canDragRow || canDragRow(r));
             // Sticky cells need an opaque background of their own — otherwise cells scrolling
             // past underneath a `position: sticky` cell show through it. Only computed (and only
             // applied to the first data column) when stickyFirstColumn is on; every other row
@@ -154,6 +218,8 @@ export function DataTable({
                 <tr
                   onMouseEnter={() => setHoverRow(k)} onMouseLeave={() => setHoverRow(null)}
                   onClick={() => onRowClick && onRowClick(r)}
+                  onDragOver={dragActive ? (e) => dragOverRow(e, i) : undefined}
+                  onDrop={dragActive ? dropOnRow : undefined}
                   style={{
                     background: expanded ? 'var(--surface-selected)' : hovered ? 'var(--surface-hover)' : (striped && i % 2 ? 'var(--surface-table-stripe)' : 'transparent'),
                     cursor: onRowClick ? 'pointer' : 'default', transition: 'background-color var(--dur-instant) var(--ease-out)',
@@ -169,32 +235,61 @@ export function DataTable({
                     const editable = Boolean(c.renderEdit) && (c.canEdit ? c.canEdit(r) : true);
                     const editing = editable && activeCell === cellId;
                     const stickyLeft = stickyFirstColumn && ci === 0;
+                    const isHandleCol = dragActive && ci === 0;
+                    const bgShadow = c.background ? `inset 0 0 0 999px ${c.background}` : null;
+                    const cellShadow = [bgShadow, dropShadow].filter(Boolean).join(', ') || undefined;
+                    // 'dblclick' (opt in per column) leaves a plain single click alone — it just
+                    // bubbles to the row's own onClick, e.g. to open a details panel — and only a
+                    // double click activates the editor. Everything else keeps today's behavior:
+                    // a single click activates it directly.
+                    const editOnDblClick = c.editTrigger === 'dblclick';
+                    const activateEdit = (e) => { e.stopPropagation(); cancelledEditRef.current = false; setActiveCell(cellId); };
                     return (
                       <td
                         key={c.key}
-                        onClick={editable ? (e) => { e.stopPropagation(); cancelledEditRef.current = false; setActiveCell(cellId); } : undefined}
+                        onClick={editable && !editOnDblClick ? activateEdit : undefined}
+                        onDoubleClick={editable && editOnDblClick ? activateEdit : undefined}
                         style={{
                           height: h, padding: '0 var(--space-6)', textAlign: align(c),
+                          paddingLeft: isHandleCol ? `${HANDLE_COLUMN_PADDING_PX}px` : undefined,
+                          position: isHandleCol ? 'relative' : undefined,
                           borderBottom: '1px solid var(--border-subtle)',
                           fontFamily: c.numeric ? 'var(--font-mono)' : 'var(--font-sans)',
                           fontVariantNumeric: c.numeric ? 'var(--numeric-tabular)' : undefined,
                           fontWeight: c.emphasis ? 'var(--weight-medium)' : 'var(--weight-regular)',
                           color: c.muted ? 'var(--text-secondary)' : 'var(--text-body)',
                           whiteSpace: 'nowrap', maxWidth: c.maxWidth, overflow: 'hidden', textOverflow: 'ellipsis',
-                          cursor: editable && !editing ? 'text' : undefined,
+                          cursor: editable && !editing ? (editOnDblClick ? 'pointer' : 'text') : undefined,
                           ...(stickyLeft ? { position: 'sticky', left: 0, zIndex: 1, background: rowBg, borderRight: '1px solid var(--border-default)' } : null),
                           ...rowOverrides,
                           // Painted last, as a shadow rather than a background, so a column tint
                           // (e.g. marking every projected-period column) stays visible as an overlay
                           // on top of a row-level background (e.g. a total row) instead of being
                           // replaced by it — the two would otherwise be indistinguishable whenever
-                          // both apply to the same cell.
-                          ...(c.background ? { boxShadow: `inset 0 0 0 999px ${c.background}` } : null),
+                          // both apply to the same cell. A drag insertion indicator is just another
+                          // shadow layer, combined rather than clobbering either of the above.
+                          boxShadow: cellShadow,
                         }}
                       >
+                        {isHandleCol && draggable ? (
+                          <span
+                            draggable
+                            onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(k)); }}
+                            onDragEnd={() => setDragOverKey(null)}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              position: 'absolute', left: HANDLE_GAP_PX, top: '50%', transform: 'translateY(-50%)',
+                              display: 'inline-flex', cursor: 'grab',
+                              opacity: dragHandleMode === 'always' || hovered ? 1 : 0,
+                              transition: 'opacity var(--dur-instant) var(--ease-out)',
+                            }}
+                          >
+                            <Icon name="grip-vertical" size={HANDLE_ICON_SIZE_PX} color="var(--text-tertiary)" />
+                          </span>
+                        ) : null}
                         {editing
                           ? c.renderEdit(r[c.key], r, () => cancelledEditRef.current)
-                          : (c.render ? c.render(r[c.key], r) : r[c.key])}
+                          : (c.render ? c.render(r[c.key], r, hovered) : r[c.key])}
                       </td>
                     );
                   })}

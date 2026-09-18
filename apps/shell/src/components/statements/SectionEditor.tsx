@@ -69,37 +69,33 @@ interface SectionEditorProps {
   onAddLine: () => void;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onDeleteLine: (lineId: string) => void;
-  onMoveLine: (lineId: string, direction: 'up' | 'down') => void;
+  /** Drag-and-drop's one move primitive (see lib/statementSchemaEdit.ts's reorderLine) —
+   *  `beforeLineId: null` means "at the end of THIS section". Subsumes the old up/down arrows
+   *  AND the old "Move to section" dropdown: dragging a line's handle into a DIFFERENT section's
+   *  own SectionEditor fires THAT section's onReorderLine, with lineId identifying a line that
+   *  isn't even one of its own rows — DataTable's onReorder is deliberately origin-agnostic (see
+   *  its own doc comment), so cross-section drag needs no extra plumbing beyond this. */
+  onReorderLine: (lineId: string, beforeLineId: string | null) => void;
 }
 
 export function SectionEditor({
   schema, section, isFirst, isLast, nameIndex,
   selectedLineId, onSelectLine, onAddSubLine,
   onRename, onSetAllowsFreeformLines, onMoveUp, onMoveDown, onDelete,
-  onAddLine, onUpdateLine, onDeleteLine, onMoveLine,
+  onAddLine, onUpdateLine, onDeleteLine, onReorderLine,
 }: SectionEditorProps) {
   const rows = buildSectionRows(schema, section);
 
   const columns = [
     {
-      key: 'expand',
-      label: '',
-      width: 28,
-      render: (_: unknown, row: SectionRow) =>
-        row.line || row.childLine ? (
-          <IconButton
-            icon={selectedLineId === row.id ? 'chevron-down' : 'chevron-right'}
-            label={selectedLineId === row.id ? 'Collapse' : 'Expand'}
-            size="sm"
-            variant="ghost"
-          />
-        ) : null,
-    },
-    {
       key: 'name',
       label: 'Line name',
       emphasis: true,
       canEdit: (row: SectionRow) => Boolean(row.line),
+      // A single click opens this row's settings panel instead (see the DataTable's own
+      // onRowClick below) — the identity column is the one place that's a more useful default
+      // than "start renaming," since every other column here still activates on a single click.
+      editTrigger: 'dblclick' as const,
       render: (_: unknown, row: SectionRow) => {
         if (row.addInstanceTarget) {
           return (
@@ -268,11 +264,16 @@ export function SectionEditor({
       label: '',
       width: 100,
       align: 'right' as const,
-      render: (_: unknown, row: SectionRow) =>
+      render: (_: unknown, row: SectionRow, isRowHovered: boolean) =>
         row.line ? (
-          <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-1)' }}>
-            <IconButton icon="arrow-up" label="Move line up" size="sm" variant="ghost" onClick={() => onMoveLine(row.line!.id, 'up')} />
-            <IconButton icon="arrow-down" label="Move line down" size="sm" variant="ghost" onClick={() => onMoveLine(row.line!.id, 'down')} />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              display: 'flex', justifyContent: 'flex-end',
+              opacity: isRowHovered || selectedLineId === row.id ? 1 : 0,
+              transition: 'opacity var(--dur-instant) var(--ease-out)',
+            }}
+          >
             <IconButton icon="trash-2" label="Delete line" size="sm" variant="ghost" onClick={() => onDeleteLine(row.line!.id)} />
           </div>
         ) : null,
@@ -310,10 +311,24 @@ export function SectionEditor({
             }
             if (row.line || row.childLine) onSelectLine(row.id);
           }}
+          draggableRows
+          dragHandleMode="hover"
+          canDragRow={(row: SectionRow) => Boolean(row.line)}
+          onReorder={(draggedKey, beforeKey) => onReorderLine(draggedKey, beforeKey)}
         />
       ) : (
-        <div style={{ padding: 'var(--space-8)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-          No lines in this section yet.
+        // Still a valid drop target for a line dragged in from another section — otherwise an
+        // emptied-out section could never receive one back via drag-and-drop.
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const draggedKey = e.dataTransfer.getData('text/plain');
+            if (draggedKey) onReorderLine(draggedKey, null);
+          }}
+          style={{ padding: 'var(--space-8)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}
+        >
+          No lines in this section yet. Drag a line here to move it in.
         </div>
       )}
 
@@ -380,13 +395,11 @@ export interface LineSettingsPanelContentProps {
   isDebtLine: boolean;
   debtProperties?: DebtTrancheProperties;
   onChangeDebtProperties: (patch: Partial<DebtTrancheProperties>) => void;
-  otherSections: { id: string; name: string }[];
   lineGroups: LineGroup[];
   drivers: DriverDefinition[];
   nameIndex: NameIndex;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
-  onMoveLineToSection: (lineId: string, targetSectionId: string) => void;
   onDeleteChildLine?: (lineId: string) => void;
   onClose: () => void;
   style?: CSSProperties;
@@ -425,7 +438,7 @@ const LINE_TYPE_OPTIONS = [
  *  structure + tranche properties) doesn't require scrolling a giant expanded row. */
 export function LineSettingsPanelContent({
   line, isChild, isKpi, isDebtLine, debtProperties, onChangeDebtProperties,
-  otherSections, lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onMoveLineToSection, onDeleteChildLine, onClose, style,
+  lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onDeleteChildLine, onClose, style,
 }: LineSettingsPanelContentProps) {
   const [aliasDraft, setAliasDraft] = useState('');
   // A method that needs a basis line isn't committed to the line until one is picked — held here
@@ -554,30 +567,15 @@ export function LineSettingsPanelContent({
     </>
   );
 
+  // "Move to section" is gone — drag the row's own handle into another section's table instead
+  // (see SectionEditor's onReorderLine/DataTable's onReorder).
   const structureContent = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-      <Switch
-        size="sm"
-        label="Allow sub-lines"
-        checked={line.allowsSubLines ?? false}
-        onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
-      />
-      {otherSections.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Move to section
-          </span>
-          <Select
-            size="sm"
-            value=""
-            options={[{ value: '', label: 'Select a section…' }, ...otherSections.map((s) => ({ value: s.id, label: s.name }))]}
-            onChange={(e) => {
-              if (e.target.value) onMoveLineToSection(line.id, e.target.value);
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
+    <Switch
+      size="sm"
+      label="Allow sub-lines"
+      checked={line.allowsSubLines ?? false}
+      onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
+    />
   );
 
   const sections: LineSettingsSection[] = [];

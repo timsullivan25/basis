@@ -2,12 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   addLine,
   addSection,
-  moveLine,
-  moveLineToSection,
   moveSection,
   removeLine,
   removeSection,
   renameSection,
+  reorderLine,
   setLineProjection,
   setSectionAllowsFreeformLines,
   updateLine,
@@ -104,20 +103,41 @@ describe('line mutations', () => {
     expect(next.drivers.map((d) => d.id)).toEqual(['d2']);
   });
 
-  it('moveLine reorders within its section only', () => {
+  it('reorderLine moves a line before another within the same section', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'One'), line('l2', 'Two'), line('l3', 'Three')] }]);
+    const next = reorderLine(schema, 'l3', 'a', 'l1');
+    expect(next.sections[0].lines.map((l) => l.id)).toEqual(['l3', 'l1', 'l2']);
+  });
+
+  it('reorderLine with beforeLineId null appends to the end of the target section', () => {
     const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'One'), line('l2', 'Two')] }]);
-    const next = moveLine(schema, 'a', 'l2', 'up');
+    const next = reorderLine(schema, 'l1', 'a', null);
     expect(next.sections[0].lines.map((l) => l.id)).toEqual(['l2', 'l1']);
   });
 
-  it('moveLineToSection relocates the line and preserves it exactly', () => {
+  it('reorderLine relocates a line to a different section, preserving it exactly', () => {
     const schema = schemaWith([
       { id: 'a', name: 'A', lines: [line('l1', 'Revenue')] },
       { id: 'b', name: 'B', lines: [] },
     ]);
-    const next = moveLineToSection(schema, 'a', 'l1', 'b');
+    const next = reorderLine(schema, 'l1', 'b', null);
     expect(next.sections.find((s) => s.id === 'a')?.lines).toEqual([]);
     expect(next.sections.find((s) => s.id === 'b')?.lines.map((l) => l.id)).toEqual(['l1']);
+  });
+
+  it('reorderLine can relocate a line to a specific position in a different section', () => {
+    const schema = schemaWith([
+      { id: 'a', name: 'A', lines: [line('l1', 'Revenue')] },
+      { id: 'b', name: 'B', lines: [line('l2', 'Two'), line('l3', 'Three')] },
+    ]);
+    const next = reorderLine(schema, 'l1', 'b', 'l3');
+    expect(next.sections.find((s) => s.id === 'a')?.lines).toEqual([]);
+    expect(next.sections.find((s) => s.id === 'b')?.lines.map((l) => l.id)).toEqual(['l2', 'l1', 'l3']);
+  });
+
+  it('reorderLine is a no-op for a lineId that does not exist anywhere', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'One')] }]);
+    expect(reorderLine(schema, 'missing', 'a', null)).toBe(schema);
   });
 });
 

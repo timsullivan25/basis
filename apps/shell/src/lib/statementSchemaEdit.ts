@@ -167,25 +167,29 @@ export function removeLine(schema: StatementSchema, sectionId: string, lineId: s
   };
 }
 
-export function moveLine(schema: StatementSchema, sectionId: string, lineId: string, direction: 'up' | 'down'): StatementSchema {
-  return {
-    ...schema,
-    sections: schema.sections.map((s) =>
-      s.id === sectionId ? { ...s, lines: moveWithinArray(s.lines, s.lines.findIndex((line) => line.id === lineId), direction) } : s,
-    ),
-  };
-}
-
-export function moveLineToSection(schema: StatementSchema, fromSectionId: string, lineId: string, toSectionId: string): StatementSchema {
-  const fromSection = schema.sections.find((s) => s.id === fromSectionId);
+/** Drag-and-drop's one primitive, replacing the old moveLine (adjacent-swap, same section only)
+ *  and moveLineToSection (cross-section, always appended to the end) — this supersedes both: a
+ *  same-section drag to any position IS "reorder", and a cross-section drag IS "relocate", and
+ *  both are just "this line now sits immediately before that one" from the DataTable's own drag
+ *  event, regardless of which section either currently lives in. `beforeLineId: null` means "at
+ *  the end of `toSectionId`"; an id not found in `toSectionId` (e.g. it's a child inside a
+ *  different section) falls back to the end the same way, rather than silently dropping the
+ *  line. No-ops if `lineId` isn't found anywhere — a stale drag payload shouldn't corrupt the
+ *  schema. */
+export function reorderLine(schema: StatementSchema, lineId: string, toSectionId: string, beforeLineId: string | null): StatementSchema {
+  const fromSection = schema.sections.find((s) => s.lines.some((l) => l.id === lineId));
   const line = fromSection?.lines.find((l) => l.id === lineId);
   if (!line) return schema;
   return {
     ...schema,
     sections: schema.sections.map((s) => {
-      if (s.id === fromSectionId) return { ...s, lines: s.lines.filter((l) => l.id !== lineId) };
-      if (s.id === toSectionId) return { ...s, lines: [...s.lines, line] };
-      return s;
+      if (s.id !== toSectionId) {
+        return s.id === fromSection!.id ? { ...s, lines: s.lines.filter((l) => l.id !== lineId) } : s;
+      }
+      const withoutDragged = s.lines.filter((l) => l.id !== lineId);
+      const insertAt = beforeLineId ? withoutDragged.findIndex((l) => l.id === beforeLineId) : -1;
+      const idx = insertAt === -1 ? withoutDragged.length : insertAt;
+      return { ...s, lines: [...withoutDragged.slice(0, idx), line, ...withoutDragged.slice(idx)] };
     }),
   };
 }

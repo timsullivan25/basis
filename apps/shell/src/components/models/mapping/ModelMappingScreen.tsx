@@ -27,7 +27,7 @@ import { cloneStatementSchemaStructure } from '../../../lib/statementSchemaClone
 import { addChildLine, effectiveLineKind, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../../lib/lineDependents';
-import { buildSectionRows } from '../../../lib/statementRowBuilder';
+import { buildSectionRows, resolveFlatRowDropTarget } from '../../../lib/statementRowBuilder';
 import * as schemaEdit from '../../../lib/statementSchemaEdit';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { LineSettingsPanelContent } from '../../statements/SectionEditor';
@@ -417,12 +417,6 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   function setLineProjectionSchema(lineId: string, selection: schemaEdit.ProjectionSelection) {
     if (schema) changeSchema(schemaEdit.setLineProjection(schema, lineId, selection));
   }
-  function moveLine(sectionId: string, lineId: string, direction: 'up' | 'down') {
-    if (schema) changeSchema(schemaEdit.moveLine(schema, sectionId, lineId, direction));
-  }
-  function moveLineToSection(fromSectionId: string, lineId: string, toSectionId: string) {
-    if (schema) changeSchema(schemaEdit.moveLineToSection(schema, fromSectionId, lineId, toSectionId));
-  }
   function changeDebtPropertiesSchema(lineId: string, patch: Partial<DebtTrancheProperties>) {
     if (!schema) return;
     const line = schemaEdit.findLine(schema, lineId);
@@ -572,16 +566,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   // DataTable's own render) so it can be rendered alongside the table instead of inline.
   const selectedRow = expandedLineId ? rows.find((r) => r.id === expandedLineId) : undefined;
 
+  function reorderLineSchema(lineId: string, beforeKey: string | null) {
+    if (!schema) return;
+    const target = resolveFlatRowDropTarget(rows, schema.sections, beforeKey);
+    if (target) changeSchema(schemaEdit.reorderLine(schema, lineId, target.toSectionId, target.beforeLineId));
+  }
+
   const columns = [
-    {
-      key: 'expand',
-      label: '',
-      width: 24,
-      render: (_: unknown, row: { id: string; line?: StatementLine; childLine?: StatementLine }) =>
-        row.line || row.childLine ? (
-          <Icon name={expandedLineId === row.id ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
-        ) : null,
-    },
     {
       key: 'target',
       label: 'Target line',
@@ -653,11 +644,16 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
             label: '',
             width: 100,
             align: 'right' as const,
-            render: (_: unknown, row: { line?: StatementLine; sectionId?: string }) =>
+            render: (_: unknown, row: { id: string; line?: StatementLine; sectionId?: string }, isRowHovered: boolean) =>
               row.line && row.sectionId ? (
-                <div onClick={(e) => e.stopPropagation()} style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-1)' }}>
-                  <IconButton icon="arrow-up" label="Move line up" size="sm" variant="ghost" onClick={() => moveLine(row.sectionId!, row.line!.id, 'up')} />
-                  <IconButton icon="arrow-down" label="Move line down" size="sm" variant="ghost" onClick={() => moveLine(row.sectionId!, row.line!.id, 'down')} />
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    display: 'flex', justifyContent: 'flex-end',
+                    opacity: isRowHovered || expandedLineId === row.id ? 1 : 0,
+                    transition: 'opacity var(--dur-instant) var(--ease-out)',
+                  }}
+                >
                   <IconButton icon="trash-2" label="Delete line" size="sm" variant="ghost" onClick={() => requestDeleteLine(row.sectionId!, row.line!.id)} />
                 </div>
               ) : null,
@@ -978,6 +974,11 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
               }
               if (row.line || row.childLine) setExpandedLineId(expandedLineId === row.id ? null : row.id);
             }}
+            draggableRows={mode === 'schema'}
+            dragHandleMode="hover"
+            canDragRow={(row: { line?: StatementLine }) => Boolean(row.line)}
+            canDropBeforeRow={(row: { addInstanceTarget?: InstanceTarget }) => !row.addInstanceTarget}
+            onReorder={mode === 'schema' ? reorderLineSchema : undefined}
           />
         </Card>
 
@@ -993,13 +994,11 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 isDebtLine={effectiveLineKind(schema, line) === 'debt'}
                 debtProperties={line.debtProperties}
                 onChangeDebtProperties={(patch) => changeDebtPropertiesSchema(line.id, patch)}
-                otherSections={schema.sections.filter((s) => s.id !== selectedRow!.sectionId).map((s) => ({ id: s.id, name: s.name }))}
                 lineGroups={schemaLineGroups}
                 drivers={schema.drivers}
                 nameIndex={nameIndex}
                 onUpdateLine={updateLineSchema}
                 onSetProjection={setLineProjectionSchema}
-                onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(selectedRow!.sectionId!, lineId, toSectionId)}
                 onDeleteChildLine={isChild ? requestDeleteChild : undefined}
                 onClose={() => setExpandedLineId(null)}
               />

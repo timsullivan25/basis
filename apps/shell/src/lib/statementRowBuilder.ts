@@ -43,3 +43,44 @@ export function buildSectionRows(schema: StatementSchema, section: StatementSect
   });
   return rows;
 }
+
+/** A row in ModelMappingScreen's own flat, all-sections-concatenated table — every SectionRow
+ *  plus the section it belongs to (absent on a `__group` divider row, which belongs to no
+ *  section itself but marks where one starts) and, for a `__group` row, the section's own name
+ *  as `__group`. */
+export interface FlatRow extends SectionRow {
+  __group?: string;
+  sectionId?: string;
+}
+
+/** Resolves a DataTable onReorder's `beforeKey` — a RENDERED row's id, not necessarily a real
+ *  line's — into the section + raw line id lib/statementSchemaEdit.ts's reorderLine actually
+ *  wants. Needed only by a screen with ONE flat table spanning every section (ModelMappingScreen);
+ *  SchemaStructureEditor's one-DataTable-per-section layout never has this ambiguity — whichever
+ *  section's own table fired onReorder IS the target, full stop.
+ *
+ *  `beforeKey: null` means "at the end of the table" — resolved to the end of the LAST section.
+ *  A `group-<sectionId>` key (dropped ON a section's own header) resolves to that section's
+ *  CURRENT first row, not `reorderLine`'s own null-means-end — dropping on a header means
+ *  "become the first line here", the opposite end from a bare null. Any other key not found
+ *  among `rows` (e.g. a stale id) falls back to the end of the last section, same as null,
+ *  rather than silently doing nothing. */
+export function resolveFlatRowDropTarget(
+  rows: FlatRow[],
+  sections: Array<{ id: string }>,
+  beforeKey: string | null,
+): { toSectionId: string; beforeLineId: string | null } | null {
+  const lastSectionId = sections[sections.length - 1]?.id;
+  const toEnd = lastSectionId ? { toSectionId: lastSectionId, beforeLineId: null } : null;
+  if (beforeKey === null) return toEnd;
+  if (beforeKey.startsWith('group-')) {
+    const sectionId = beforeKey.slice('group-'.length);
+    const groupIndex = rows.findIndex((r) => r.id === beforeKey);
+    const next = groupIndex === -1 ? undefined : rows[groupIndex + 1];
+    const beforeLineId = next && next.sectionId === sectionId ? (next.line?.id ?? next.childLine?.id ?? null) : null;
+    return { toSectionId: sectionId, beforeLineId };
+  }
+  const target = rows.find((r) => r.id === beforeKey);
+  if (!target?.sectionId) return toEnd;
+  return { toSectionId: target.sectionId, beforeLineId: target.line?.id ?? target.childLine?.id ?? null };
+}

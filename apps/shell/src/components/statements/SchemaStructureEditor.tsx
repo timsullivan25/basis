@@ -162,12 +162,8 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
     return schemaEdit.findLine(schema, p.lineId)?.name ?? '';
   }
 
-  function moveLine(sectionId: string, lineId: string, direction: 'up' | 'down') {
-    onChangeSchema(schemaEdit.moveLine(schema, sectionId, lineId, direction));
-  }
-
-  function moveLineToSection(fromSectionId: string, lineId: string, toSectionId: string) {
-    onChangeSchema(schemaEdit.moveLineToSection(schema, fromSectionId, lineId, toSectionId));
+  function reorderLine(toSectionId: string, lineId: string, beforeLineId: string | null) {
+    onChangeSchema(schemaEdit.reorderLine(schema, lineId, toSectionId, beforeLineId));
   }
 
   return (
@@ -199,7 +195,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
               onAddLine={() => addLine(section.id)}
               onUpdateLine={updateLine}
               onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
-              onMoveLine={(lineId, direction) => moveLine(section.id, lineId, direction)}
+              onReorderLine={(lineId, beforeLineId) => reorderLine(section.id, lineId, beforeLineId)}
             />
           ))}
 
@@ -216,13 +212,11 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
             isDebtLine={selectedIsDebtLine}
             debtProperties={selectedLine.debtProperties}
             onChangeDebtProperties={(patch) => changeDebtProperties(selectedLine.id, patch)}
-            otherSections={sections.filter((s) => s.id !== selectedRowSection.id).map((s) => ({ id: s.id, name: s.name }))}
             lineGroups={lineGroups}
             drivers={drivers}
             nameIndex={nameIndex}
             onUpdateLine={updateLine}
             onSetProjection={setLineProjection}
-            onMoveLineToSection={(lineId, toSectionId) => moveLineToSection(selectedRowSection.id, lineId, toSectionId)}
             onDeleteChildLine={deleteChildLine}
             onClose={() => setSelectedRowId(null)}
             style={{ position: 'sticky', top: 'var(--space-8)', maxHeight: 'calc(100vh - 160px)' }}
