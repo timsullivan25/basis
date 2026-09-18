@@ -8,6 +8,7 @@ import {
   type StatementSchema,
   type StatementSection,
 } from '../data';
+import { DEFAULT_SCHEMA_ID } from '../data/defaultStatementSchema';
 import { SectionEditor, type ProjectionSelection } from '../components/statements/SectionEditor';
 import {
   buildDaysFormula,
@@ -130,6 +131,7 @@ export function StatementDefinitionsScreen() {
   const [dialog, setDialog] = useState<'new' | 'duplicate' | 'rename' | null>(null);
   const [pendingName, setPendingName] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [pendingLineRemoval, setPendingLineRemoval] = useState<PendingLineRemoval | null>(null);
 
   useEffect(() => {
@@ -186,7 +188,7 @@ export function StatementDefinitionsScreen() {
 
   async function handleDuplicate() {
     if (!selectedSchema) return;
-    const copy = await statementSchemaRepository.duplicate(selectedSchema.id, pendingName.trim());
+    const { schema: copy } = await statementSchemaRepository.duplicate(selectedSchema.id, pendingName.trim());
     setSchemas((prev) => [...prev, copy]);
     setDialog(null);
     setSelectedSchemaId(copy.id);
@@ -215,6 +217,22 @@ export function StatementDefinitionsScreen() {
     setDrivers(next?.drivers ?? []);
     setSavedSnapshot(snapshotOf(next?.sections ?? [], next?.drivers ?? []));
     setToast('Schema deleted');
+  }
+
+  /** Regenerates "Basis Default" from the current code — see StatementSchemaRepository.resetDefault's
+   *  own doc comment for why this is safe: no model depends on the default template's own ids past
+   *  the moment it forks its own copy. The one way to get back a comprehensive, driver-complete
+   *  template without hand-editing it back into shape after the underlying code has moved on. */
+  async function handleResetDefault() {
+    const fresh = await statementSchemaRepository.resetDefault();
+    setSchemas((prev) => prev.map((s) => (s.id === fresh.id ? fresh : s)));
+    if (selectedSchemaId === fresh.id) {
+      setSections(fresh.sections);
+      setDrivers(fresh.drivers);
+      setSavedSnapshot(snapshotOf(fresh.sections, fresh.drivers));
+    }
+    setResetConfirmOpen(false);
+    setToast('Basis Default reset to the current built-in template');
   }
 
   function addSection() {
@@ -474,6 +492,16 @@ export function StatementDefinitionsScreen() {
           onClick={() => setDeleteConfirmOpen(true)}
           disabled={isDirty || !selectedSchema || schemas.length <= 1}
         />
+        {selectedSchema?.id === DEFAULT_SCHEMA_ID ? (
+          <IconButton
+            icon="refresh-ccw"
+            label="Reset to latest default"
+            size="sm"
+            variant="ghost"
+            onClick={() => setResetConfirmOpen(true)}
+            disabled={isDirty}
+          />
+        ) : null}
         {isDirty ? (
           <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>
             Save or discard changes to switch schemas.
@@ -563,6 +591,27 @@ export function StatementDefinitionsScreen() {
         <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
           Sections and lines defined here will be permanently removed. Models already mapped against it keep their
           saved mapping, but it can no longer be edited or duplicated. This cannot be undone.
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={resetConfirmOpen}
+        onClose={() => setResetConfirmOpen(false)}
+        icon="alert-triangle"
+        title="Reset Basis Default to the latest built-in template?"
+        footer={
+          <>
+            <Button onClick={() => setResetConfirmOpen(false)}>Cancel</Button>
+            <Button variant="danger" iconLeft="refresh-ccw" onClick={handleResetDefault}>
+              Reset
+            </Button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>
+          Any manual edits made to Basis Default will be discarded and replaced with the current built-in template.
+          Models already built on it are unaffected — each owns its own private copy from the moment it was created.
+          This cannot be undone.
         </p>
       </Dialog>
 

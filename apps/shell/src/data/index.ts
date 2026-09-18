@@ -2,7 +2,6 @@ import { IndexedDbAnalysisResultRepository } from './indexedDbAnalysisResultRepo
 import { IndexedDbAnalysisSettingsRepository } from './indexedDbAnalysisSettingsRepository';
 import { IndexedDbCompanyRepository } from './indexedDbCompanyRepository';
 import { IndexedDbComputedResultRepository } from './indexedDbComputedResultRepository';
-import { IndexedDbLineInstanceRepository } from './indexedDbLineInstanceRepository';
 import { IndexedDbMappingRepository } from './indexedDbMappingRepository';
 import { IndexedDbModelImportRepository } from './indexedDbModelImportRepository';
 import { IndexedDbModelRepository } from './indexedDbModelRepository';
@@ -14,7 +13,6 @@ import type {
   AnalysisSettingsRepository,
   ComputedResultRepository,
   CompanyRepository,
-  LineInstanceRepository,
   MappingRepository,
   ModelImportRepository,
   ModelRepository,
@@ -42,11 +40,10 @@ export type {
   CreateSnapshotInput,
   DcfInputs,
   DcfOutput,
-  CreateLineInstanceInput,
+  DebtScheduleRole,
+  DebtTrancheProperties,
   DriverDefinition,
   LineAggregation,
-  LineInstance,
-  LineInstanceRepository,
   LineMapping,
   LineNumberFormat,
   LineRowFormat,
@@ -92,4 +89,3 @@ export const computedResultRepository: ComputedResultRepository = new IndexedDbC
 export const snapshotRepository: SnapshotRepository = new IndexedDbSnapshotRepository();
 export const analysisSettingsRepository: AnalysisSettingsRepository = new IndexedDbAnalysisSettingsRepository();
 export const analysisResultRepository: AnalysisResultRepository = new IndexedDbAnalysisResultRepository();
-export const lineInstanceRepository: LineInstanceRepository = new IndexedDbLineInstanceRepository();

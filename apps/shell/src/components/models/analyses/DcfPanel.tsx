@@ -31,6 +31,7 @@ const CONCEPT_LABELS: Record<SummaryConcept, string> = {
   revenue: 'Revenue', ebitda: 'EBITDA', netDebt: 'Net Debt', netLeverage: 'Net Leverage',
   interestCoverage: 'Interest Coverage', totalDebt: 'Total Debt', totalEquity: 'Total Equity',
   ebit: 'EBIT', da: 'D&A', capex: 'CapEx', nwc: 'Net Working Capital', taxRate: 'Effective Tax Rate',
+  cash: 'Cash & Equivalents', fcf: 'Free Cash Flow',
 };
 
 const ADD_NEW_LINE = '__add_new_line__';

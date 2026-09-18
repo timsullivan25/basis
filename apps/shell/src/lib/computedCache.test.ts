@@ -26,7 +26,6 @@ function model(updatedAt: string): Model {
   return {
     id: 'm1', companyId: 'c1', name: 'Model', statementSchemaId: 's1', modelImportId: 'mi1', mappingId: 'map1',
     timeline: [period('2023'), period('2024')], historicals: {}, driverValues: {}, createdAt: updatedAt, updatedAt,
-    instancesUpdatedAt: updatedAt,
   };
 }
 
@@ -45,7 +44,7 @@ function fakeEvaluation(values: Record<string, (number | null)[]>, errors: Recor
 describe('computeVersionStamp / versionStampMatches', () => {
   it('stamps scenarioUpdatedAt as null for Base (no scenario)', () => {
     const stamp = computeVersionStamp(model('t1'), null, schema('t1'));
-    expect(stamp).toEqual({ modelUpdatedAt: 't1', scenarioUpdatedAt: null, schemaUpdatedAt: 't1', instancesUpdatedAt: 't1' });
+    expect(stamp).toEqual({ modelUpdatedAt: 't1', scenarioUpdatedAt: null, schemaUpdatedAt: 't1' });
   });
 
   it('stamps scenarioUpdatedAt from the scenario when one is active', () => {
@@ -73,10 +72,9 @@ describe('computeVersionStamp / versionStampMatches', () => {
     expect(versionStampMatches(stamp, model('t1'), null, schema('t2'))).toBe(false);
   });
 
-  it('mismatches when a LineInstance was created/edited/removed after the stamp was taken', () => {
+  it('mismatches when a dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) was added/edited/removed after the stamp was taken — a schema save, same as any other structural change', () => {
     const stamp = computeVersionStamp(model('t1'), null, schema('t1'));
-    const modelWithNewerInstances = { ...model('t1'), instancesUpdatedAt: 't2' };
-    expect(versionStampMatches(stamp, modelWithNewerInstances, null, schema('t1'))).toBe(false);
+    expect(versionStampMatches(stamp, model('t1'), null, schema('t2'))).toBe(false);
   });
 
   it('mismatches when Base (no scenario) is compared against a stamp taken with a scenario active', () => {
@@ -91,12 +89,6 @@ describe('computeVersionStamp / versionStampMatches', () => {
     expect(versionStampMatches(stamp, legacyModel, null, schema('t1'))).toBe(true);
   });
 
-  it('falls back to createdAt for a record saved before instancesUpdatedAt existed', () => {
-    const legacyModel = { ...model('t1'), instancesUpdatedAt: undefined as unknown as string };
-    const stamp = computeVersionStamp(legacyModel, null, schema('t1'));
-    expect(stamp.instancesUpdatedAt).toBe(legacyModel.createdAt);
-    expect(versionStampMatches(stamp, legacyModel, null, schema('t1'))).toBe(true);
-  });
 });
 
 describe('materializeEvaluation', () => {
@@ -120,7 +112,7 @@ describe('materializeEvaluation', () => {
 
 describe('buildComputedResult / toLineValues', () => {
   it('builds a stable composite id from modelId and scenarioId', () => {
-    const result = buildComputedResult('m1', 'base', { modelUpdatedAt: 't1', scenarioUpdatedAt: null, schemaUpdatedAt: 't1', instancesUpdatedAt: 't1' }, {
+    const result = buildComputedResult('m1', 'base', { modelUpdatedAt: 't1', scenarioUpdatedAt: null, schemaUpdatedAt: 't1' }, {
       values: { rev: [100] },
       errors: {},
     });
@@ -130,7 +122,7 @@ describe('buildComputedResult / toLineValues', () => {
   });
 
   it('adapts a stored result back to the LineValues shape, missing cells resolving to null/undefined', () => {
-    const result = buildComputedResult('m1', 'sc1', { modelUpdatedAt: 't1', scenarioUpdatedAt: 't1', schemaUpdatedAt: 't1', instancesUpdatedAt: 't1' }, {
+    const result = buildComputedResult('m1', 'sc1', { modelUpdatedAt: 't1', scenarioUpdatedAt: 't1', schemaUpdatedAt: 't1' }, {
       values: { rev: [100, 120] },
       errors: { cogs: 'bad' },
     });

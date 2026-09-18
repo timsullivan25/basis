@@ -408,6 +408,23 @@ function LineDetail({ line, otherSections, lineGroups, drivers, nameIndex, onUpd
           />
         </div>
 
+        {/* Fully independent of "Allow sub-lines" — a line can be debt with no children (a
+            single lump-sum balance carrying its own properties), have children without being
+            debt, both, or neither. Revolver is not a separate toggle here at all — it's just
+            part of whichever debt-properties panel a mapping-time tranche gets, on any
+            debt-kind line, always. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+            Line kind
+          </span>
+          <Switch
+            size="sm"
+            label="Is debt"
+            checked={line.lineKind === 'debt'}
+            onChange={(next) => onUpdateLine(line.id, { lineKind: next ? 'debt' : undefined })}
+          />
+        </div>
+
         {needsBasisLine(currentMethod) ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>

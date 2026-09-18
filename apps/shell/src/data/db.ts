@@ -4,7 +4,6 @@ import type {
   AnalysisSettings,
   Company,
   ComputedResult,
-  LineInstance,
   Mapping,
   Model,
   ModelImport,
@@ -66,15 +65,10 @@ export interface BasisDb extends DBSchema {
     value: AnalysisResult;
     indexes: { 'by-modelId': string };
   };
-  lineInstances: {
-    key: string;
-    value: LineInstance;
-    indexes: { 'by-modelId': string };
-  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 11;
+const DB_VERSION = 12;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -158,7 +152,6 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
                   driverValues: {},
                   createdAt: imp.uploadedAt,
                   updatedAt: imp.uploadedAt,
-                  instancesUpdatedAt: imp.uploadedAt,
                 });
               }
               const { mapping: _mapping, mappedAt: _mappedAt, ...rest } = imp;
@@ -185,9 +178,61 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
           const store = db.createObjectStore('analysisResults', { keyPath: 'id' });
           store.createIndex('by-modelId', 'modelId');
         }
-        if (oldVersion < 11) {
-          const store = db.createObjectStore('lineInstances', { keyPath: 'id' });
-          store.createIndex('by-modelId', 'modelId');
+        // Every model now owns a private, forked copy of its schema, and a dynamic child line
+        // (segment, EBITDA adjustment, KPI, debt tranche) is a real StatementLine living
+        // directly in it (see lib/statementLineChildren.ts) rather than a separate LineInstance
+        // row — the `lineInstances` store a v11-or-earlier install already has is dropped for
+        // good below (no replacement — a fresh install, oldVersion 0, never creates it at all
+        // anymore). Both are genuinely new invariants existing data was never built under. This
+        // is dev/test data, not production, so the simplest correct migration is wiping every
+        // model-dependent store rather than attempting to fold old data into shapes it never
+        // had; existing companies just re-import fresh. `companies` and `statementSchema`
+        // (templates) survive untouched. Each store below is only deleted+recreated when it
+        // already exists from a PRIOR session's upgrade (oldVersion at or past that store's own
+        // creation threshold above) — otherwise the block above this one is what creates it
+        // fresh in this same pass, and touching it again here would collide.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 'lineInstances' no
+        // longer exists on the current BasisDb type (the whole point of this deletion), but
+        // idb's deleteObjectStore only accepts today's known store names.
+        if (oldVersion >= 11) db.deleteObjectStore('lineInstances' as any);
+        if (oldVersion >= 1 && oldVersion < 12) {
+          if (oldVersion >= 3) {
+            db.deleteObjectStore('modelImports');
+            const s = db.createObjectStore('modelImports', { keyPath: 'id' });
+            s.createIndex('by-companyId', 'companyId');
+          }
+          if (oldVersion >= 5) {
+            db.deleteObjectStore('models');
+            const models = db.createObjectStore('models', { keyPath: 'id' });
+            models.createIndex('by-companyId', 'companyId');
+            db.deleteObjectStore('mappings');
+            const mappings = db.createObjectStore('mappings', { keyPath: 'id' });
+            mappings.createIndex('by-modelImportId', 'modelImportId');
+          }
+          if (oldVersion >= 6) {
+            db.deleteObjectStore('scenarios');
+            const s = db.createObjectStore('scenarios', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
+          }
+          if (oldVersion >= 7) {
+            db.deleteObjectStore('computedResults');
+            const s = db.createObjectStore('computedResults', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
+          }
+          if (oldVersion >= 8) {
+            db.deleteObjectStore('snapshots');
+            const s = db.createObjectStore('snapshots', { keyPath: 'id' });
+            s.createIndex('by-companyId', 'companyId');
+          }
+          if (oldVersion >= 9) {
+            db.deleteObjectStore('analysisSettings');
+            db.createObjectStore('analysisSettings', { keyPath: 'id' });
+          }
+          if (oldVersion >= 10) {
+            db.deleteObjectStore('analysisResults');
+            const s = db.createObjectStore('analysisResults', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
+          }
         }
       },
     });

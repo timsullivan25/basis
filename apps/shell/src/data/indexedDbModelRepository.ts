@@ -17,18 +17,20 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
-      await this.removeInstances(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
+      // Every model owns a private schema fork (see ModelMappingScreen/cloneStatementSchemaStructure)
+      // — nobody else references it, so it's an orphan the instant this model is replaced.
+      await db.delete('statementSchema', existing.statementSchemaId);
       await db.delete('models', existing.id);
     }
     const now = new Date().toISOString();
-    const model: Model = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, instancesUpdatedAt: now, driverValues: {}, ...input };
+    const model: Model = { id: crypto.randomUUID(), createdAt: now, updatedAt: now, driverValues: {}, ...input };
     await db.add('models', model);
     return model;
   }
 
-  async update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues'>>): Promise<Model> {
+  async update(id: string, patch: Partial<Pick<Model, 'name' | 'timeline' | 'historicals' | 'driverValues' | 'circularCalcsEnabled'>>): Promise<Model> {
     const db = await openBasisDb();
     const existing = await db.get('models', id);
     if (!existing) throw new Error(`Model not found: ${id}`);
@@ -45,9 +47,9 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
-      await this.removeInstances(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
+      await db.delete('statementSchema', existing.statementSchemaId);
     }
     await db.delete('models', id);
   }
@@ -81,13 +83,5 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const results = await db.getAllFromIndex('analysisResults', 'by-modelId', modelId);
     await Promise.all(results.map((r) => db.delete('analysisResults', r.id)));
-  }
-
-  /** Same from-day-one invariant as the other four — no LineInstance row should ever outlive
-   *  the model it belongs to. */
-  private async removeInstances(modelId: string): Promise<void> {
-    const db = await openBasisDb();
-    const instances = await db.getAllFromIndex('lineInstances', 'by-modelId', modelId);
-    await Promise.all(instances.map((i) => db.delete('lineInstances', i.id)));
   }
 }
