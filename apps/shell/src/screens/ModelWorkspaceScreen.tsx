@@ -21,7 +21,6 @@ import {
 import {
   analysisResultRepository,
   analysisSettingsRepository,
-  computedResultRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -42,14 +41,16 @@ import {
   type StatementLine,
   type StatementSchema,
 } from '../data';
-import { getLineRowStyle } from '../components/statements/statementFormatting';
+import { getCheckStatus, getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
-import { buildComputedResult, computeVersionStamp, materializeEvaluation, type LineValues } from '../lib/computedCache';
+import type { LineValues } from '../lib/computedCache';
+import { recomputeAndCacheModel } from '../lib/modelRecompute';
+import type { ModelMappingScreenProps } from '../components/models/mapping/ModelMappingScreen';
 import {
   computeDcfOutputs,
   computeSensitivityGrid,
@@ -75,6 +76,9 @@ interface ModelWorkspaceScreenProps {
    *  concept-assignment escape hatch, same top-level nav-switch shape as SettingsIndexScreen's own
    *  onNavigate. */
   onOpenStatementDefinitions: () => void;
+  /** Opens the mapping/schema overlay — see AppShell's own openMapping. Lets "Edit statement"
+   *  below jump straight there without a detour back through the company page's Financials tab. */
+  onOpenMapping: (props: ModelMappingScreenProps) => void;
 }
 
 /** Shared, fully-controlled name-prompt dialog for "New scenario", "Duplicate" and "Rename" —
@@ -137,7 +141,7 @@ const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
-export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions }: ModelWorkspaceScreenProps) {
+export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions, onOpenMapping }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
   const [mapping, setMapping] = useState<Mapping | null>(null);
@@ -268,9 +272,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // is already synchronous and instant at this schema's scale.
   useEffect(() => {
     if (recalcMode !== 'auto' || !schema || !model || !evaluation) return;
-    const materialized = materializeEvaluation(schema, model, evaluation);
-    const versionStamp = computeVersionStamp(model, activeScenario, schema);
-    void computedResultRepository.set(buildComputedResult(model.id, activeScenarioId, versionStamp, materialized));
+    void recomputeAndCacheModel(schema, model, evaluation, activeScenario, activeScenarioId);
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId]);
 
   // Same cache-not-source write-through as ComputedResult above, for DCF specifically — only once
@@ -483,6 +485,46 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     ]);
     setSchema(savedSchema);
     setModel(updatedModel);
+    // The auto-recalc effect above only fires in 'auto' recalc mode — recompute explicitly here
+    // so a manual-mode session's cache doesn't go stale until the user happens to switch back.
+    const driverValues = activeScenario
+      ? mergeScenarioDriverValues(updatedModel.driverValues ?? {}, activeScenario.driverValues)
+      : (updatedModel.driverValues ?? {});
+    const freshEvaluation = evaluateModel(savedSchema, { ...updatedModel, driverValues });
+    await recomputeAndCacheModel(savedSchema, updatedModel, freshEvaluation, activeScenario, activeScenarioId);
+  }
+
+  /** Re-fetches just the pieces a mapping/schema session could have changed — same scope as
+   *  FinancialsTab's own loadModelDetails — deliberately not the full company.id-keyed load
+   *  effect above, which would also reset scenario/compare selections the user has nothing to do
+   *  with here. */
+  async function refreshAfterMappingSession(savedModel: Model) {
+    const [existingSchema, existingMapping, existingModelImport] = await Promise.all([
+      statementSchemaRepository.get(savedModel.statementSchemaId),
+      mappingRepository.get(savedModel.mappingId),
+      modelImportRepository.get(savedModel.modelImportId),
+    ]);
+    setModel(savedModel);
+    setSchema(existingSchema ?? null);
+    setMapping(existingMapping ?? null);
+    setModelImport(existingModelImport ?? null);
+  }
+
+  /** Opens the same mapping/schema overlay FinancialsTab's "Edit mapping" button does, straight
+   *  from the workspace — no detour back through the company page. Jumps to Edit-schema mode
+   *  since restructuring, not reviewing a fresh import, is almost always why this gets clicked
+   *  from here. */
+  function startEditStatement() {
+    if (!model || !modelImport) return;
+    onOpenMapping({
+      company,
+      editing: { model, modelImport },
+      initialMode: 'schema',
+      onCancel: () => {},
+      onSaved: (updatedModel) => {
+        void refreshAfterMappingSession(updatedModel);
+      },
+    });
   }
 
   function recalculate() {
@@ -720,8 +762,30 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         }
         // evaluation already applies mapped-value-wins-else-formula for every line uniformly —
         // status/badge columns elsewhere already say whether a line is calculated, so the value
-        // itself doesn't need a second color cue on top of that.
+        // itself doesn't need a second color cue on top of that. A lineKind 'check' line is the
+        // one deliberate exception — its whole purpose is to flag its own computed value.
         const value = evaluation?.getValue(row.line.id, i) ?? null;
+        const checkStatus = getCheckStatus(row.line, value);
+        if (checkStatus !== 'unknown') {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, width: '100%' }}>
+              <Icon
+                name={checkStatus === 'fail' ? 'alert-triangle' : 'check'}
+                size={12}
+                color={checkStatus === 'fail' ? 'var(--text-negative)' : 'var(--text-positive)'}
+              />
+              <span
+                style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+                  fontWeight: checkStatus === 'fail' ? 'var(--weight-semibold)' : undefined,
+                  color: checkStatus === 'fail' ? 'var(--text-negative)' : 'var(--text-positive)',
+                }}
+              >
+                {formatPeriodValue(value, row.line.numberFormat)}
+              </span>
+            </span>
+          );
+        }
         return (
           <span
             style={{
@@ -1016,6 +1080,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
           </Popover>
         </div>
         <div style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-default)' }} />
+        <Button iconLeft="git-merge" size="sm" onClick={startEditStatement} disabled={!model || !modelImport}>
+          Edit statement
+        </Button>
         <IconButton icon="history" label="History" size="sm" variant="ghost" onClick={openHistory} />
         <Button variant="primary" iconLeft="camera" onClick={openSnapshotDialog}>
           Snapshot

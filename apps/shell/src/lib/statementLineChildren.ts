@@ -12,10 +12,13 @@ import {
  *  KPIs, debt tranches) — the replacement for the old LineInstance entity + withDynamicInstances
  *  splice/rollup mechanism. A child is now an ordinary StatementLine living directly in the
  *  schema, distinguished only by `parentLineId` (or, for a freeform/KPI line, simply by living
- *  in a section whose allowsFreeformLines is true, same as any other line there). Every function
- *  here takes a whole schema and returns a new one — the caller (ModelMappingScreen) holds the
- *  result as its draft state and persists it with one statementSchemaRepository.save() at Save,
- *  same "nothing writes until Save" convention the rest of that screen already follows. */
+ *  in a section whose allowsFreeformLines is true, same as any other line there) — no coupling to
+ *  models specifically, so a template can define default child lines too (see
+ *  SchemaStructureEditor.tsx's own "+ Add sub-line", used by both the template builder and the
+ *  model workspace's Edit-schema mode). Every function here takes a whole schema and returns a
+ *  new one; each caller decides its own persistence — a manual Save (the template builder), a
+ *  debounced eager save (an existing model's Edit-schema mode), or nothing until the mapping
+ *  screen's own Save for a brand-new import (see ModelMappingScreen.tsx's changeSchema). */
 
 function findLine(schema: StatementSchema, lineId: string): StatementLine | undefined {
   for (const s of schema.sections) {
@@ -37,7 +40,7 @@ export function childrenOf(schema: StatementSchema, parentLineId: string): State
 /** A child's effective kind is always its parent's, walked live off the schema — never
  *  independently stored on the child (see StatementLine.lineKind's own doc comment), so it can
  *  never drift out of sync with the parent. */
-export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | undefined {
+export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | 'check' | undefined {
   if (!line.parentLineId) return line.lineKind;
   const parent = findLine(schema, line.parentLineId);
   return parent ? effectiveLineKind(schema, parent) : undefined;

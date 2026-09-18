@@ -140,14 +140,15 @@ export interface StatementLine {
    *  a section whose allowsFreeformLines is true is the KPI case — no separate field needed for
    *  that, since the line simply lives in that section's own `lines` array like any other. */
   parentLineId?: string;
-  /** 'debt' today; other kinds may exist later. Fully independent of allowsSubLines — a line can
-   *  be debt with no children (a single lump-sum balance carrying its own properties directly),
-   *  have children without being debt (a revenue segment's parent), both, or neither. A child's
-   *  EFFECTIVE kind is always its parent's (via parentLineId) — never independently set on the
-   *  child itself, so it can never drift out of sync with the parent (a rollup mixing debt and
-   *  non-debt children wouldn't mean anything). Only a line with no parentLineId has this field
-   *  mean anything on its own. */
-  lineKind?: 'debt';
+  /** 'debt' or 'check' today; other kinds may exist later. Fully independent of allowsSubLines —
+   *  a line can be debt with no children (a single lump-sum balance carrying its own properties
+   *  directly), have children without being debt (a revenue segment's parent), both, or neither.
+   *  A child's EFFECTIVE kind is always its parent's (via parentLineId) — never independently set
+   *  on the child itself, so it can never drift out of sync with the parent (a rollup mixing debt
+   *  and non-debt children wouldn't mean anything). Only a line with no parentLineId has this
+   *  field mean anything on its own. 'check' is unrelated to the debt fields below — see
+   *  checkTolerance. */
+  lineKind?: 'debt' | 'check';
   /** Set on whichever debt-kind line (lineKind === 'debt', directly or inherited) currently has
    *  no children of its own — a standalone debt line, or a leaf tranche. The moment a debt line
    *  gains a real child, it becomes a pure rollup (its own formula sums the children — see
@@ -164,6 +165,11 @@ export interface StatementLine {
    *  plays no role in deciding what's eligible for the schedule (that's still effectiveLineKind
    *  === 'debt' on a childless line, unchanged from Capital Structure). */
   debtScheduleRole?: { trancheLineId?: string; role: DebtScheduleRole };
+  /** Only meaningful when lineKind === 'check' — the largest absolute computed value (in the
+   *  line's own units, e.g. a fraction for a percentage-formatted check) still considered "tied
+   *  out". Absent falls back to DEFAULT_CHECK_TOLERANCE (see statementFormatting.ts's
+   *  getCheckStatus) rather than treating every nonzero value as a failure. */
+  checkTolerance?: number;
 }
 
 /** Property bundle for one debt tranche — see StatementLine.debtProperties' own doc comment for

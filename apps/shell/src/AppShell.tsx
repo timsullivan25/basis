@@ -129,6 +129,7 @@ export function AppShell() {
           company={selectedCompany}
           onViewSnapshot={setViewingSnapshotId}
           onOpenStatementDefinitions={() => setActive('settings-statements')}
+          onOpenMapping={openMapping}
         />
       ) : (
         <CompanyDetailScreen
