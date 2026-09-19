@@ -52,5 +52,15 @@ propose schema additions), projections, post-mapping AI checks (flag errors, sug
 | `extractHistoricals.ts`, `writeBasisTemplate.ts` | 9 (multi-sheet, periods aligned by name) |
 | `llmProvider.ts`, `fakeLlmProvider.ts` | provider seam |
 
-Not built yet: step 7 (advisory plan check + follow-up loop), the review UI, the Anthropic adapter, and the
-original-upload storage change.
+UI: `components/models/AiImportDialog.tsx` (steps 4 and 8 — one review dialog: sheet checklist with re-plan,
+annual/lowest toggle, editable statement row ranges, live preview, download of the generated template),
+opened from `FinancialsTab` when Create Model's "Extract with AI" option is chosen. `analyzeWorkbook.ts`
+orchestrates steps 1-3 and 5-6. `ModelImport.originalFile` keeps the user's upload as the root file/name while
+`file` holds the generated template (so Edit mapping re-parses the template unchanged).
+
+`provider.ts` is the one place that picks the model; it returns a dev-only `DemoLlmProvider` (recognizes one
+private test workbook by sheet name) until a real adapter exists.
+
+Triage flags the sheet choice only when confidence is below high; alternatives are shown as information.
+
+Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adapter and dev proxy.
