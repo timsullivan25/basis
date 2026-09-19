@@ -90,7 +90,16 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
 - Known rough edge: `FormulaInput` silently discards an invalid formula if the row is collapsed
   before blur.
 - Quarterly/semi-annual modeling with annual aggregation, expand/collapse.
-- AI-assisted parsing of a generic (non-template) financial upload.
+- AI-assisted parsing of a generic (non-template) financial upload. In progress on
+  `feature/ai-import`; first pass is **historicals only**, extracted into the Basis Template shape
+  and fed through the existing mapping flow. Deferred from that first pass, to revisit:
+  - **Sub-lines for debt tranches and segments.** A real model breaks these out (e.g. per-tranche
+    debt, per-segment revenue); the importer will likely need to *propose schema additions* as part
+    of the mapping phase, not just map onto the existing schema.
+  - **Projections.** Real models carry them (with scenario cases); import them in a later pass.
+  - **Post-mapping AI passes** (nice to have): flag likely errors in mapped lines, and suggest
+    fits for unmapped lines with a confidence level.
+  - **Confirming where the financials are** when the workbook layout is ambiguous.
 - AI-generated custom modeling structures (schema generation).
 
 ## Open questions / notes
