@@ -19,6 +19,8 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
   selectOnFocus?: boolean;
   /** Shows a clear affordance when value is non-empty. */
   onClear?: () => void;
+  /** Shows the native up/down spin buttons on a `type="number"` input. Off by default. */
+  spinButtons?: boolean;
   style?: React.CSSProperties;
 }
 export const Input: React.ForwardRefExoticComponent<InputProps & React.RefAttributes<HTMLInputElement>>;
