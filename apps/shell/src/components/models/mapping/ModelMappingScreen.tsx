@@ -73,6 +73,8 @@ export interface ModelMappingScreenProps {
   draft?: {
     templateType: ModelTemplateType;
     file: File;
+    /** The user's own upload, when `file` is a Basis Template generated from it (AI extraction). */
+    originalFile?: File;
     /** The company's current model, if any — seeds prior-mapping hints and triggers the replace confirm on save. */
     existingModel?: Model;
   };
@@ -86,7 +88,7 @@ export interface ModelMappingScreenProps {
 
 export function ModelMappingScreen({ company, schemas = [], editing, draft, initialMode, onCancel, onSaved }: ModelMappingScreenProps) {
   const file = editing?.modelImport.file ?? draft?.file;
-  const fileName = editing?.modelImport.fileName ?? draft?.file.name ?? '';
+  const fileName = editing?.modelImport.fileName ?? draft?.originalFile?.name ?? draft?.file.name ?? '';
   if (!file) throw new Error('ModelMappingScreen requires either editing or draft.');
 
   // Which TEMPLATE a new model forks from — irrelevant once editing (a model never switches
@@ -468,6 +470,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
           templateType: draft!.templateType,
           statementSchemaId: savedSchema.id,
           file: draft!.file,
+          originalFile: draft!.originalFile,
         });
         const createdMapping = await mappingRepository.create({
           modelImportId: createdImport.id,

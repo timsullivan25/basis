@@ -265,18 +265,24 @@ export interface ModelImport {
   templateType: ModelTemplateType;
   /** Which statement schema this import is mapped (or being mapped) against. */
   statementSchemaId: string;
+  /** Name and size of the root upload — the user's own file, even when `file` below is a generated template. */
   fileName: string;
   fileSize: number;
   uploadedAt: string;
-  /** The raw uploaded workbook, read back to re-parse (e.g. to seed prior-mapping hints for the next import). */
+  /** The workbook in Basis Template shape, read back to re-parse (e.g. to re-open mapping, or to seed prior-mapping hints for the next import). For an AI-extracted import this is the generated template; otherwise it is the upload itself. */
   file: Blob;
+  /** Only for an AI-extracted import: the original, untouched upload the template was generated from. */
+  originalFile?: Blob;
 }
 
 export interface CreateModelImportInput {
   companyId: string;
   templateType: ModelTemplateType;
   statementSchemaId: string;
+  /** The Basis Template workbook to parse (the upload itself, or a generated one). */
   file: File;
+  /** Set when `file` was generated from a different upload — that upload becomes the import's root file and name. */
+  originalFile?: File;
 }
 
 export interface ModelImportRepository {

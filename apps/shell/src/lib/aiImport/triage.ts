@@ -25,9 +25,9 @@ export class TriageError extends Error {
   }
 }
 
-/** True when the sheet choice should go in front of a human before we build on it. */
+/** True when the sheet choice should be flagged for a human before we build on it. Alternatives alone don't trigger it — analysis tabs that mirror a few statement lines are normal, so they're shown as information. */
 export function triageNeedsConfirmation(result: TriageResult): boolean {
-  return result.layout === 'none' || result.confidence !== 'high' || result.alternatives.length > 0;
+  return result.layout === 'none' || result.confidence !== 'high';
 }
 
 export const TRIAGE_SCHEMA = {

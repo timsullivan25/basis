@@ -118,11 +118,11 @@ describe('triage', () => {
     expect(() => parseTriage({ ...answer, layout: 'none' }, ['Model'])).toThrow(/no sheets/);
   });
 
-  it('asks for confirmation unless confidence is high with no alternatives and something was found', () => {
+  it('flags the choice unless confidence is high and something was found; alternatives alone do not', () => {
     const ok = parseTriage(answer, ['Model']);
     expect(triageNeedsConfirmation(ok)).toBe(false);
     expect(triageNeedsConfirmation({ ...ok, confidence: 'low' })).toBe(true);
-    expect(triageNeedsConfirmation({ ...ok, alternatives: [{ sheet: 'LBO', note: 'also has statements' }] })).toBe(true);
+    expect(triageNeedsConfirmation({ ...ok, alternatives: [{ sheet: 'LBO', note: 'also has statements' }] })).toBe(false);
     expect(triageNeedsConfirmation({ ...ok, layout: 'none', sheets: [] })).toBe(true);
   });
 });
