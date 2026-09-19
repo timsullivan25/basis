@@ -7,8 +7,11 @@ const FIELD_SIZES = {
   lg: { h: 'var(--control-lg)', fs: 'var(--text-base)', px: 'var(--space-6)', icon: 15 },
 };
 
-/** Single-line text/number input with optional icons, prefix and unit suffix. */
-export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, selectOnFocus = false, style, onClear, value, onFocus, onBlur, ...rest }, ref) {
+/** Single-line text/number input with optional icons, prefix and unit suffix. A `type="number"`
+ *  input's native up/down spin buttons are hidden by default — they read as visual clutter in the
+ *  dense, mono-numeric fields this app mostly uses (driver/financial cells), and nobody actually
+ *  clicks them to change a value. Pass `spinButtons` to opt back in on a one-off basis. */
+export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, iconRight, prefix, suffix, invalid = false, disabled = false, mono = false, fullWidth = true, selectOnFocus = false, spinButtons = false, type = 'text', className, style, onClear, value, onFocus, onBlur, ...rest }, ref) {
   const [focus, setFocus] = React.useState(false);
   const [hover, setHover] = React.useState(false);
   const s = FIELD_SIZES[size] || FIELD_SIZES.md;
@@ -29,6 +32,8 @@ export const Input = React.forwardRef(function Input({ size = 'md', iconLeft, ic
       {prefix ? <span style={{ fontSize: s.fs, color: 'var(--text-tertiary)', flex: '0 0 auto' }}>{prefix}</span> : null}
       <input
         ref={ref}
+        type={type}
+        className={type === 'number' && !spinButtons ? ['basis-input-number', className].filter(Boolean).join(' ') : className}
         value={value} disabled={disabled}
         onFocus={(e) => { setFocus(true); if (selectOnFocus) e.target.select(); onFocus?.(e); }}
         onBlur={(e) => { setFocus(false); onBlur?.(e); }}

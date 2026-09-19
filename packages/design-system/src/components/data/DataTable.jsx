@@ -134,9 +134,18 @@ export function DataTable({
     };
   }, [activeCell, editableCells]);
 
+  // Fixed layout only when every column has actually opted into an exact width — 'fixed' has no
+  // concept of "size to content", so a column left at its content-driven default (no `width`
+  // given) would otherwise just get an arbitrary equal share of whatever space is left, which is
+  // wrong for that column, not just different. A caller that DOES give every column a width (the
+  // common case, and how a caller lines this table up pixel-for-pixel against a sibling grid — see
+  // the Drivers card's chart view, aligned against its own CSS-grid period columns) gets it
+  // honored exactly instead of silently re-compressed/stretched by content, same as it already
+  // asks for; a caller that doesn't keeps today's plain content-sized columns, unchanged.
+  const allColumnsSized = columns.every((c) => c.width != null);
   return (
     <div style={{ overflow: 'auto', maxHeight, ...style }} {...rest}>
-      <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontFamily: 'var(--font-sans)', fontSize: dense ? 'var(--text-xs)' : 'var(--text-sm)' }}>
+      <table style={{ width: '100%', tableLayout: allColumnsSized ? 'fixed' : 'auto', borderCollapse: 'separate', borderSpacing: 0, fontFamily: 'var(--font-sans)', fontSize: dense ? 'var(--text-xs)' : 'var(--text-sm)' }}>
         <thead>
           <tr>
             {selectable ? (

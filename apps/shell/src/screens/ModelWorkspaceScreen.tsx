@@ -66,6 +66,7 @@ import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
+import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 
 interface ModelWorkspaceScreenProps {
@@ -141,6 +142,47 @@ const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
  * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
+
+/** One row of the Drivers card (table or chart view) — a schema line's own driver, or a dynamic
+ *  child line's (segment/EBITDA-adjustment/KPI/debt-tranche) instance driver, both the same shape.
+ *  Module-level (not nested inside ModelWorkspaceScreen) so ChartRowDetail below can reference it
+ *  too. An instance nests under its parent line's row the same way its financials do in the grid
+ *  above (indent + corner-down-right icon, parent gets a collapse chevron). A parent line with no
+ *  driver of its own (a pure aggregation line like an EBITDA Delta) still gets a row once it has
+ *  ≥1 instance to hold, but never as an empty placeholder. */
+interface DriverRow {
+  id: string;
+  name: string;
+  isChild: boolean;
+  /** Set only on a section-header divider row — every other field is meaningless on that row,
+   *  since DataTable renders a __group row specially and never calls a column's `render` for
+   *  it (same convention as the statement grid's own `rows` array above). */
+  __group?: string;
+  /** True for a parent line that has ≥1 real child line — its own value is superseded by the
+   *  sum of those children for every period (see lib/statementLineChildren.ts), so its own
+   *  driver cell, though still rendered, is locked rather than edited. */
+  hasChildren: boolean;
+  childCount?: number;
+  driverId?: string;
+  unit?: string;
+  /** Only set alongside driverId, for a row whose method has a well-defined implied historical
+   *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
+   *  driver-less row, or an 'actual'/'roll-off' child projection, all of which show a plain
+   *  dash in historical columns instead of an implied number. */
+  targetLineId?: string;
+  method?: ProjectionMethod;
+  basisLineId?: string;
+}
+
+// Shared by every row AND the chart embedded under an expanded one — a fixed pixel grid, not a
+// responsive/flex layout, is what makes a chart's points line up under the period cell they belong
+// to (see DriverChart's own doc comment for why it gave up sizing itself independently). Matches
+// driverColumns'/the Financials grid's own 240/110 widths exactly (not a coincidence — see the
+// comment on driverColumns' period-column definition below), so a driver's period columns line up
+// with the statement grid underneath it too, the same way Table view already does.
+const DRIVER_NAME_COL_WIDTH = 240;
+const DRIVER_PERIOD_COL_WIDTH = 110;
+
 export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementDefinitions, onOpenMapping }: ModelWorkspaceScreenProps) {
   const [model, setModel] = useState<Model | null | undefined>(undefined);
   const [schema, setSchema] = useState<StatementSchema | null>(null);
@@ -168,6 +210,37 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // inside Financials rather than pinned above every tab (see mockup 1a), so this saves the
   // vertical space it costs while you're just reading the statement grid, not editing drivers.
   const [driversCollapsed, setDriversCollapsed] = useState(false);
+  // The Drivers card's own Table/Chart toggle (mockup 1a) — chart mode shows one driver at a time,
+  // dragged directly on the chart instead of typed into a grid cell.
+  const [driverView, setDriverView] = useState<'table' | 'chart'>('table');
+  // Accordion state — any number of rows can be expanded at once (see toggleChartRowExpanded).
+  const [expandedChartRowIds, setExpandedChartRowIds] = useState<Set<string>>(new Set());
+  const [chartDragMode, setChartDragMode] = useState<'point' | 'all'>('point');
+  // Keyed by row id — each expanded row's chart reports its own drag delta independently, so two
+  // rows open at once never show each other's readout.
+  const [chartDragReadouts, setChartDragReadouts] = useState<Record<string, string | null>>({});
+  // Chart view's own click-to-edit cell state, keyed `${row.id}:${index}` — mirrors DataTable's
+  // activeCell/cancelledEditRef exactly (see DataTable.jsx) so a projected cell here behaves like
+  // the identical cell already does in Table view: a plain value until clicked, then an editor
+  // that commits on click-away/Enter and discards on Escape. Not reusing DataTable itself (this
+  // is a hand-rolled CSS grid, not a `<table>`), just its interaction contract.
+  const [activeChartCell, setActiveChartCell] = useState<string | null>(null);
+  const chartCellCancelledRef = useRef(false);
+  useEffect(() => {
+    if (!activeChartCell) return undefined;
+    const clear = () => setActiveChartCell(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key !== 'Enter') return;
+      if (e.key === 'Escape') chartCellCancelledRef.current = true;
+      clear();
+    };
+    document.addEventListener('click', clear);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('click', clear);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [activeChartCell]);
   // Masthead menus — both Popovers are controlled (rather than left uncontrolled) purely so a
   // click on a menu item can close the menu itself; an uncontrolled Popover only closes on an
   // outside click, which an in-menu click isn't.
@@ -395,6 +468,33 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       const updated = await scenarioRepository.update(scenarioId, { driverValues: rest });
       setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setToast('Reset to Base case');
+    });
+    driverWriteQueueRef.current = run.catch(() => {});
+    await run;
+  }
+
+  // Sibling to updateDriverValue, for callers that already hold a COMPLETE per-period array rather
+  // than a single cell edit — a finished chart drag, or a Flat/Linear ramp quick-fill. Unlike
+  // updateDriverValue (which promotes-then-splices a not-yet-explicit line via
+  // promoteScenarioDriverLine), a whole-array replace here already satisfies the per-line
+  // all-or-nothing contract on its own, regardless of whether the line was inherited or already
+  // explicit beforehand — see lib/scenario.ts's doc comment.
+  async function commitDriverValues(driverId: string, nextValues: (number | null)[]) {
+    if (!model) return;
+    const scenarioId = activeScenario?.id ?? null;
+    const modelId = model.id;
+    const run = driverWriteQueueRef.current.then(async () => {
+      if (scenarioId) {
+        const latest = await scenarioRepository.get(scenarioId);
+        if (!latest) return;
+        const updated = await scenarioRepository.update(scenarioId, { driverValues: { ...latest.driverValues, [driverId]: nextValues } });
+        setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+        return;
+      }
+      const latest = await modelRepository.getForCompany(company.id);
+      const currentDriverValues = latest?.driverValues ?? {};
+      const updated = await modelRepository.update(modelId, { driverValues: { ...currentDriverValues, [driverId]: nextValues } });
+      setModel(updated);
     });
     driverWriteQueueRef.current = run.catch(() => {});
     await run;
@@ -835,6 +935,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const projectedPeriods = model.timeline
     .map((period, index) => ({ period, index }))
     .filter(({ period }) => period.kind === 'projected');
+  const historicalPeriods = model.timeline
+    .map((period, index) => ({ period, index }))
+    .filter(({ period }) => period.kind !== 'projected');
 
   // The active level's OWN explicit values — a scenario's own overrides when one is active, the
   // model's (Base's) own values otherwise. Deliberately not the merged/effective map: "stored"
@@ -853,29 +956,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // aggregation line like an EBITDA Delta) still gets a row once it has ≥1 instance to hold, but
   // never as an empty placeholder — an allowsSubLines line with nothing under it and no driver of
   // its own simply doesn't appear, same as today.
-  interface DriverRow {
-    id: string;
-    name: string;
-    isChild: boolean;
-    /** Set only on a section-header divider row — every other field is meaningless on that row,
-     *  since DataTable renders a __group row specially and never calls a column's `render` for
-     *  it (same convention as the statement grid's own `rows` array above). */
-    __group?: string;
-    /** True for a parent line that has ≥1 real child line — its own value is superseded by the
-     *  sum of those children for every period (see lib/statementLineChildren.ts), so its own
-     *  driver cell, though still rendered, is locked rather than edited. */
-    hasChildren: boolean;
-    childCount?: number;
-    driverId?: string;
-    unit?: string;
-    /** Only set alongside driverId, for a row whose method has a well-defined implied historical
-     *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
-     *  driver-less row, or an 'actual'/'roll-off' child projection, all of which show a plain
-     *  dash in historical columns instead of an implied number. */
-    targetLineId?: string;
-    method?: ProjectionMethod;
-    basisLineId?: string;
-  }
 
   const schemaDriverByLineId = new Map(schema.drivers.map((d) => [d.targetLineId, d]));
   const childLinesByParentId = new Map<string, StatementLine[]>();
@@ -960,6 +1040,149 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return activeScenario !== null && Boolean(row.driverId) && row.driverId! in activeScenario.driverValues;
   }
 
+  // Chart view is an accordion list grouped by statement section — reuses driverRows' own __group
+  // section-header markers (same grouping the table already shows) rather than re-deriving sections
+  // from scratch. Only rows with their own editable driver, same as the table's canEdit gate; a
+  // parent whose value is superseded by its children (hasChildren) has nothing meaningful to drag.
+  // A section that produced no chartable rows (e.g. one that's pure locked parents) is dropped
+  // rather than shown as an empty header. Any number of rows can be expanded at once — each is
+  // independent, so comparing two or three drivers side by side is just expanding more than one.
+  const chartSections: { title: string; rows: DriverRow[] }[] = [];
+  for (const row of driverRows) {
+    if (row.__group) {
+      chartSections.push({ title: row.__group, rows: [] });
+    } else if (row.driverId && !row.hasChildren) {
+      chartSections[chartSections.length - 1]?.rows.push(row);
+    }
+  }
+  const nonEmptyChartSections = chartSections.filter((s) => s.rows.length > 0);
+  const chartableDriverRows = nonEmptyChartSections.flatMap((s) => s.rows);
+
+  function toggleChartRowExpanded(id: string) {
+    setExpandedChartRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Combined historical+projected series for one row — shared by every row's collapsed sparkline
+  // preview and an expanded row's own main chart (sliced back apart where it's used below).
+  function driverSeriesFor(row: DriverRow): (number | null)[] {
+    const hist = historicalPeriods.map(({ index }) =>
+      row.method && row.targetLineId && evaluation
+        ? impliedHistoricalDriverValue(evaluation, row.targetLineId, row.method, row.basisLineId, index)
+        : null,
+    );
+    const proj = projectedPeriods.map(({ index }) => (row.driverId ? (evaluation?.getDriverValue(row.driverId, index) ?? null) : null));
+    return [...hist, ...proj];
+  }
+
+  // The Flat/Linear ramp quick-fills' starting point — the last historical period's implied ratio
+  // when the method has one (growth/percent-of/days-of, same three cases
+  // impliedHistoricalDriverValue itself supports), else the current first-projected value as a
+  // fallback so the buttons always do something sensible for a flat/actual/roll-off driver too.
+  function chartAnchorValue(row: DriverRow): number | null {
+    const lastHistorical = historicalPeriods[historicalPeriods.length - 1];
+    if (row.method && row.targetLineId && evaluation && lastHistorical) {
+      const implied = impliedHistoricalDriverValue(evaluation, row.targetLineId, row.method, row.basisLineId, lastHistorical.index);
+      if (implied !== null) return implied;
+    }
+    const firstProjected = projectedPeriods[0];
+    return firstProjected && row.driverId ? (evaluation?.getDriverValue(row.driverId, firstProjected.index) ?? null) : null;
+  }
+
+  // Every caller of commitDriverValues below (drag, Flat, Ramp) naturally works with a value per
+  // PROJECTED period, 0-indexed relative to projectedPeriods — but a stored driverValues array is
+  // indexed by the FULL timeline position (same convention updateDriverValue/confirmShrink already
+  // use). This bridges the two, padding the untouched historical-index slots with null (they're
+  // never read — a historical cell's displayed value always comes from
+  // impliedHistoricalDriverValue, never from driverValues).
+  function toFullDriverArray(relativeValues: (number | null)[]): (number | null)[] {
+    const length = projectedPeriods.length > 0 ? projectedPeriods[projectedPeriods.length - 1].index + 1 : 0;
+    const full: (number | null)[] = new Array(length).fill(null);
+    projectedPeriods.forEach(({ index }, i) => {
+      full[index] = relativeValues[i] ?? null;
+    });
+    return full;
+  }
+
+  function setChartReadout(rowId: string, text: string | null) {
+    setChartDragReadouts((prev) => ({ ...prev, [rowId]: text }));
+  }
+
+  // A projected-period cell's READ-mode display — shared by Table view's driverColumns render and
+  // Chart view's own period cells (see the accordion JSX below), since both show the exact same
+  // information about the exact same cell and had drifted into two copies of this logic before.
+  // Historical-period cells aren't covered here — the two views show those differently enough
+  // (implied-value math in Table view vs. a plain series lookup in Chart view) that unifying them
+  // wasn't part of this pass.
+  function projectedCellReadout(row: DriverRow, index: number) {
+    if (row.hasChildren) {
+      return (
+        <span
+          title={`Value comes from ${row.childCount} sub-line${row.childCount === 1 ? '' : 's'} — see Segments, adjustments & KPIs`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}
+        >
+          <Icon name="lock" size={10} color="var(--text-tertiary)" />
+          {row.driverId ? formatDriverValue(evaluation?.getDriverValue(row.driverId, index) ?? null, row.unit!) : '—'}
+        </span>
+      );
+    }
+    if (!row.driverId) {
+      return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
+    }
+    const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
+    const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
+    // Two different reasons a cell can be non-explicit, not one — this whole LINE is tracking
+    // Base live (nothing on it promoted yet for this scenario — see isDriverPromoted/lib/
+    // scenario.ts's per-line contract), or nothing at any level has an explicit number and the
+    // engine computed one (0% growth, or the last actual period's own implied ratio). Collapsing
+    // both into one italic look was the original design; feedback after real use was that it's
+    // impossible to tell which is happening without this.
+    const isInherited = activeScenario !== null && !isDriverPromoted(row);
+    const isSoft = stored === null && effective !== null;
+    const title = isInherited
+      ? `Tracking Base case — enter a value here to override it for "${activeScenario!.name}"`
+      : isSoft
+        ? 'Computed default — no explicit value entered for this period'
+        : undefined;
+    return (
+      <span
+        title={title}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+          fontStyle: isSoft ? 'italic' : 'normal',
+          color: effective === null ? 'var(--text-disabled)' : isSoft ? 'var(--text-tertiary)' : 'var(--text-body)',
+        }}
+      >
+        {isInherited ? <Icon name="corner-down-right" size={10} color="var(--text-tertiary)" /> : null}
+        {formatDriverValue(effective, row.unit!)}
+      </span>
+    );
+  }
+
+  function applyFlat(row: DriverRow) {
+    if (!row.driverId) return;
+    const anchor = chartAnchorValue(row);
+    if (anchor === null) return;
+    commitDriverValues(row.driverId, toFullDriverArray(projectedPeriods.map(() => anchor)));
+    setChartReadout(row.id, `Flat at ${formatDriverValue(anchor, row.unit!)}`);
+  }
+
+  function applyRamp(row: DriverRow) {
+    if (!row.driverId || projectedPeriods.length === 0) return;
+    const a = chartAnchorValue(row);
+    const last = projectedPeriods[projectedPeriods.length - 1];
+    const b = evaluation?.getDriverValue(row.driverId, last.index) ?? null;
+    if (a === null || b === null) return;
+    const values = projectedPeriods.map((_, i) => a + ((b - a) * (i + 1)) / projectedPeriods.length);
+    commitDriverValues(row.driverId, toFullDriverArray(values));
+    setChartReadout(row.id, `Linear ${formatDriverValue(a, row.unit!)} → ${formatDriverValue(b, row.unit!)}`);
+  }
+
   const driverColumns = [
     {
       key: 'name',
@@ -1004,28 +1227,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       width: 110,
       background: period.kind === 'projected' ? 'var(--alpha-blue-06)' : undefined,
       render: (_: unknown, row: DriverRow) => {
-        if (row.hasChildren) {
-          // A parent's historical value comes directly from summing its instances' own mapped
-          // historicals (see withDynamicInstances.ts), not from any driver — the lock treatment
-          // below is specifically about a PROJECTED value being superseded, so it doesn't apply
-          // to a period where there was never a driver-derived value to supersede.
-          if (period.kind !== 'projected') {
+        // A parent's (hasChildren) historical value comes directly from summing its instances'
+        // own mapped historicals (see withDynamicInstances.ts), not from any driver — that only
+        // matters for a HISTORICAL period; a projected one falls through to projectedCellReadout
+        // below the same as any other row, lock icon included.
+        if (period.kind !== 'projected') {
+          if (row.hasChildren || !row.driverId) {
             return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
           }
-          return (
-            <span
-              title={`Value comes from ${row.childCount} sub-line${row.childCount === 1 ? '' : 's'} — see Segments, adjustments & KPIs`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}
-            >
-              <Icon name="lock" size={10} color="var(--text-tertiary)" />
-              {row.driverId ? formatDriverValue(evaluation?.getDriverValue(row.driverId, index) ?? null, row.unit!) : '—'}
-            </span>
-          );
-        }
-        if (!row.driverId) {
-          return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-disabled)' }}>—</span>;
-        }
-        if (period.kind !== 'projected') {
           const implied =
             evaluation && row.method && row.targetLineId
               ? impliedHistoricalDriverValue(evaluation, row.targetLineId, row.method, row.basisLineId, index)
@@ -1042,35 +1251,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             </span>
           );
         }
-        const stored = activeStoredDriverValues[row.driverId]?.[index] ?? null;
-        const effective = evaluation?.getDriverValue(row.driverId, index) ?? null;
-        // Two different reasons a cell can be non-explicit, not one — this whole LINE is tracking
-        // Base live (nothing on it promoted yet for this scenario — see isDriverPromoted/lib/
-        // scenario.ts's per-line contract), or nothing at any level has an explicit number and the
-        // engine computed one (0% growth, or the last actual period's own implied ratio).
-        // Collapsing both into one italic look was the original design; feedback after real use
-        // was that it's impossible to tell which is happening without this.
-        const isInherited = activeScenario !== null && !isDriverPromoted(row);
-        const isSoft = stored === null && effective !== null;
-        const title = isInherited
-          ? `Tracking Base case — enter a value here to override it for "${activeScenario!.name}"`
-          : isSoft
-            ? 'Computed default — no explicit value entered for this period'
-            : undefined;
-        return (
-          <span
-            title={title}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 3,
-              fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-              fontStyle: isSoft ? 'italic' : 'normal',
-              color: effective === null ? 'var(--text-disabled)' : isSoft ? 'var(--text-tertiary)' : 'var(--text-body)',
-            }}
-          >
-            {isInherited ? <Icon name="corner-down-right" size={10} color="var(--text-tertiary)" /> : null}
-            {formatDriverValue(effective, row.unit!)}
-          </span>
-        );
+        return projectedCellReadout(row, index);
       },
       canEdit: (row: DriverRow) => period.kind === 'projected' && Boolean(row.driverId) && !row.hasChildren,
       renderEdit: (_: unknown, row: DriverRow, wasEditCancelled: () => boolean) =>
@@ -1316,7 +1497,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             icon="sliders-horizontal"
             padding="none"
             actions={
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                <SegmentedControl
+                  size="sm"
+                  options={[{ value: 'table', label: 'Table' }, { value: 'chart', label: 'Chart' }]}
+                  value={driverView}
+                  onChange={(value) => setDriverView(value as 'table' | 'chart')}
+                />
                 <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)' }}>Projected periods</span>
                 <Input
                   size="sm"
@@ -1342,11 +1529,188 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
               <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
                 No projected periods yet — set how many above to start entering driver assumptions.
               </div>
-            ) : (
+            ) : driverView === 'table' ? (
               // Keyed by the active scenario so switching forces a full remount — otherwise a
               // mid-edit DriverValueInput's stale local text buffer would commit against whichever
               // scenario is active by the time it blurs, silently writing to the wrong one.
               <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
+            ) : chartableDriverRows.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                No editable drivers to chart — every line here is either locked (superseded by sub-lines) or a section header.
+              </div>
+            ) : (
+              // Zero horizontal padding here (only the bottom gets one) — same single-shared-origin
+              // reasoning as before (header and rows must not diverge, even by a few px, or the
+              // chart's points stop landing under their period cells), but the origin now also has
+              // to match Table view's DataTable, which sits flush against this `padding="none"`
+              // Card with no horizontal inset of its own. Any nonzero value here reproduces exactly
+              // the kind of constant-offset misalignment already diagnosed once for the header-vs-
+              // rows case — this time between Chart view and Table view/the Financials grid below.
+              <div key={activeScenarioId} style={{ overflowX: 'auto', padding: '0 0 var(--space-4)' }}>
+                <div
+                  style={{
+                    display: 'grid', gridTemplateColumns: `${DRIVER_NAME_COL_WIDTH}px repeat(${historicalPeriods.length + projectedPeriods.length}, ${DRIVER_PERIOD_COL_WIDTH}px)`,
+                    height: 26, alignItems: 'center', borderBottom: '1px solid var(--border-default)',
+                    background: 'var(--surface-table-head)', position: 'sticky', top: 0, zIndex: 1,
+                  }}
+                >
+                  <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                    Driver
+                  </span>
+                  {/* paddingRight matches driverColumns' own `th` exactly (var(--space-6), not a
+                      smaller value) — Table view and Chart view share these same pixel column
+                      widths, so a different inset here would make every value visibly jump
+                      sideways within its column on every Table/Chart toggle, even though the
+                      column boundaries themselves already line up. */}
+                  {historicalPeriods.map(({ period, index }) => (
+                    <span key={index} style={{ textAlign: 'right', paddingRight: 'var(--space-6)', fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+                      {period.label}
+                    </span>
+                  ))}
+                  {projectedPeriods.map(({ period, index }) => (
+                    // Same '--alpha-blue-06' tint driverColumns' own period columns use to mark a
+                    // projected (vs. historical/actual) column — full cell height so it reads as a
+                    // column wash, not just a colored word.
+                    <span
+                      key={index}
+                      style={{
+                        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+                        paddingRight: 'var(--space-6)', background: 'var(--alpha-blue-06)',
+                        fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)',
+                      }}
+                    >
+                      {period.label}
+                    </span>
+                  ))}
+                </div>
+                <div>
+                {nonEmptyChartSections.map((section) => (
+                  <div key={section.title}>
+                    <div
+                      style={{
+                        padding: 'var(--space-3) var(--space-2) var(--space-1)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)',
+                        letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)',
+                      }}
+                    >
+                      {section.title}
+                    </div>
+                    {section.rows.map((row) => {
+                      const expanded = expandedChartRowIds.has(row.id);
+                      const series = driverSeriesFor(row);
+                      return (
+                        <div key={row.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: `${DRIVER_NAME_COL_WIDTH}px repeat(${historicalPeriods.length + projectedPeriods.length}, ${DRIVER_PERIOD_COL_WIDTH}px)`,
+                              alignItems: 'center', minHeight: 32,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleChartRowExpanded(row.id)}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 'var(--space-2)', width: '100%', height: '100%',
+                                // Left inset matches driverColumns' own name `td` (var(--space-6)) —
+                                // same reasoning as the period columns' padding above.
+                                padding: 'var(--space-1) var(--space-2) var(--space-1) var(--space-6)',
+                                border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left',
+                              }}
+                            >
+                              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} color="var(--text-tertiary)" />
+                              <span
+                                style={{
+                                  flex: '1 1 auto', minWidth: 0, fontSize: 'var(--text-xs)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  color: 'var(--text-body)', fontWeight: expanded ? 'var(--weight-medium)' : 'var(--weight-regular)',
+                                }}
+                              >
+                                {row.name}
+                              </span>
+                              <DriverSparkline values={series} />
+                            </button>
+                            {historicalPeriods.map(({ index }) => (
+                              <span
+                                key={index}
+                                style={{
+                                  textAlign: 'right', paddingRight: 'var(--space-6)', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)',
+                                  fontStyle: 'italic', color: series[index] === null ? 'var(--text-disabled)' : 'var(--text-tertiary)',
+                                }}
+                              >
+                                {formatDriverValue(series[index], row.unit!)}
+                              </span>
+                            ))}
+                            {projectedPeriods.map(({ index }, i) => {
+                              const effective = series[historicalPeriods.length + i];
+                              const cellId = `${row.id}:${index}`;
+                              const editing = activeChartCell === cellId;
+                              // Click-to-edit, same contract as the Table view's own projected
+                              // cells (activeChartCell mirrors DataTable's activeCell — see its
+                              // declaration above): a plain read-only value until clicked, not an
+                              // Input permanently mounted in every cell of every row at once. That
+                              // permanent-mount version is also why autoFocus had to be forced off
+                              // here before — moot now, since only the one active cell ever mounts
+                              // an Input, same as Table view's own single-active-cell invariant.
+                              return (
+                                <div
+                                  key={index}
+                                  onClick={editing ? undefined : (e) => {
+                                    e.stopPropagation();
+                                    chartCellCancelledRef.current = false;
+                                    setActiveChartCell(cellId);
+                                  }}
+                                  style={{
+                                    height: '100%', display: 'flex', alignItems: 'center',
+                                    justifyContent: editing ? 'stretch' : 'flex-end',
+                                    // Constant regardless of editing state — same as driverColumns'
+                                    // own `td` (its padding never changes between read and
+                                    // renderEdit either), and for the same reason as the header/
+                                    // historical-cell padding above: this is what makes a value
+                                    // sit at the same pixel position whichever view shows it.
+                                    padding: '0 var(--space-6)',
+                                    background: 'var(--alpha-blue-06)',
+                                    cursor: editing ? undefined : 'text',
+                                  }}
+                                >
+                                  {editing ? (
+                                    <DriverValueInput
+                                      initialValue={effective}
+                                      unit={row.unit!}
+                                      onCommit={(value) => updateDriverValue(row.driverId!, index, value)}
+                                      wasEditCancelled={() => chartCellCancelledRef.current}
+                                    />
+                                  ) : (
+                                    projectedCellReadout(row, index)
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {expanded ? (
+                            <div style={{ marginLeft: DRIVER_NAME_COL_WIDTH, padding: '0 0 var(--space-4)' }}>
+                              <ChartRowDetail
+                                row={row}
+                                historicalPeriods={historicalPeriods}
+                                projectedPeriods={projectedPeriods}
+                                series={series}
+                                dragMode={chartDragMode}
+                                onDragModeChange={setChartDragMode}
+                                readout={chartDragReadouts[row.id] ?? null}
+                                onDragChange={(text) => setChartReadout(row.id, text)}
+                                onDragEnd={(nextValues) => commitDriverValues(row.driverId!, toFullDriverArray(nextValues))}
+                                onApplyFlat={() => applyFlat(row)}
+                                onApplyRamp={() => applyRamp(row)}
+                                showReset={Boolean(activeScenario) && isDriverPromoted(row)}
+                                onReset={() => resetScenarioDriver(row.driverId!)}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                </div>
+              </div>
             )}
           </Card>
 
@@ -1721,6 +2085,68 @@ function TreeRowLabel({
       >
         {label}
       </span>
+    </div>
+  );
+}
+
+/** An expanded chart-view row's full content — drag controls and the big chart, aligned under the
+ *  row's own period cells above it (rendered by the caller, not here — see DRIVER_NAME_COL_WIDTH/
+ *  DRIVER_PERIOD_COL_WIDTH). Module-level, not nested inside ModelWorkspaceScreen: a component
+ *  defined INSIDE a render body gets a new function identity every render, and since a drag
+ *  gesture drives parent state updates on every pointermove (the live readout), a nested version
+ *  of this would remount — losing DriverChart's in-progress drag state and its window pointermove/
+ *  pointerup listeners — mid-gesture. Everything it needs comes in as props instead of closures. */
+function ChartRowDetail({
+  row, historicalPeriods, projectedPeriods, series, dragMode, onDragModeChange, readout,
+  onDragChange, onDragEnd, onApplyFlat, onApplyRamp, showReset, onReset,
+}: {
+  row: DriverRow;
+  historicalPeriods: { period: { label: string }; index: number }[];
+  projectedPeriods: { period: { label: string }; index: number }[];
+  series: (number | null)[];
+  dragMode: 'point' | 'all';
+  onDragModeChange: (mode: 'point' | 'all') => void;
+  readout: string | null;
+  onDragChange: (text: string | null) => void;
+  onDragEnd: (nextValues: (number | null)[]) => void;
+  onApplyFlat: () => void;
+  onApplyRamp: () => void;
+  showReset: boolean;
+  onReset: () => void;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap', padding: 'var(--space-2) 0' }}>
+        <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-secondary)' }}>Drag</span>
+        <SegmentedControl
+          size="sm"
+          options={[{ value: 'point', label: 'Point' }, { value: 'all', label: 'All periods' }]}
+          value={dragMode}
+          onChange={(value) => onDragModeChange(value as 'point' | 'all')}
+        />
+        <div style={{ width: 1, height: 16, background: 'var(--border-default)', margin: '0 var(--space-1)' }} />
+        <Button size="sm" onClick={onApplyFlat}>
+          Flat from {historicalPeriods[historicalPeriods.length - 1]?.period.label ?? 'last actual'}
+        </Button>
+        <Button size="sm" onClick={onApplyRamp}>
+          Linear ramp to {projectedPeriods[projectedPeriods.length - 1]?.period.label ?? 'last period'}
+        </Button>
+        {showReset ? (
+          <IconButton icon="refresh-ccw" label="Reset to Base case" size="sm" variant="ghost" onClick={onReset} />
+        ) : null}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>{readout ?? ' '}</span>
+      </div>
+      <DriverChart
+        historicalValues={series.slice(0, historicalPeriods.length)}
+        projectedLabels={projectedPeriods.map((p) => p.period.label)}
+        projectedValues={series.slice(historicalPeriods.length)}
+        unit={row.unit!}
+        columnWidth={DRIVER_PERIOD_COL_WIDTH}
+        dragMode={dragMode}
+        onDragChange={onDragChange}
+        onDragEnd={onDragEnd}
+      />
     </div>
   );
 }

@@ -16,6 +16,8 @@ table{border-collapse:separate;border-spacing:0}
 @keyframes basis-fade-in{from{opacity:0}to{opacity:1}}
 @keyframes basis-pop-in{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:none}}
 @keyframes basis-pulse{0%,100%{opacity:1}50%{opacity:.45}}
+input.basis-input-number::-webkit-outer-spin-button,input.basis-input-number::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input.basis-input-number{-moz-appearance:textfield}
 ::selection{background:var(--alpha-blue-20)}
 *::-webkit-scrollbar{width:10px;height:10px}
 *::-webkit-scrollbar-thumb{background:var(--ink-200);border:3px solid transparent;background-clip:content-box;border-radius:999px}
