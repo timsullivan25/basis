@@ -14,7 +14,7 @@ export interface SheetGrid {
   rows: GridRow[];
 }
 
-function columnLetter(index: number): string {
+export function columnLetter(index: number): string {
   let n = index;
   let out = '';
   do {
@@ -22,6 +22,14 @@ function columnLetter(index: number): string {
     n = Math.floor(n / 26) - 1;
   } while (n >= 0);
   return out;
+}
+
+/** Inverse of `columnLetter`: "A" → 0, "AK" → 36. Returns -1 for anything that isn't a plain column reference. */
+export function columnIndex(letters: string): number {
+  if (!/^[A-Z]{1,3}$/.test(letters)) return -1;
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
 }
 
 function normalizeCell(raw: unknown): GridCell {
