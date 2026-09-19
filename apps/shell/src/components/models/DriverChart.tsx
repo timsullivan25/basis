@@ -7,20 +7,24 @@ function clone(values: (number | null)[]): (number | null)[] {
 
 /** Computes a Y-domain from whatever's actually being plotted (same inline min/max-from-data
  *  approach the design system's own LineChart.jsx uses — there's no driver-level min/max/bound
- *  concept anywhere in the schema, so there's nothing else to derive a domain from), padded ~15%
- *  so a point never sits flush against the plot edge. Falls back to a plain [0,1] range on the
- *  (pathological) case of no numeric data at all, just so the math below never divides by zero. */
+ *  concept anywhere in the schema, so there's nothing else to derive a domain from). Padded by 10%
+ *  of each endpoint's own magnitude, not 10% of the min-max SPREAD — a spread-based pad shrinks to
+ *  nothing right when it matters most: a driver that's genuinely flat (AR sitting at ~42 days,
+ *  wobbling by a few hundredths) has a near-zero spread, so a spread-based pad is also near zero,
+ *  and that sliver of real noise gets stretched to fill the entire plot height, reading as a sharp
+ *  ramp for a line that's actually flat. Padding off the values themselves instead keeps a flat
+ *  line reading as flat, while a driver with real movement (5%-30% growth) still gets a domain
+ *  close to its own range, since range and magnitude are comparable there anyway. Falls back to a
+ *  plain [0,1] range on the (pathological) case of no numeric data at all, and pads by a flat 1 on
+ *  a zero endpoint (0.1 * 0 is still 0), just so the math below never divides by zero. */
 function computeDomain(values: (number | null)[]): { lo: number; hi: number } {
   const nums = values.filter((v): v is number => v !== null);
   if (nums.length === 0) return { lo: 0, hi: 1 };
   const min = Math.min(...nums);
   const max = Math.max(...nums);
-  if (min === max) {
-    const pad = Math.abs(min) * 0.15 || 1;
-    return { lo: min - pad, hi: max + pad };
-  }
-  const pad = (max - min) * 0.15;
-  return { lo: min - pad, hi: max + pad };
+  const loPad = Math.abs(min) * 0.1 || 1;
+  const hiPad = Math.abs(max) * 0.1 || 1;
+  return { lo: min - loPad, hi: max + hiPad };
 }
 
 /** Builds one or more polyline point-strings from a value series, breaking at any null so a gap
@@ -231,7 +235,11 @@ export function DriverChart({
 export function DriverSparkline({ values, width = 56, height = 18 }: { values: (number | null)[]; width?: number; height?: number }) {
   const nums = values.filter((v): v is number => v !== null);
   if (nums.length < 2) return null;
-  const lo = Math.min(...nums), hi = Math.max(...nums);
+  // Same computeDomain the big chart uses (magnitude-padded, not spread-padded) — this preview
+  // had its own bare min/max scale before, which is worse for a flat-ish driver than the big
+  // chart's old one was: with no padding at all, even a hundredths-of-a-day wobble on a ~42-day AR
+  // line fills this whole 18px-tall box top to bottom, reading as a dramatic swing at a glance.
+  const { lo, hi } = computeDomain(values);
   const span = hi - lo || 1;
   const x = (i: number) => (width * i) / (values.length - 1);
   const y = (v: number) => height - 2 - ((v - lo) / span) * (height - 4);
