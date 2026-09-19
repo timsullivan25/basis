@@ -46,7 +46,11 @@ propose schema additions), projections, post-mapping AI checks (flag errors, sug
 |---|---|
 | `workbookGrid.ts` | 1 |
 | `schemaLineIndex.ts`, `sheetEvidence.ts` | 2 |
+| `triage.ts` | 3 (prompt, schema, validation, confirm rule) |
 | `windows.ts` | 5 |
-| `llmProvider.ts`, `fakeLlmProvider.ts` | seam |
-| `layoutMap.ts`, `extractHistoricals.ts`, `writeBasisTemplate.ts` | 6 (plan shape), 9 |
-| `outline.ts`, `locateFinancials.ts` | superseded by steps 2/3/5/6 — to be replaced |
+| `extractionPlan.ts`, `planSheets.ts` | 6 (plan shape + validation, one prompt per sheet) |
+| `extractHistoricals.ts`, `writeBasisTemplate.ts` | 9 (multi-sheet, periods aligned by name) |
+| `llmProvider.ts`, `fakeLlmProvider.ts` | provider seam |
+
+Not built yet: step 7 (advisory plan check + follow-up loop), the review UI, the Anthropic adapter, and the
+original-upload storage change.

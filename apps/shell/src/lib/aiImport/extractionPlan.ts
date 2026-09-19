@@ -1,18 +1,18 @@
 import { columnIndex, type SheetGrid } from './workbookGrid';
 
-export type LayoutPeriodKind = 'FY' | 'Quarter' | 'Semi-Annual' | 'LTM' | 'NTM' | 'Other';
+export type PeriodColumnKind = 'FY' | 'Quarter' | 'Semi-Annual' | 'LTM' | 'NTM' | 'Other';
 
-const PERIOD_KINDS: readonly LayoutPeriodKind[] = ['FY', 'Quarter', 'Semi-Annual', 'LTM', 'NTM', 'Other'];
+const PERIOD_KINDS: readonly PeriodColumnKind[] = ['FY', 'Quarter', 'Semi-Annual', 'LTM', 'NTM', 'Other'];
 
-export interface LayoutPeriodColumn {
+export interface PeriodColumn {
   /** Column letter(s) in the source sheet, e.g. "AK". */
   column: string;
-  kind: LayoutPeriodKind;
+  kind: PeriodColumnKind;
   /** True for reported history, false for projections. */
   actual: boolean;
 }
 
-export interface LayoutStatement {
+export interface StatementRange {
   /** Section name in the Basis Template, e.g. "Income Statement". */
   name: string;
   /** 1-based source rows, inclusive: the first line item through the last (totals included). */
@@ -20,14 +20,8 @@ export interface LayoutStatement {
   lastRow: number;
 }
 
-/**
- * Where a model's financial statements live — the AI's whole job in the import. Everything after this is
- * deterministic cell copying, so numbers can't be misquoted; the failure mode is "picked the wrong place",
- * which a human confirms at the review step.
- *
- * Single-sheet by design for now: all statements and the period columns are on `sheet`.
- */
-export interface LayoutMap {
+/** How to read one sheet: everything the executor needs, none of the values. */
+export interface SheetPlan {
   sheet: string;
   /** Column holding the line-item names. */
   labelColumn: string;
@@ -35,25 +29,36 @@ export interface LayoutMap {
   dateRow: number | null;
   nameRow: number | null;
   /** Every period column worth knowing about (including projections and LTM/NTM), classified. */
-  periodColumns: LayoutPeriodColumn[];
-  statements: LayoutStatement[];
-  confidence: 'high' | 'medium' | 'low';
-  reasoning: string;
-  /** Other places that looked like plausible financials, so the review step can offer them. */
-  alternatives: { sheet: string; note: string }[];
+  periodColumns: PeriodColumn[];
+  statements: StatementRange[];
 }
 
-export class LayoutMapError extends Error {
+/** The LLM's answer for one sheet, with what a human needs to judge it. */
+export interface SheetPlanResult {
+  plan: SheetPlan;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;
+  /** Things the model could not settle from the windows it was shown; surfaced at review. */
+  openQuestions: string[];
+}
+
+/** Everything code needs to copy the historicals out of a workbook. Sheets are consolidated into one template, periods aligned by name. */
+export interface ExtractionPlan {
+  sheets: SheetPlan[];
+  results: SheetPlanResult[];
+}
+
+export class PlanError extends Error {
   readonly issues: string[];
   constructor(issues: string[]) {
-    super(`Invalid layout map: ${issues.join('; ')}`);
+    super(`Invalid plan: ${issues.join('; ')}`);
     this.issues = issues;
   }
 }
 
-/** True when the map should go in front of a human before extraction, rather than being trusted outright. */
-export function needsConfirmation(map: LayoutMap): boolean {
-  return map.confidence !== 'high' || map.alternatives.length > 0;
+/** True when a human should look at the plan before extraction: any sheet below high confidence, or with open questions. */
+export function planNeedsConfirmation(results: SheetPlanResult[]): boolean {
+  return results.some((r) => r.confidence !== 'high' || r.openQuestions.length > 0);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -64,14 +69,14 @@ function isRow(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
-/** Validates a provider's raw response against the workbook it was about to describe. Throws LayoutMapError listing every problem found. */
-export function parseLayoutMap(raw: unknown, grids: SheetGrid[]): LayoutMap {
+/** Validates a provider's raw plan for one sheet against that sheet. Throws PlanError listing every problem found. */
+export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: SheetGrid[]): SheetPlanResult {
   const issues: string[] = [];
-  if (!isObject(raw)) throw new LayoutMapError(['response is not an object']);
+  if (!isObject(raw)) throw new PlanError(['response is not an object']);
 
   const sheet = typeof raw.sheet === 'string' ? raw.sheet : '';
-  const grid = grids.find((g) => g.name === sheet);
-  if (!grid) issues.push(`sheet "${sheet}" does not exist in the workbook`);
+  if (sheet !== expectedSheet) issues.push(`plan is for sheet "${sheet}" but "${expectedSheet}" was asked about`);
+  if (!grids.some((g) => g.name === sheet)) issues.push(`sheet "${sheet}" does not exist in the workbook`);
 
   const labelColumn = typeof raw.labelColumn === 'string' ? raw.labelColumn : '';
   if (columnIndex(labelColumn) < 0) issues.push(`labelColumn "${labelColumn}" is not a column letter`);
@@ -85,7 +90,7 @@ export function parseLayoutMap(raw: unknown, grids: SheetGrid[]): LayoutMap {
   const dateRow = optionalRow('dateRow');
   const nameRow = optionalRow('nameRow');
 
-  const periodColumns: LayoutPeriodColumn[] = [];
+  const periodColumns: PeriodColumn[] = [];
   if (!Array.isArray(raw.periodColumns) || raw.periodColumns.length === 0) {
     issues.push('periodColumns must be a non-empty array');
   } else {
@@ -94,17 +99,17 @@ export function parseLayoutMap(raw: unknown, grids: SheetGrid[]): LayoutMap {
         !isObject(entry) ||
         typeof entry.column !== 'string' ||
         columnIndex(entry.column) < 0 ||
-        !PERIOD_KINDS.includes(entry.kind as LayoutPeriodKind) ||
+        !PERIOD_KINDS.includes(entry.kind as PeriodColumnKind) ||
         typeof entry.actual !== 'boolean'
       ) {
         issues.push(`invalid periodColumns entry ${JSON.stringify(entry)}`);
         continue;
       }
-      periodColumns.push({ column: entry.column, kind: entry.kind as LayoutPeriodKind, actual: entry.actual });
+      periodColumns.push({ column: entry.column, kind: entry.kind as PeriodColumnKind, actual: entry.actual });
     }
   }
 
-  const statements: LayoutStatement[] = [];
+  const statements: StatementRange[] = [];
   if (!Array.isArray(raw.statements) || raw.statements.length === 0) {
     issues.push('statements must be a non-empty array');
   } else {
@@ -129,31 +134,20 @@ export function parseLayoutMap(raw: unknown, grids: SheetGrid[]): LayoutMap {
     issues.push('confidence must be "high", "medium" or "low"');
   }
 
-  const alternatives = Array.isArray(raw.alternatives)
-    ? raw.alternatives.flatMap((a) =>
-        isObject(a) && typeof a.sheet === 'string' ? [{ sheet: a.sheet, note: typeof a.note === 'string' ? a.note : '' }] : [],
-      )
-    : [];
-
-  if (issues.length > 0) throw new LayoutMapError(issues);
+  if (issues.length > 0) throw new PlanError(issues);
   return {
-    sheet,
-    labelColumn,
-    dateRow,
-    nameRow,
-    periodColumns,
-    statements,
-    confidence: confidence as LayoutMap['confidence'],
+    plan: { sheet, labelColumn, dateRow, nameRow, periodColumns, statements },
+    confidence: confidence as SheetPlanResult['confidence'],
     reasoning: typeof raw.reasoning === 'string' ? raw.reasoning : '',
-    alternatives,
+    openQuestions: Array.isArray(raw.openQuestions) ? raw.openQuestions.filter((q): q is string => typeof q === 'string') : [],
   };
 }
 
-/** JSON Schema handed to the provider; mirrors `LayoutMap`. */
-export const LAYOUT_MAP_SCHEMA = {
+/** JSON Schema handed to the provider; mirrors `SheetPlanResult`. */
+export const SHEET_PLAN_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['sheet', 'labelColumn', 'dateRow', 'nameRow', 'periodColumns', 'statements', 'confidence', 'reasoning', 'alternatives'],
+  required: ['sheet', 'labelColumn', 'dateRow', 'nameRow', 'periodColumns', 'statements', 'confidence', 'reasoning', 'openQuestions'],
   properties: {
     sheet: { type: 'string' },
     labelColumn: { type: 'string', description: 'Column letter holding line-item names' },
@@ -183,14 +177,6 @@ export const LAYOUT_MAP_SCHEMA = {
     },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     reasoning: { type: 'string' },
-    alternatives: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['sheet', 'note'],
-        properties: { sheet: { type: 'string' }, note: { type: 'string' } },
-      },
-    },
+    openQuestions: { type: 'array', items: { type: 'string' } },
   },
 } as const;

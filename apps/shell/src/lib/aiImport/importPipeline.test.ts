@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { createDefaultStatementSchema } from '../../data/defaultStatementSchema';
 import { parseBasisTemplate } from '../parseBasisTemplate';
 import { FakeLlmProvider } from './fakeLlmProvider';
 import { extractHistoricals, ExtractionError } from './extractHistoricals';
-import { LayoutMapError, needsConfirmation, parseLayoutMap, type LayoutMap } from './layoutMap';
-import { locateFinancials } from './locateFinancials';
-import { buildOutline } from './outline';
+import { type ExtractionPlan, PlanError, parseSheetPlan, planNeedsConfirmation, type SheetPlan } from './extractionPlan';
+import { planSheets } from './planSheets';
+import { buildSchemaLineIndex } from './schemaLineIndex';
+import { buildSheetEvidence } from './sheetEvidence';
+import { parseTriage, triageNeedsConfirmation, triageSheets, TriageError } from './triage';
 import { writeBasisTemplate } from './writeBasisTemplate';
 import { buildSheetGrid } from './workbookGrid';
+
+const index = buildSchemaLineIndex(createDefaultStatementSchema().sections);
 
 // A small model shaped like a real one: period headers at the top shared by all statements, quarterly
 // and annual columns side by side, an LTM column that is flagged "Actual", and duplicate labels.
@@ -33,7 +38,7 @@ const MODEL = buildSheetGrid('Model', false, [
   [null, null, 'Deferred Revenue', 1, 2, 2, 3, 2],
 ]);
 
-const MAP: LayoutMap = {
+const MODEL_PLAN: SheetPlan = {
   sheet: 'Model',
   labelColumn: 'C',
   dateRow: 4,
@@ -49,75 +54,99 @@ const MAP: LayoutMap = {
     { name: 'Income Statement', firstRow: 9, lastRow: 11 },
     { name: 'Balance Sheet', firstRow: 14, lastRow: 19 },
   ],
-  confidence: 'high',
-  reasoning: 'Statements are stacked on the Model sheet.',
-  alternatives: [],
 };
 
-describe('buildOutline', () => {
-  it('shows top rows verbatim and header-like row labels, but not line-item values', () => {
-    const outline = buildOutline([MODEL]);
-    expect(outline).toContain('## Sheet "Model" — rows 1-19, columns A-H');
-    expect(outline).toContain('r3: B=Status D=Actual');
-    expect(outline).toContain('r13 [B] Balance Sheet');
-    expect(outline).toContain('r11 [C] Net Income (has values)');
-    expect(outline).not.toContain('Cash');
-  });
-
-  it('keeps statement titles and top-level section headers even when many earlier sub-headers exceed the cap', () => {
-    const filler = Array.from({ length: 100 }, (_, i) => [null, null, `Assumption block ${i}`]);
-    const grid = buildSheetGrid('Big', false, [...filler, [null, 'Balance Sheet'], [null, null, 'Cash', 5], [null, 'Working Capital Schedule'], [null, null, 'DSO', 40]]);
-    const outline = buildOutline([grid]);
-    expect(outline).toContain('r101 [B] Balance Sheet');
-    expect(outline).toContain('r103 [B] Working Capital Schedule');
-    expect(outline).toContain('more label rows omitted');
-  });
-
-  it('notes empty sheets instead of dropping them', () => {
-    expect(buildOutline([{ name: 'Divider -->', hidden: false, rows: [] }])).toContain('Divider -->" — empty');
-  });
+const planOf = (...sheets: SheetPlan[]): ExtractionPlan => ({ sheets, results: [] });
+const rawResult = (plan: SheetPlan, extra: Record<string, unknown> = {}) => ({
+  ...plan,
+  confidence: 'high',
+  reasoning: 'clear',
+  openQuestions: [],
+  ...extra,
 });
 
-describe('parseLayoutMap', () => {
-  it('accepts a well-formed map', () => {
-    expect(parseLayoutMap(MAP, [MODEL])).toEqual(MAP);
+describe('parseSheetPlan', () => {
+  it('accepts a well-formed plan and keeps its confidence and open questions', () => {
+    const result = parseSheetPlan(rawResult(MODEL_PLAN, { openQuestions: ['units?'] }), 'Model', [MODEL]);
+    expect(result.plan).toEqual(MODEL_PLAN);
+    expect(result.openQuestions).toEqual(['units?']);
   });
 
-  it('collects every problem: unknown sheet, bad column, inverted rows, bad confidence', () => {
-    const bad = { ...MAP, sheet: 'Nope', labelColumn: '3', statements: [{ name: 'IS', firstRow: 9, lastRow: 2 }], confidence: 'sure' };
+  it('collects every problem: wrong sheet, bad column, inverted rows, bad confidence', () => {
+    const bad = rawResult(MODEL_PLAN, { labelColumn: '3', statements: [{ name: 'IS', firstRow: 9, lastRow: 2 }], confidence: 'sure', sheet: 'Nope' });
     try {
-      parseLayoutMap(bad, [MODEL]);
+      parseSheetPlan(bad, 'Model', [MODEL]);
       expect.unreachable();
     } catch (e) {
-      expect(e).toBeInstanceOf(LayoutMapError);
-      expect((e as LayoutMapError).issues).toHaveLength(4);
+      expect(e).toBeInstanceOf(PlanError);
+      expect((e as PlanError).issues).toHaveLength(5);
     }
   });
 
-  it('asks for confirmation unless confidence is high with no alternatives', () => {
-    expect(needsConfirmation(MAP)).toBe(false);
-    expect(needsConfirmation({ ...MAP, confidence: 'medium' })).toBe(true);
-    expect(needsConfirmation({ ...MAP, alternatives: [{ sheet: 'Summary', note: 'also has statements' }] })).toBe(true);
+  it('rejects a plan for a different sheet than the one asked about', () => {
+    const other = buildSheetGrid('Other', false, [['x']]);
+    expect(() => parseSheetPlan(rawResult({ ...MODEL_PLAN, sheet: 'Other' }), 'Model', [MODEL, other])).toThrow(PlanError);
+  });
+
+  it('asks for confirmation when any sheet is below high confidence or has open questions', () => {
+    const ok = parseSheetPlan(rawResult(MODEL_PLAN), 'Model', [MODEL]);
+    expect(planNeedsConfirmation([ok])).toBe(false);
+    expect(planNeedsConfirmation([{ ...ok, confidence: 'medium' }])).toBe(true);
+    expect(planNeedsConfirmation([{ ...ok, openQuestions: ['which?'] }])).toBe(true);
   });
 });
 
-describe('locateFinancials', () => {
-  it('sends the outline (not the data) to the provider and validates the answer', async () => {
-    const provider = new FakeLlmProvider(MAP);
-    const map = await locateFinancials(provider, [MODEL]);
-    expect(map.sheet).toBe('Model');
-    expect(provider.requests[0].prompt).toContain('Workbook outline');
-    expect(provider.requests[0].prompt).not.toContain('Cash');
+describe('triage', () => {
+  const NOTES = buildSheetGrid('Notes', false, [['Read me']]);
+  const evidence = buildSheetEvidence([MODEL, NOTES], index);
+  const answer = { layout: 'single', sheets: [{ name: 'Model', statements: ['Income Statement', 'Balance Sheet'] }], confidence: 'high', reasoning: 'r', alternatives: [] };
+
+  it('sends per-sheet evidence and the requested statement names, not sheet contents', async () => {
+    const provider = new FakeLlmProvider(answer);
+    const result = await triageSheets(provider, evidence, ['Income Statement', 'Balance Sheet']);
+    expect(result.sheets[0].name).toBe('Model');
+    const { prompt } = provider.requests[0];
+    expect(prompt).toContain('Statements to find: Income Statement, Balance Sheet');
+    expect(prompt).toContain('"Model"');
+    expect(prompt).toContain('Basis lines matched');
+    expect(prompt).not.toContain('520');
   });
 
-  it('rejects a response that points at a sheet that is not in the workbook', async () => {
-    await expect(locateFinancials(new FakeLlmProvider({ ...MAP, sheet: 'Ghost' }), [MODEL])).rejects.toBeInstanceOf(LayoutMapError);
+  it('rejects sheets that are not in the workbook and layout/sheet-count mismatches', () => {
+    expect(() => parseTriage({ ...answer, sheets: [{ name: 'Ghost', statements: [] }] }, ['Model'])).toThrow(TriageError);
+    expect(() => parseTriage({ ...answer, layout: 'multiple' }, ['Model'])).toThrow(/at least two/);
+    expect(() => parseTriage({ ...answer, layout: 'none' }, ['Model'])).toThrow(/no sheets/);
+  });
+
+  it('asks for confirmation unless confidence is high with no alternatives and something was found', () => {
+    const ok = parseTriage(answer, ['Model']);
+    expect(triageNeedsConfirmation(ok)).toBe(false);
+    expect(triageNeedsConfirmation({ ...ok, confidence: 'low' })).toBe(true);
+    expect(triageNeedsConfirmation({ ...ok, alternatives: [{ sheet: 'LBO', note: 'also has statements' }] })).toBe(true);
+    expect(triageNeedsConfirmation({ ...ok, layout: 'none', sheets: [] })).toBe(true);
   });
 });
 
-describe('extractHistoricals', () => {
+describe('planSheets', () => {
+  it('asks once per chosen sheet with that sheet\'s windows, and validates each answer', async () => {
+    const provider = new FakeLlmProvider(rawResult(MODEL_PLAN));
+    const plan = await planSheets(provider, [MODEL], index, [{ name: 'Model', statements: ['Income Statement'] }]);
+    expect(plan.sheets).toEqual([MODEL_PLAN]);
+    expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0].prompt).toContain('Requested statements on this sheet: Income Statement');
+    expect(provider.requests[0].prompt).toContain('TOP ROWS');
+    expect(provider.requests[0].prompt).toContain('r9 C="Revenue" #5');
+  });
+
+  it('rejects an answer that points at a different sheet', async () => {
+    const provider = new FakeLlmProvider(rawResult({ ...MODEL_PLAN, sheet: 'Ghost' }));
+    await expect(planSheets(provider, [MODEL], index, [{ name: 'Model', statements: [] }])).rejects.toBeInstanceOf(PlanError);
+  });
+});
+
+describe('extractHistoricals — single sheet', () => {
   it('takes only actual FY columns — not the LTM column flagged actual, not projections, not quarters', () => {
-    const { workbook } = extractHistoricals([MODEL], MAP);
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN));
     expect(workbook.periods).toEqual([
       { type: 'FY', date: '2024-12-31T00:00:00.000Z', name: 'FY-2024' },
       { type: 'FY', date: '2025-12-31T00:00:00.000Z', name: 'FY-2025' },
@@ -125,7 +154,7 @@ describe('extractHistoricals', () => {
   });
 
   it('copies values verbatim: zeros stay zeros, ratio rows come along, blank rows and headers are skipped', () => {
-    const { workbook } = extractHistoricals([MODEL], MAP);
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN));
     const byName = (n: string) => workbook.lines.filter((l) => l.name === n);
     expect(byName('Cash')[0].values).toEqual([0, 50]);
     expect(byName('% Growth')[0].values).toEqual([null, 0.2]);
@@ -133,7 +162,7 @@ describe('extractHistoricals', () => {
   });
 
   it('keeps duplicate labels as separate lines with distinct ids, tagged with their statement', () => {
-    const { workbook } = extractHistoricals([MODEL], MAP);
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN));
     const dupes = workbook.lines.filter((l) => l.name === 'Deferred Revenue');
     expect(dupes.map((l) => l.values[1])).toEqual([6, 2]);
     expect(new Set(dupes.map((l) => l.id)).size).toBe(2);
@@ -141,25 +170,69 @@ describe('extractHistoricals', () => {
   });
 
   it("'lowest' granularity prefers quarters over years", () => {
-    const { workbook } = extractHistoricals([MODEL], MAP, 'lowest');
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN), 'lowest');
     expect(workbook.periods.map((p) => [p.type, p.name])).toEqual([['Quarter', 'Q4-2025']]);
     expect(workbook.lines.find((l) => l.name === 'Revenue')?.values).toEqual([31]);
   });
 
-  it('errors when the map has no actual columns of the requested grain', () => {
-    const noFy = { ...MAP, periodColumns: MAP.periodColumns.filter((c) => c.kind !== 'FY') };
-    expect(() => extractHistoricals([MODEL], noFy)).toThrow(ExtractionError);
+  it('errors when no sheet has actual columns of the requested grain', () => {
+    const noFy = { ...MODEL_PLAN, periodColumns: MODEL_PLAN.periodColumns.filter((c) => c.kind !== 'FY') };
+    expect(() => extractHistoricals([MODEL], planOf(noFy))).toThrow(ExtractionError);
   });
 
   it('warns about a period with no readable date', () => {
-    const { warnings } = extractHistoricals([MODEL], { ...MAP, dateRow: null });
-    expect(warnings).toEqual(['Column D has no readable period-end date.', 'Column E has no readable period-end date.']);
+    const { warnings } = extractHistoricals([MODEL], planOf({ ...MODEL_PLAN, dateRow: null }));
+    expect(warnings).toEqual([
+      'Sheet "Model", column D: no readable period-end date.',
+      'Sheet "Model", column E: no readable period-end date.',
+    ]);
+  });
+});
+
+describe('extractHistoricals — several sheets consolidated', () => {
+  // Statements on separate tabs; period labels are written differently and one tab lacks a year.
+  const IS = buildSheetGrid('IS', false, [
+    ['Line', 'FY 2023', 'FY 2024', 'FY 2025'],
+    ['Revenue', 90, 100, 120],
+    ['Net Income', 8, 10, 15],
+  ]);
+  const BS = buildSheetGrid('BS', false, [
+    ['Line', 'FY-2024', 'FY-2025'],
+    ['Total Assets', 480, 500],
+  ]);
+  const isPlan: SheetPlan = {
+    sheet: 'IS', labelColumn: 'A', dateRow: null, nameRow: 1,
+    periodColumns: ['B', 'C', 'D'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
+    statements: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
+  };
+  const bsPlan: SheetPlan = {
+    sheet: 'BS', labelColumn: 'A', dateRow: null, nameRow: 1,
+    periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
+    statements: [{ name: 'Balance Sheet', firstRow: 2, lastRow: 2 }],
+  };
+
+  it('aligns periods by name, ignoring punctuation, and fills gaps with null', () => {
+    const { workbook, warnings } = extractHistoricals([IS, BS], planOf(isPlan, bsPlan));
+    expect(workbook.periods.map((p) => p.name)).toEqual(['FY 2023', 'FY 2024', 'FY 2025']);
+    expect(workbook.lines.map((l) => [l.section, l.name, l.values])).toEqual([
+      ['Income Statement', 'Revenue', [90, 100, 120]],
+      ['Income Statement', 'Net Income', [8, 10, 15]],
+      ['Balance Sheet', 'Total Assets', [null, 480, 500]],
+    ]);
+    expect(warnings).toContain('Sheet "BS" has no data for: FY 2023.');
+  });
+
+  it('skips a sheet with no usable columns, with a warning, as long as another sheet works', () => {
+    const noActual = { ...bsPlan, periodColumns: bsPlan.periodColumns.map((c) => ({ ...c, actual: false })) };
+    const { workbook, warnings } = extractHistoricals([IS, BS], planOf(isPlan, noActual));
+    expect(workbook.lines.map((l) => l.name)).toEqual(['Revenue', 'Net Income']);
+    expect(warnings.some((w) => w.includes('Sheet "BS": no actual annual period columns'))).toBe(true);
   });
 });
 
 describe('writeBasisTemplate', () => {
   it('produces a file the existing template parser reads back identically', async () => {
-    const { workbook } = extractHistoricals([MODEL], MAP);
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN));
     const parsed = await parseBasisTemplate(await writeBasisTemplate(workbook));
     expect(parsed.periods).toEqual(workbook.periods);
     expect(parsed.lines.map(({ section, name, values }) => ({ section, name, values }))).toEqual(
@@ -167,4 +240,3 @@ describe('writeBasisTemplate', () => {
     );
   });
 });
-
