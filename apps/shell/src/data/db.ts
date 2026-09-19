@@ -68,7 +68,7 @@ export interface BasisDb extends DBSchema {
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 12;
+const DB_VERSION = 13;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -227,6 +227,35 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
           if (oldVersion >= 9) {
             db.deleteObjectStore('analysisSettings');
             db.createObjectStore('analysisSettings', { keyPath: 'id' });
+          }
+          if (oldVersion >= 10) {
+            db.deleteObjectStore('analysisResults');
+            const s = db.createObjectStore('analysisResults', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
+          }
+        }
+        // Scenario.driverValues' override contract changed from per-cell (a null cell falls back
+        // to the model's own value at that cell) to per-line, all-or-nothing (a driverId present
+        // at all means its whole array is used verbatim — see lib/scenario.ts). Existing scenario
+        // data was written under the old contract and isn't guaranteed to satisfy the new one, so
+        // wipe scenarios rather than fold old sparse shapes forward — same "dev/test data, no real
+        // companies yet" reasoning as the v11→v12 migration above. computedResults/analysisResults
+        // are wiped too: both are version-stamped caches keyed off model/scenario/schema updatedAt,
+        // but that stamp can't detect this kind of change — the MERGE FUNCTION changed, not the
+        // underlying data, so a cached result computed under the old interpretation could still
+        // read as fresh and silently serve a wrong number. snapshots are deliberately left alone:
+        // a Snapshot embeds its own already-resolved, frozen outputs rather than re-merging live,
+        // so it stays internally consistent regardless of how live merging works today.
+        if (oldVersion >= 1 && oldVersion < 13) {
+          if (oldVersion >= 6) {
+            db.deleteObjectStore('scenarios');
+            const s = db.createObjectStore('scenarios', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
+          }
+          if (oldVersion >= 7) {
+            db.deleteObjectStore('computedResults');
+            const s = db.createObjectStore('computedResults', { keyPath: 'id' });
+            s.createIndex('by-modelId', 'modelId');
           }
           if (oldVersion >= 10) {
             db.deleteObjectStore('analysisResults');
