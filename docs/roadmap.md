@@ -8,36 +8,32 @@ at the bottom of whichever section fits, and move things between tiers as priori
 Started 2026-09-15, after the statement-editing convergence work (shared editing core, Edit
 schema/Edit mapping toggle) and a first pass at auditing what a "comprehensive" model still needs.
 
-## Tier 0 — correctness (blocks real checks, do before the overlay work below)
+## Tier 0 — correctness (mostly done)
 
-The model currently "balances" by construction, not by real linkage — worth fixing before building
-more on top of it:
+The model used to "balance" by construction, not by real linkage. Fixed:
 
-- **Equity is a plug, not a roll-forward.** `Total Equity = Total Assets − Total Liabilities`
-  (`defaultStatementSchema.ts`). No Retained Earnings line, no `prior + Net Income − Dividends`
-  formula. Needs to become a genuine roll-forward before a balance check would mean anything.
-- **No Change-in-NWC line in the Cash Flow Statement.** AR/AP/Deferred Revenue can move on the
-  balance sheet with zero cash-flow effect — those movements currently vanish into the Equity plug
-  above instead of hitting cash. `cashFlowStatement()` needs a real NWC line.
-- **Generic "Checks" mechanism**, once the above two are real: a line type/section whose formula is
-  expected to evaluate to ~0 (e.g. `Total Assets − Total Liabilities − Total Equity`, `Cash Flow
-  Statement.Ending Cash − Balance Sheet.Cash & Equivalents`), flagged red when it isn't — same
-  convention analysts already use in Excel models. Every future overlay below (an M&A/refi's
-  sources & uses, in particular) gets a check for free once this exists — one more formula line, no
-  new plumbing.
-- **No visible convergence indicator for circular calcs.** The Gauss-Seidel solver either converges
-  or it doesn't; worth surfacing if/when it fails to, rather than silently showing a stale number.
+- ~~**Equity is a plug, not a roll-forward.**~~ **Done** (`3507938`) — equity is now a genuine
+  roll-forward.
+- ~~**No Change-in-NWC line in the Cash Flow Statement.**~~ **Done** (`3507938`) — real Change in
+  NWC line.
+- ~~**Generic "Checks" mechanism.**~~ **Done** (`69409bb`) — check line type with tolerance, flagged
+  in the grid. Every future overlay (an M&A/refi's sources & uses, in particular) gets a check for
+  free: one more formula line, no new plumbing.
+- **Convergence indicator for circular calcs — partly done.** The engine records a per-line
+  "didn't converge" error (`lib/engine/evaluate.ts`) instead of silently showing a stale number.
+  Still to confirm: whether that error is actually surfaced visibly in the workspace UI.
 
 ## Tier 1 — the overlay pattern, generalized
 
-The Debt Schedule already *is* this pattern, shipped: scan the schema for eligibility, generate
+The Debt Schedule already *is* this pattern, shipped (`9d64332`): scan the schema for eligibility, generate
 real `StatementLine`s tagged with a role, wire them with ordinary formulas, let the existing
 evaluation engine do the rest — no special-cased engine logic (see `lib/debtSchedule.ts`). Each of
 these is the same shape: an eligibility rule + a `regenerateX(schema, ...)` function + a role tag +
 a toggle in the UI. Not new architecture — the same pattern, run a few more times.
 
-- **PP&E / Capex roll-forward** (Beginning + Capex − D&A = Ending). Highest priority of this group —
-  most universally needed, and D&A/Capex today are just disconnected flat %-of-revenue lines.
+- **PP&E / Capex roll-forward** (Beginning + Capex − D&A = Ending). **Next up.** Highest priority of
+  this group — most universally needed, and D&A/Capex today are just disconnected flat
+  %-of-revenue lines. Tier 0 checks now exist to verify it ties to the balance sheet.
 - **Refinancing overlay** — payoff existing debt, issue new, fees/OID/breakage costs. Naturally
   "sources & uses" shaped, pairs with the Tier 0 Checks mechanism.
 - **Recapitalization overlay** — issue debt to fund a shareholder dividend. Same shape as
@@ -79,9 +75,20 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
   alongside AI-assisted matching (below), where a cross-company "this source name has meant X
   before" memory would compound in value.
 
+## Done since this list started
+
+- Driver charts (drag-to-edit, mockup mechanic 1a) — merged to main (`6516706`, `77018c3`).
+- Scenario driver overrides are per-line, all-or-nothing (`557b8de`).
+- Debt Schedule engine, capital structure, per-model private schemas.
+
 ## Already planned (restated here so this doc is the single source of truth going forward)
 
-- Driver charts.
+- Code review of the modeling feature, then a UI/UX pass. The pass covers: two-tier workspace nav
+  (Financials | Summary | Scenarios | DCF | Recovery, with Financials' own statement sub-nav), the
+  persistent "Live output" rail from the mockup (never built), mockup 1b's driver-first workspace
+  (depends on the two-tier nav), and showing a driver's value inline in the financials grid.
+- Known rough edge: `FormulaInput` silently discards an invalid formula if the row is collapsed
+  before blur.
 - Quarterly/semi-annual modeling with annual aggregation, expand/collapse.
 - AI-assisted parsing of a generic (non-template) financial upload.
 - AI-generated custom modeling structures (schema generation).
