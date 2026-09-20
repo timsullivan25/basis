@@ -23,7 +23,7 @@ import {
 } from '../../lib/computedCache';
 import { evaluateModel } from '../../lib/engine/evaluate';
 import { createDefaultStatementSchema } from '../../data/defaultStatementSchema';
-import { AiImportDialog } from './AiImportDialog';
+import { AiImportScreen } from './aiImport/AiImportScreen';
 import { CreateModelDialog } from './CreateModelDialog';
 import { SummaryPanel } from './SummaryPanel';
 import type { ModelMappingScreenProps } from './mapping/ModelMappingScreen';
@@ -238,18 +238,19 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
         }}
       />
 
-      <AiImportDialog
-        open={aiFile !== null}
-        file={aiFile}
-        companyName={company.name}
-        sections={aiSections}
-        onClose={() => setAiFile(null)}
-        onDone={(templateFile) => {
-          const original = aiFile;
-          setAiFile(null);
-          if (original) startNewImport({ templateType: 'extract-ai', file: templateFile, originalFile: original });
-        }}
-      />
+      {aiFile ? (
+        <AiImportScreen
+          file={aiFile}
+          companyName={company.name}
+          sections={aiSections}
+          onCancel={() => setAiFile(null)}
+          onDone={(templateFile) => {
+            const original = aiFile;
+            setAiFile(null);
+            startNewImport({ templateType: 'extract-ai', file: templateFile, originalFile: original });
+          }}
+        />
+      ) : null}
 
       <Dialog
         open={deleteConfirmOpen}

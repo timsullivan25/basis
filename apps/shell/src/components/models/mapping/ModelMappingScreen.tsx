@@ -33,6 +33,7 @@ import { getLineRowStyle, getRequiredMeta } from '../../statements/statementForm
 import { LineSettingsPanelContent } from '../../statements/SectionEditor';
 import type { InstanceTarget, SchemaLineGroup } from '../instances/projectionMethod';
 import { InstanceMappingDetail } from './InstanceMappingDetail';
+import { ImportStepper } from '../ImportStepper';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
@@ -823,32 +824,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-8)', flexWrap: 'wrap' }}>
-        <ol style={{ listStyle: 'none', display: 'flex', alignItems: 'center', gap: 0, margin: 0, padding: 0 }}>
-          {STEPS.map((label, i) => {
-            const stepNum = i + 1;
-            const state = stepNum < 2 ? 'done' : stepNum === 2 ? 'current' : 'upcoming';
-            return (
-              <li key={label} style={{ display: 'flex', alignItems: 'center' }}>
-                {i > 0 ? <span style={{ width: 28, height: 1, background: 'var(--border-default)', margin: '0 var(--space-5)' }} /> : null}
-                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', opacity: state === 'upcoming' ? 0.55 : 1 }}>
-                  <span
-                    style={{
-                      width: 18, height: 18, flex: '0 0 auto', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontFamily: 'var(--font-mono)', fontSize: 'var(--text-3xs)', fontWeight: 'var(--weight-semibold)',
-                      background: state === 'done' ? 'var(--status-positive-bg)' : state === 'current' ? 'var(--action-primary-bg)' : 'var(--surface-sunken)',
-                      color: state === 'done' ? 'var(--status-positive-fg)' : state === 'current' ? 'var(--action-primary-fg)' : 'var(--text-secondary)',
-                    }}
-                  >
-                    {stepNum}
-                  </span>
-                  <span style={{ fontSize: 'var(--text-xs)', fontWeight: state === 'current' ? 'var(--weight-semibold)' : 'var(--weight-medium)', color: state === 'current' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-                    {label}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+        <ImportStepper steps={STEPS} current={2} />
 
         <div style={{ display: 'flex', alignItems: 'stretch', gap: 'var(--space-4)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', padding: 'var(--space-3) var(--space-5)', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)' }}>
