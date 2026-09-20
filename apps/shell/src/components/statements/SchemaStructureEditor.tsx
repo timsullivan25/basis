@@ -206,6 +206,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
 
         {selectedLine && selectedRowSection ? (
           <LineSettingsPanelContent
+            key={selectedLine.id}
             line={selectedLine}
             isChild={selectedIsChild}
             isKpi={selectedIsKpi}

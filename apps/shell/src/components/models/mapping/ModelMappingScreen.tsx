@@ -975,6 +975,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
             const isChild = Boolean(selectedRow!.childLine);
             return (
               <LineSettingsPanelContent
+                key={line.id}
                 line={line}
                 isChild={isChild}
                 isKpi={selectedRow!.isKpi}
