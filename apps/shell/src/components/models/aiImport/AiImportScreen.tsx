@@ -74,6 +74,7 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
         setStatus({ kind: 'ready' });
       })
       .catch((err) => {
+        console.error('[ai-import] analysis failed', err);
         if (!cancelled) setStatus({ kind: 'error', message: err instanceof Error ? err.message : 'The import could not be analyzed.' });
       });
     return () => {

@@ -34,6 +34,7 @@ export function llmProxyPlugin(options: LlmProxyOptions): Plugin {
   return {
     name: 'basis-llm-proxy',
     configureServer(server) {
+      const log = server.config.logger
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith(PREFIX) || req.method !== 'POST') return next()
         const send = (status: number, body: string) => {
@@ -49,23 +50,37 @@ export function llmProxyPlugin(options: LlmProxyOptions): Plugin {
           try {
             const cached = await readFile(cacheFile, 'utf8')
             res.setHeader('X-Basis-Cache', 'hit')
+            log.info('[llm] cache hit')
             return send(200, cached)
           } catch {
             // not cached
           }
 
+          const started = Date.now()
           const upstream = await fetch(target, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${options.apiKey}` },
             body,
           })
           const text = await upstream.text()
+          const seconds = ((Date.now() - started) / 1000).toFixed(1)
           if (upstream.ok) {
+            let tokens = ''
+            try {
+              const usage = JSON.parse(text).usage
+              tokens = ` — ${usage?.completion_tokens ?? '?'} completion tokens (${usage?.completion_tokens_details?.reasoning_tokens ?? 0} reasoning)`
+            } catch {
+              // body wasn't JSON; nothing to summarize
+            }
+            log.info(`[llm] ${upstream.status} in ${seconds}s${tokens}`)
             await mkdir(options.cacheDir, { recursive: true })
             await writeFile(cacheFile, text)
+          } else {
+            log.error(`[llm] ${upstream.status} in ${seconds}s: ${text.slice(0, 500)}`)
           }
           send(upstream.status, text)
         } catch (error) {
+          log.error(`[llm] proxy error: ${error instanceof Error ? error.message : String(error)}`)
           send(502, JSON.stringify({ error: { message: `LLM proxy failed: ${error instanceof Error ? error.message : String(error)}` } }))
         }
       })
