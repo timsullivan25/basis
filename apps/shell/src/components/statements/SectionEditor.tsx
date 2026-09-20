@@ -467,11 +467,10 @@ export function LineSettingsPanelContent({
 
   const rawMethod = methodOf(line);
   // Derived once per selected line (callers key this component by line id): a projection method
-  // means Projection, else a formula means Formula, else nothing is calculated — Hardcode. Held
-  // locally afterwards so picking Formula on a still-empty line doesn't snap back to Hardcode.
-  const [calcType, setCalcType] = useState<CalcType>(() =>
-    rawMethod !== 'none' ? 'projection' : line.formula !== null ? 'formula' : 'hardcode',
-  );
+  // means Projection, anything else opens on Formula — including a brand-new line with neither.
+  // Hardcode isn't stored (it's just "no projection, no formula"), so it can only be picked
+  // here, not inferred: a line left on Hardcode reopens on an empty Formula field instead.
+  const [calcType, setCalcType] = useState<CalcType>(() => (rawMethod !== 'none' ? 'projection' : 'formula'));
   const currentMethod = pendingMethod ?? (isSchemaEditorMethod(rawMethod) ? rawMethod : 'none');
   const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
   const currentDriver = drivers.find((d) => d.id === currentDriverId);
