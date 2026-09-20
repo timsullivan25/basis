@@ -12,8 +12,9 @@ export interface PeriodColumn {
   actual: boolean;
 }
 
-export interface StatementRange {
-  /** Section name in the Basis Template, e.g. "Income Statement". */
+/** One block of historical line items on a sheet — a primary statement or a supporting schedule (segments, KPIs, debt, ...). */
+export interface SectionRange {
+  /** Section name in the Basis Template: the exact Basis section name when the block corresponds to one (e.g. "Income Statement", "EBITDA"), otherwise the sheet's own heading (e.g. "Segment Breakout"). */
   name: string;
   /** 1-based source rows, inclusive: the first line item through the last (totals included). */
   firstRow: number;
@@ -30,7 +31,7 @@ export interface SheetPlan {
   nameRow: number | null;
   /** Every period column worth knowing about (including projections and LTM/NTM), classified. */
   periodColumns: PeriodColumn[];
-  statements: StatementRange[];
+  sections: SectionRange[];
 }
 
 /** The LLM's answer for one sheet, with what a human needs to judge it. */
@@ -109,11 +110,11 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
     }
   }
 
-  const statements: StatementRange[] = [];
-  if (!Array.isArray(raw.statements) || raw.statements.length === 0) {
-    issues.push('statements must be a non-empty array');
+  const sections: SectionRange[] = [];
+  if (!Array.isArray(raw.sections) || raw.sections.length === 0) {
+    issues.push('sections must be a non-empty array');
   } else {
-    for (const entry of raw.statements) {
+    for (const entry of raw.sections) {
       if (
         !isObject(entry) ||
         typeof entry.name !== 'string' ||
@@ -122,10 +123,10 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
         !isRow(entry.lastRow) ||
         entry.firstRow > entry.lastRow
       ) {
-        issues.push(`invalid statements entry ${JSON.stringify(entry)}`);
+        issues.push(`invalid sections entry ${JSON.stringify(entry)}`);
         continue;
       }
-      statements.push({ name: entry.name.trim(), firstRow: entry.firstRow, lastRow: entry.lastRow });
+      sections.push({ name: entry.name.trim(), firstRow: entry.firstRow, lastRow: entry.lastRow });
     }
   }
 
@@ -136,7 +137,7 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
 
   if (issues.length > 0) throw new PlanError(issues);
   return {
-    plan: { sheet, labelColumn, dateRow, nameRow, periodColumns, statements },
+    plan: { sheet, labelColumn, dateRow, nameRow, periodColumns, sections },
     confidence: confidence as SheetPlanResult['confidence'],
     reasoning: typeof raw.reasoning === 'string' ? raw.reasoning : '',
     openQuestions: Array.isArray(raw.openQuestions) ? raw.openQuestions.filter((q): q is string => typeof q === 'string') : [],
@@ -147,7 +148,7 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
 export const SHEET_PLAN_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['sheet', 'labelColumn', 'dateRow', 'nameRow', 'periodColumns', 'statements', 'confidence', 'reasoning', 'openQuestions'],
+  required: ['sheet', 'labelColumn', 'dateRow', 'nameRow', 'periodColumns', 'sections', 'confidence', 'reasoning', 'openQuestions'],
   properties: {
     sheet: { type: 'string' },
     labelColumn: { type: 'string', description: 'Column letter holding line-item names' },
@@ -166,7 +167,7 @@ export const SHEET_PLAN_SCHEMA = {
         },
       },
     },
-    statements: {
+    sections: {
       type: 'array',
       items: {
         type: 'object',

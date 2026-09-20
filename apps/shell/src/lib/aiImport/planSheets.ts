@@ -5,7 +5,7 @@ import type { TriageSheet } from './triage';
 import { buildSheetWindows, windowsToText } from './windows';
 import type { SheetGrid } from './workbookGrid';
 
-const SYSTEM_PROMPT = `You are helping import a company's historical financial statements from an Excel financial model.
+const SYSTEM_PROMPT = `You are helping import a company's historical financials from an Excel financial model.
 Your job is to write an EXTRACTION PLAN for one sheet — you never transcribe numbers; software will copy the cells you point at.
 
 You are shown the sheet's top rows (period headers usually live there, at full width) and, for every non-empty row, its label cells, how many numbers it holds ("#n"), the first number as a sample, and — when the label matches a known Basis line — that line ("→ Revenue (Income Statement)"). Rows are 1-based ("r310"); columns are letters.
@@ -16,7 +16,8 @@ Produce:
 - periodColumns: EVERY period column on the sheet (history and projections), each classified:
     kind: FY (full fiscal year), Quarter, Semi-Annual, LTM (last twelve months), NTM (next twelve months), or Other.
     actual: true only for reported history; false for projections. Use status headers such as "Actual"/"Proj"/"A"/"E" when present. A column can be labelled actual and still be LTM — classify kind independently of status.
-- statements: one entry per requested statement present on this sheet, named exactly as requested. firstRow is the first line item after the statement's title; lastRow is its last line (totals and check rows included). Sub-headers inside a statement (e.g. "Assets", "Liabilities & Equity") stay inside one range. A statement ends where the next section (a different schedule or analysis) begins — look at the row labels to find that boundary.
+- sections: one entry per BLOCK OF HISTORICAL LINE ITEMS on the sheet. That means the primary statements AND supporting schedules that carry reported history: segment breakouts, KPIs, EBITDA build and adjustments, working capital, debt and capital structure schedules, credit metrics. Name a block with the exact Basis section name when it corresponds to one (the names are given); otherwise use the sheet's own heading for it. firstRow is the first line item after the block's title; lastRow is its last line (totals and check rows included). Sub-headers inside a block (e.g. "Assets", "Liabilities & Equity") stay inside one range. A block ends where the next block begins — use the row labels to find that boundary — and ranges must not overlap.
+  Leave OUT: assumptions and input tables, projection drivers, scenario or case selectors, valuation, returns or comps analysis, and anything that only holds forecasts.
 - confidence: "high" only if every choice above was clear from what you were shown.
 - reasoning: two or three sentences a human can check.
 - openQuestions: anything you could not settle from what you were shown (empty if none).`;
@@ -27,14 +28,15 @@ export async function planSheets(
   grids: SheetGrid[],
   index: SchemaLineIndex,
   chosen: TriageSheet[],
+  sectionNames: string[],
 ): Promise<ExtractionPlan> {
   const results: SheetPlanResult[] = await Promise.all(
-    chosen.map(async ({ name, statements }) => {
+    chosen.map(async ({ name, sections }) => {
       const grid = grids.find((g) => g.name === name);
       if (!grid) throw new Error(`Sheet "${name}" not found.`);
       const raw = await provider.generateStructured({
         system: SYSTEM_PROMPT,
-        prompt: `Requested statements on this sheet: ${statements.join(', ')}\n\n${windowsToText(buildSheetWindows(grid, index))}`,
+        prompt: `Basis section names: ${sectionNames.join(', ')}\nSections the triage step expects on this sheet: ${sections.join(', ') || '(none listed)'}\n\n${windowsToText(buildSheetWindows(grid, index))}`,
         schemaName: 'sheet_extraction_plan',
         schema: SHEET_PLAN_SCHEMA,
       });

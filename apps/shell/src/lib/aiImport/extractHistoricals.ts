@@ -59,8 +59,14 @@ function extractSheet(grid: SheetGrid, plan: SheetPlan, granularity: Granularity
 
   const labelCol = columnIndex(plan.labelColumn);
   const lines: SheetExtraction['lines'] = [];
-  for (const statement of plan.statements) {
-    for (let rowNumber = statement.firstRow; rowNumber <= statement.lastRow; rowNumber++) {
+  const claimed = new Map<number, string>();
+  for (const section of plan.sections) {
+    for (let rowNumber = section.firstRow; rowNumber <= section.lastRow; rowNumber++) {
+      const previous = claimed.get(rowNumber);
+      if (previous !== undefined) {
+        warnings.push(`Sheet "${plan.sheet}", row ${rowNumber}: in both "${previous}" and "${section.name}" — imported twice.`);
+      }
+      claimed.set(rowNumber, section.name);
       const cells = rowByNumber.get(rowNumber);
       const label = cells?.[labelCol];
       if (typeof label !== 'string') continue;
@@ -69,11 +75,11 @@ function extractSheet(grid: SheetGrid, plan: SheetPlan, granularity: Granularity
         return typeof value === 'number' ? value : null;
       });
       if (values.every((v) => v === null)) continue; // header / spacer rows carry no data
-      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: statement.name, name: label, values });
+      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: section.name, name: label, values });
     }
   }
   for (const [i, column] of columns.entries()) {
-    if (lines.every((line) => line.values[i] === null)) warnings.push(`Sheet "${plan.sheet}", column ${column.column}: no numbers in any statement row.`);
+    if (lines.every((line) => line.values[i] === null)) warnings.push(`Sheet "${plan.sheet}", column ${column.column}: no numbers in any planned section.`);
   }
   return { sheet: plan.sheet, periods, lines };
 }
@@ -131,6 +137,6 @@ export function extractHistoricals(grids: SheetGrid[], plan: ExtractionPlan, gra
     }
   }
 
-  if (lines.length === 0) throw new ExtractionError('No line items with numbers were found in the identified statement rows.');
+  if (lines.length === 0) throw new ExtractionError('No line items with numbers were found in the planned sections.');
   return { workbook: { periods: keys.map((k) => merged.get(k)!), lines }, warnings };
 }

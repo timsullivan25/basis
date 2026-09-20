@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { createDefaultStatementSchema } from '../../data/defaultStatementSchema';
-import { analyzeWorkbook, planForSheets, STATEMENT_NAMES, type AnalysisStep } from './analyzeWorkbook';
+import { analyzeWorkbook, planForSheets, sectionNames, type AnalysisStep } from './analyzeWorkbook';
 import { extractHistoricals } from './extractHistoricals';
 import { FakeLlmProvider } from './fakeLlmProvider';
 import type { StructuredRequest } from './llmProvider';
@@ -23,11 +23,11 @@ function workbook(): Blob {
   return new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })]);
 }
 
-const triageAnswer = { layout: 'single', sheets: [{ name: 'Model', statements: ['Income Statement'] }], confidence: 'high', reasoning: 'r', alternatives: [] };
+const triageAnswer = { layout: 'single', sheets: [{ name: 'Model', sections: ['Income Statement'] }], confidence: 'high', reasoning: 'r', alternatives: [] };
 const planAnswer = {
   sheet: 'Model', labelColumn: 'A', dateRow: null, nameRow: 1,
   periodColumns: [{ column: 'B', kind: 'FY', actual: true }, { column: 'C', kind: 'FY', actual: true }],
-  statements: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
+  sections: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
   confidence: 'high', reasoning: 'r', openQuestions: [],
 };
 const respond = (request: StructuredRequest) => (request.schemaName === 'financials_sheet_triage' ? triageAnswer : planAnswer);
@@ -54,12 +54,12 @@ describe('analyzeWorkbook', () => {
 });
 
 describe('planForSheets', () => {
-  it('re-plans a hand-picked sheet, asking for every statement, without triage', async () => {
+  it('re-plans a hand-picked sheet, offering every Basis section name, without triage', async () => {
     const grids = (await analyzeWorkbook(new FakeLlmProvider(respond), workbook(), sections)).grids;
     const provider = new FakeLlmProvider(respond);
     const plan = await planForSheets(provider, grids, sections, ['Model']);
     expect(plan.sheets[0].sheet).toBe('Model');
     expect(provider.requests).toHaveLength(1);
-    expect(provider.requests[0].prompt).toContain(`Requested statements on this sheet: ${STATEMENT_NAMES.join(', ')}`);
+    expect(provider.requests[0].prompt).toContain(`Basis section names: ${sectionNames(sections).join(', ')}`);
   });
 });

@@ -12,7 +12,7 @@ import { writeBasisTemplate } from '../../lib/aiImport/writeBasisTemplate';
 const STEP_LABELS: Record<AnalysisStep, string> = {
   reading: 'Reading the workbook…',
   scoring: 'Scoring each sheet against the Basis statement schema…',
-  triage: 'Deciding which sheets hold the statements…',
+  triage: 'Deciding which sheets hold the financials…',
   planning: 'Planning the extraction…',
 };
 
@@ -121,14 +121,14 @@ export function AiImportDialog({ open, file, companyName, sections, onClose, onD
     [extraction],
   );
 
-  function updateRange(sheetIdx: number, stmtIdx: number, key: 'firstRow' | 'lastRow', raw: string) {
+  function updateRange(sheetIdx: number, sectionIdx: number, key: 'firstRow' | 'lastRow', raw: string) {
     const value = Number.parseInt(raw, 10);
     if (!Number.isInteger(value) || value < 1) return;
     setPlan((current) =>
       current && {
         ...current,
         sheets: current.sheets.map((sheet, si) =>
-          si !== sheetIdx ? sheet : { ...sheet, statements: sheet.statements.map((st, i) => (i === stmtIdx ? { ...st, [key]: value } : st)) },
+          si !== sheetIdx ? sheet : { ...sheet, sections: sheet.sections.map((sec, i) => (i === sectionIdx ? { ...sec, [key]: value } : sec)) },
         ),
       },
     );
@@ -176,7 +176,7 @@ export function AiImportDialog({ open, file, companyName, sections, onClose, onD
 
   const reasons: string[] = [];
   if (analysis && triageNeedsConfirmation(analysis.triage)) {
-    reasons.push(analysis.triage.layout === 'none' ? 'No historical statements were found.' : `Sheet choice is ${analysis.triage.confidence} confidence.`);
+    reasons.push(analysis.triage.layout === 'none' ? 'No historical financials were found.' : `Sheet choice is ${analysis.triage.confidence} confidence.`);
   }
   if (analysis && plan && planNeedsConfirmation(plan.results)) {
     for (const r of plan.results) {
@@ -281,19 +281,19 @@ export function AiImportDialog({ open, file, companyName, sections, onClose, onD
               </section>
 
               <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-                <span style={sectionTitle}>Where each statement lives</span>
+                <span style={sectionTitle}>Where each section lives</span>
                 {plan.sheets.map((sheet, sheetIdx) => (
                   <div key={sheet.sheet} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
                     <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
                       {sheet.sheet} <span style={mutedText}>· labels in column {sheet.labelColumn}</span>
                     </span>
-                    {sheet.statements.map((statement, stmtIdx) => (
-                      <div key={statement.name} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                        <span style={{ width: 160, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>{statement.name}</span>
+                    {sheet.sections.map((section, sectionIdx) => (
+                      <div key={`${section.name}-${sectionIdx}`} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                        <span style={{ width: 200, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>{section.name}</span>
                         <span style={mutedText}>rows</span>
-                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={statement.firstRow} onChange={(e) => updateRange(sheetIdx, stmtIdx, 'firstRow', e.target.value)} />
+                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.firstRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'firstRow', e.target.value)} />
                         <span style={mutedText}>to</span>
-                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={statement.lastRow} onChange={(e) => updateRange(sheetIdx, stmtIdx, 'lastRow', e.target.value)} />
+                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.lastRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'lastRow', e.target.value)} />
                       </div>
                     ))}
                   </div>

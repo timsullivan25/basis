@@ -50,7 +50,7 @@ const MODEL_PLAN: SheetPlan = {
     { column: 'G', kind: 'FY', actual: false },
     { column: 'H', kind: 'Quarter', actual: true },
   ],
-  statements: [
+  sections: [
     { name: 'Income Statement', firstRow: 9, lastRow: 11 },
     { name: 'Balance Sheet', firstRow: 14, lastRow: 19 },
   ],
@@ -73,7 +73,7 @@ describe('parseSheetPlan', () => {
   });
 
   it('collects every problem: wrong sheet, bad column, inverted rows, bad confidence', () => {
-    const bad = rawResult(MODEL_PLAN, { labelColumn: '3', statements: [{ name: 'IS', firstRow: 9, lastRow: 2 }], confidence: 'sure', sheet: 'Nope' });
+    const bad = rawResult(MODEL_PLAN, { labelColumn: '3', sections: [{ name: 'IS', firstRow: 9, lastRow: 2 }], confidence: 'sure', sheet: 'Nope' });
     try {
       parseSheetPlan(bad, 'Model', [MODEL]);
       expect.unreachable();
@@ -99,21 +99,21 @@ describe('parseSheetPlan', () => {
 describe('triage', () => {
   const NOTES = buildSheetGrid('Notes', false, [['Read me']]);
   const evidence = buildSheetEvidence([MODEL, NOTES], index);
-  const answer = { layout: 'single', sheets: [{ name: 'Model', statements: ['Income Statement', 'Balance Sheet'] }], confidence: 'high', reasoning: 'r', alternatives: [] };
+  const answer = { layout: 'single', sheets: [{ name: 'Model', sections: ['Income Statement', 'Balance Sheet'] }], confidence: 'high', reasoning: 'r', alternatives: [] };
 
   it('sends per-sheet evidence and the requested statement names, not sheet contents', async () => {
     const provider = new FakeLlmProvider(answer);
     const result = await triageSheets(provider, evidence, ['Income Statement', 'Balance Sheet']);
     expect(result.sheets[0].name).toBe('Model');
     const { prompt } = provider.requests[0];
-    expect(prompt).toContain('Statements to find: Income Statement, Balance Sheet');
+    expect(prompt).toContain('Basis section names: Income Statement, Balance Sheet');
     expect(prompt).toContain('"Model"');
     expect(prompt).toContain('Basis lines matched');
     expect(prompt).not.toContain('520');
   });
 
   it('rejects sheets that are not in the workbook and layout/sheet-count mismatches', () => {
-    expect(() => parseTriage({ ...answer, sheets: [{ name: 'Ghost', statements: [] }] }, ['Model'])).toThrow(TriageError);
+    expect(() => parseTriage({ ...answer, sheets: [{ name: 'Ghost', sections: [] }] }, ['Model'])).toThrow(TriageError);
     expect(() => parseTriage({ ...answer, layout: 'multiple' }, ['Model'])).toThrow(/at least two/);
     expect(() => parseTriage({ ...answer, layout: 'none' }, ['Model'])).toThrow(/no sheets/);
   });
@@ -130,17 +130,18 @@ describe('triage', () => {
 describe('planSheets', () => {
   it('asks once per chosen sheet with that sheet\'s windows, and validates each answer', async () => {
     const provider = new FakeLlmProvider(rawResult(MODEL_PLAN));
-    const plan = await planSheets(provider, [MODEL], index, [{ name: 'Model', statements: ['Income Statement'] }]);
+    const plan = await planSheets(provider, [MODEL], index, [{ name: 'Model', sections: ['Income Statement'] }], ['Income Statement', 'EBITDA']);
     expect(plan.sheets).toEqual([MODEL_PLAN]);
     expect(provider.requests).toHaveLength(1);
-    expect(provider.requests[0].prompt).toContain('Requested statements on this sheet: Income Statement');
+    expect(provider.requests[0].prompt).toContain('Basis section names: Income Statement, EBITDA');
+    expect(provider.requests[0].prompt).toContain('Sections the triage step expects on this sheet: Income Statement');
     expect(provider.requests[0].prompt).toContain('TOP ROWS');
     expect(provider.requests[0].prompt).toContain('r9 C="Revenue" #5');
   });
 
   it('rejects an answer that points at a different sheet', async () => {
     const provider = new FakeLlmProvider(rawResult({ ...MODEL_PLAN, sheet: 'Ghost' }));
-    await expect(planSheets(provider, [MODEL], index, [{ name: 'Model', statements: [] }])).rejects.toBeInstanceOf(PlanError);
+    await expect(planSheets(provider, [MODEL], index, [{ name: 'Model', sections: [] }], [])).rejects.toBeInstanceOf(PlanError);
   });
 });
 
@@ -189,6 +190,42 @@ describe('extractHistoricals — single sheet', () => {
   });
 });
 
+describe('extractHistoricals — supporting schedules beyond the three statements', () => {
+  const SCHEDULES = buildSheetGrid('Sched', false, [
+    ['Line', 'FY 2024', 'FY 2025'],
+    ['Segment Breakout'],
+    ['Academia revenue', 60, 70],
+    ['Life Sciences revenue', 40, 50],
+    ['Debt Schedule'],
+    ['2028 Notes', 500, 500],
+    ['Revolver', 20, 0],
+  ]);
+  const plan: SheetPlan = {
+    sheet: 'Sched', labelColumn: 'A', dateRow: null, nameRow: 1,
+    periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
+    sections: [
+      { name: 'Segment Breakout', firstRow: 3, lastRow: 4 },
+      { name: 'Debt Schedule', firstRow: 6, lastRow: 7 },
+    ],
+  };
+
+  it('imports every planned section under its own name, so segments and tranches arrive as source lines', () => {
+    const { workbook } = extractHistoricals([SCHEDULES], planOf(plan));
+    expect(workbook.lines.map((l) => [l.section, l.name, l.values])).toEqual([
+      ['Segment Breakout', 'Academia revenue', [60, 70]],
+      ['Segment Breakout', 'Life Sciences revenue', [40, 50]],
+      ['Debt Schedule', '2028 Notes', [500, 500]],
+      ['Debt Schedule', 'Revolver', [20, 0]],
+    ]);
+  });
+
+  it('warns when two sections claim the same row, since it would be imported twice', () => {
+    const overlapping = { ...plan, sections: [{ name: 'Segment Breakout', firstRow: 3, lastRow: 5 }, { name: 'Debt Schedule', firstRow: 5, lastRow: 7 }] };
+    const { warnings } = extractHistoricals([SCHEDULES], planOf(overlapping));
+    expect(warnings).toContain('Sheet "Sched", row 5: in both "Segment Breakout" and "Debt Schedule" — imported twice.');
+  });
+});
+
 describe('extractHistoricals — several sheets consolidated', () => {
   // Statements on separate tabs; period labels are written differently and one tab lacks a year.
   const IS = buildSheetGrid('IS', false, [
@@ -203,12 +240,12 @@ describe('extractHistoricals — several sheets consolidated', () => {
   const isPlan: SheetPlan = {
     sheet: 'IS', labelColumn: 'A', dateRow: null, nameRow: 1,
     periodColumns: ['B', 'C', 'D'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
-    statements: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
+    sections: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
   };
   const bsPlan: SheetPlan = {
     sheet: 'BS', labelColumn: 'A', dateRow: null, nameRow: 1,
     periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
-    statements: [{ name: 'Balance Sheet', firstRow: 2, lastRow: 2 }],
+    sections: [{ name: 'Balance Sheet', firstRow: 2, lastRow: 2 }],
   };
 
   it('aligns periods by name, ignoring punctuation, and fills gaps with null', () => {
