@@ -73,8 +73,8 @@ export function StatementDefinitionsScreen() {
   const [pendingName, setPendingName] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  // The sticky header's height, published as a CSS variable so the line-settings panel (which
-  // sticks below it — see SchemaStructureEditor) knows how far down to sit.
+  // The sticky header's height, used to publish where the line-settings panel (which sticks below
+  // it — see SchemaStructureEditor) should sit and how tall it may be.
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   useLayoutEffect(() => {
@@ -216,14 +216,17 @@ export function StatementDefinitionsScreen() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)', '--defs-header-h': `${headerHeight}px` } as CSSProperties}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)', '--panel-sticky-top': `calc(${headerHeight}px - var(--gutter) + var(--space-4))`,
+        '--panel-max-height': `calc(100vh - ${headerHeight}px - 144px)`,
+      } as CSSProperties}>
       {/* Stays put while the statements scroll, so the schema in use and Save are always in reach.
-          The negative margins + matching padding let it span the page's full width and reach the
-          scroll container's top edge without moving anything at rest. */}
+          Sticky offsets are measured inside the scroll container's padding, so `top` is negative by
+          exactly that gutter to sit flush with its edge; the negative margins + matching padding
+          make it span the full width without moving anything at rest. */}
       <div
         ref={headerRef}
         style={{
-          position: 'sticky', top: 0, zIndex: 20, background: 'var(--surface-app)',
+          position: 'sticky', top: 'calc(-1 * var(--gutter))', zIndex: 20, background: 'var(--surface-app)',
           display: 'flex', flexDirection: 'column', gap: 'var(--gutter)',
           margin: 'calc(-1 * var(--gutter)) calc(-1 * var(--gutter)) 0', padding: 'var(--gutter) var(--gutter) var(--space-4)',
         }}
