@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { Input } from '@basis/design-system';
 import { getFormulaSegment } from './formulaUtils';
 import { compileFormula, formatFormula, type NameIndex, type ResolvedFormula } from '../../lib/engine/resolve';
 
@@ -21,13 +20,15 @@ interface FormulaInputProps {
  * momentarily-invalid in-progress formula never has to round-trip through the parent's state.
  */
 export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaInputProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState(() => formatFormula(value, nameIndex));
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   // Which suggestion Enter/Tab would apply — always starts on the first one.
   const [highlighted, setHighlighted] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [, setLayoutTick] = useState(0);
 
   // Reset the display text when we're handed a different line's formula (not on every `value`
   // change — our own commit() already produces text that round-trips to the same display).
@@ -36,20 +37,29 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownLineId]);
 
+  // Grows with its content instead of scrolling sideways — a long formula stays fully visible.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
+
   const compileResult = useMemo(() => compileFormula(text, nameIndex, ownLineId), [text, nameIndex, ownLineId]);
   const errors = compileResult.ok ? [] : compileResult.errors;
 
   // The suggestion list is portaled to <body> and positioned against the input's own rect: the
   // line-settings panel (and any scrolling table cell) clips overflow, which cut an inline
-  // absolutely-positioned list off. Closes on any scroll, since the anchor would drift from it.
+  // absolutely-positioned list off. Re-measured on any scroll/resize so it follows the input
+  // (the input itself growing a line can scroll the panel — that must not dismiss the list).
   useEffect(() => {
     if (!showSuggestions) return;
-    const close = () => setShowSuggestions(false);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
+    const reposition = () => setLayoutTick((n) => n + 1);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
     return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
     };
   }, [showSuggestions]);
 
@@ -89,7 +99,7 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     if (result.ok) onChange(result.formula);
   }
 
-  function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
+  function handleChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     setText(event.target.value);
     refreshSuggestions(event.target.value, event.target.selectionStart ?? event.target.value.length);
     setShowSuggestions(true);
@@ -113,36 +123,61 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
 
   return (
     <div ref={wrapperRef} style={{ position: 'relative' }}>
-      <Input
-        ref={inputRef}
-        size="sm"
-        mono
-        value={text}
-        placeholder="e.g. Revenue - COGS"
-        invalid={errors.length > 0}
-        onChange={handleChange}
-        onFocus={(event) => refreshSuggestions(text, event.target.selectionStart ?? text.length)}
-        onBlur={() => {
-          commitText(text);
-          // Delay so a click on a suggestion registers before the list unmounts.
-          setTimeout(() => setShowSuggestions(false), 150);
+      {/* The design system has no multi-line field, so this mirrors Input (size sm, mono) around a
+          textarea: same border/focus treatment, but the box grows with wrapped text. */}
+      <div
+        style={{
+          display: 'flex', width: '100%', boxSizing: 'border-box', minWidth: 0,
+          padding: '4px var(--space-4)', minHeight: 'var(--control-sm)',
+          background: 'var(--field-bg)', borderRadius: 'var(--radius-md)',
+          border: `1px solid ${errors.length > 0 ? 'var(--red-600)' : focused ? 'var(--border-focus)' : 'var(--field-border)'}`,
+          boxShadow: focused ? (errors.length > 0 ? 'var(--focus-ring-danger)' : 'var(--focus-ring)') : 'var(--shadow-inset-field)',
+          transition: 'var(--transition-control)',
         }}
-        onKeyDown={(event) => {
-          const listOpen = showSuggestions && suggestions.length > 0;
-          if (event.key === 'Escape') {
-            setShowSuggestions(false);
-          } else if (listOpen && event.key === 'ArrowDown') {
-            event.preventDefault();
-            setHighlighted((i) => (i + 1) % suggestions.length);
-          } else if (listOpen && event.key === 'ArrowUp') {
-            event.preventDefault();
-            setHighlighted((i) => (i - 1 + suggestions.length) % suggestions.length);
-          } else if (listOpen && (event.key === 'Enter' || event.key === 'Tab')) {
-            event.preventDefault();
-            applySuggestion(suggestions[Math.min(highlighted, suggestions.length - 1)]);
-          }
-        }}
-      />
+      >
+        <textarea
+          ref={inputRef}
+          rows={1}
+          value={text}
+          placeholder="e.g. Revenue - COGS"
+          spellCheck={false}
+          onChange={handleChange}
+          onFocus={(event) => {
+            setFocused(true);
+            refreshSuggestions(text, event.target.selectionStart ?? text.length);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            commitText(text);
+            // Delay so a click on a suggestion registers before the list unmounts.
+            setTimeout(() => setShowSuggestions(false), 150);
+          }}
+          onKeyDown={(event) => {
+            const listOpen = showSuggestions && suggestions.length > 0;
+            if (event.key === 'Escape') {
+              setShowSuggestions(false);
+            } else if (listOpen && event.key === 'ArrowDown') {
+              event.preventDefault();
+              setHighlighted((i) => (i + 1) % suggestions.length);
+            } else if (listOpen && event.key === 'ArrowUp') {
+              event.preventDefault();
+              setHighlighted((i) => (i - 1 + suggestions.length) % suggestions.length);
+            } else if (listOpen && (event.key === 'Enter' || event.key === 'Tab')) {
+              event.preventDefault();
+              applySuggestion(suggestions[Math.min(highlighted, suggestions.length - 1)]);
+            } else if (event.key === 'Enter') {
+              // A formula is one logical line — wrapping is visual only, never a typed newline.
+              event.preventDefault();
+            }
+          }}
+          style={{
+            flex: '1 1 auto', minWidth: 0, width: '100%', padding: 0, margin: 0, border: 'none', outline: 'none',
+            background: 'transparent', resize: 'none', overflow: 'hidden', display: 'block',
+            fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
+            lineHeight: 1.5, color: 'var(--text-primary)', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap',
+          }}
+        />
+      </div>
       {showSuggestions && suggestions.length > 0 ? createPortal(
         <div
           style={{
