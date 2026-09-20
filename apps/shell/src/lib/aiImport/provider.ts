@@ -10,7 +10,8 @@ import { OpenAiCompatibleProvider } from './openAiCompatibleProvider';
  */
 export function getLlmProvider(): LlmProvider {
   if (__LLM_MODEL__) {
-    return new OpenAiCompatibleProvider({ endpoint: '/api/llm/chat/completions', model: __LLM_MODEL__ });
+    const extraBody = __LLM_EXTRA_BODY__ ? (JSON.parse(__LLM_EXTRA_BODY__) as Record<string, unknown>) : undefined;
+    return new OpenAiCompatibleProvider({ endpoint: '/api/llm/chat/completions', model: __LLM_MODEL__, extraBody });
   }
   return new DemoLlmProvider();
 }

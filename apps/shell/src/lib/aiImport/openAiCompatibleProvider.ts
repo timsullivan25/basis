@@ -4,6 +4,8 @@ export interface OpenAiCompatibleOptions {
   /** Full URL of the chat-completions endpoint (in dev, the Vite proxy that adds the API key). */
   endpoint: string;
   model: string;
+  /** Provider-specific fields merged into every request body — e.g. OpenRouter's `{ reasoning: { enabled: false } }` to skip a reasoning model's slow thinking phase. */
+  extraBody?: Record<string, unknown>;
   /** Extra attempts after the first when the call is rate-limited, fails upstream, or returns unparseable JSON. */
   maxRetries?: number;
   /** Injectable for tests. */
@@ -47,6 +49,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
           messages,
           response_format: { type: 'json_object' },
           temperature: 0,
+          ...this.options.extraBody,
         }),
       });
 

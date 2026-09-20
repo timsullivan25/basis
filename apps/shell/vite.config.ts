@@ -22,6 +22,8 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       __LLM_MODEL__: JSON.stringify(llmConfigured ? env.LLM_MODEL : ''),
+      // Optional JSON object merged into every request body (e.g. {"reasoning":{"enabled":false}}); not secret.
+      __LLM_EXTRA_BODY__: JSON.stringify(env.LLM_EXTRA_BODY ?? ''),
     },
     optimizeDeps: {
       exclude: ['@basis/design-system'],
