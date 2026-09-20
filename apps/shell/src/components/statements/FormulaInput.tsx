@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { Input } from '@basis/design-system';
 import { getFormulaSegment } from './formulaUtils';
 import { compileFormula, formatFormula, type NameIndex, type ResolvedFormula } from '../../lib/engine/resolve';
@@ -21,6 +22,7 @@ interface FormulaInputProps {
  */
 export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState(() => formatFormula(value, nameIndex));
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -34,6 +36,31 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
 
   const compileResult = useMemo(() => compileFormula(text, nameIndex, ownLineId), [text, nameIndex, ownLineId]);
   const errors = compileResult.ok ? [] : compileResult.errors;
+
+  // The suggestion list is portaled to <body> and positioned against the input's own rect: the
+  // line-settings panel (and any scrolling table cell) clips overflow, which cut an inline
+  // absolutely-positioned list off. Closes on any scroll, since the anchor would drift from it.
+  useEffect(() => {
+    if (!showSuggestions) return;
+    const close = () => setShowSuggestions(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [showSuggestions]);
+
+  const LIST_MAX_HEIGHT = 200;
+  function listPosition(): CSSProperties {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    if (!rect) return { display: 'none' };
+    // Flip above the input when there isn't room below.
+    const below = rect.bottom + 4 + LIST_MAX_HEIGHT <= window.innerHeight;
+    return below
+      ? { top: rect.bottom + 4, left: rect.left, width: rect.width }
+      : { bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width };
+  }
 
   function refreshSuggestions(nextValue: string, cursorPos: number) {
     // Segment lookup still needs the full tokenizer vocabulary (a typed qualified form must
@@ -82,7 +109,7 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
   }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={wrapperRef} style={{ position: 'relative' }}>
       <Input
         ref={inputRef}
         size="sm"
@@ -101,13 +128,13 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
           if (event.key === 'Escape') setShowSuggestions(false);
         }}
       />
-      {showSuggestions && suggestions.length > 0 ? (
+      {showSuggestions && suggestions.length > 0 ? createPortal(
         <div
           style={{
-            position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 'var(--space-2)', zIndex: 10,
+            position: 'fixed', ...listPosition(), zIndex: 1000,
             background: 'var(--surface-card)', border: '1px solid var(--border-default)',
             borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-3)', overflow: 'hidden',
-            maxHeight: 200, overflowY: 'auto',
+            maxHeight: LIST_MAX_HEIGHT, overflowY: 'auto',
           }}
         >
           {suggestions.map((name) => (
@@ -125,7 +152,8 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
               {name}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       ) : null}
       {errors.length > 0 ? (
         <div style={{ marginTop: 'var(--space-2)', fontSize: 'var(--text-2xs)', color: 'var(--text-negative)' }}>
