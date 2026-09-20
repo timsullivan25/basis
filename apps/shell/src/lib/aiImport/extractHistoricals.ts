@@ -1,5 +1,5 @@
 import type { ParsedPeriod, ParsedSourceLine, ParsedWorkbook } from '../../data';
-import type { ExtractionPlan, PeriodColumn, PeriodColumnKind, SheetPlan } from './extractionPlan';
+import type { ExtractionPlan, PeriodColumn, PeriodColumnKind, SectionGroup, SheetPlan } from './extractionPlan';
 import { columnIndex, type GridCell, type SheetGrid } from './workbookGrid';
 
 /** Which period columns to pull. 'lowest' takes the finest grain present (quarters over years), for when Basis aggregates annuals itself. */
@@ -30,6 +30,27 @@ function toIsoDate(cell: GridCell): string {
 /** How periods from different sheets are matched up: by name, ignoring case and punctuation ("FY-2024" = "FY 2024"). */
 function periodKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/** Names of the groups whose row range contains this row, outermost first — how a repeated label gets its context. */
+function groupPath(rowNumber: number, groups: SectionGroup[]): string[] {
+  return groups
+    .filter((g) => rowNumber >= g.firstRow && rowNumber <= g.lastRow)
+    .sort((a, b) => a.firstRow - b.firstRow || b.lastRow - a.lastRow)
+    .map((g) => g.title);
+}
+
+/** Two groups where neither contains the other but they share rows — the nesting is ambiguous. */
+function partialOverlaps(groups: SectionGroup[]): [SectionGroup, SectionGroup][] {
+  const pairs: [SectionGroup, SectionGroup][] = [];
+  groups.forEach((a, i) =>
+    groups.slice(i + 1).forEach((b) => {
+      const shares = a.firstRow <= b.lastRow && b.firstRow <= a.lastRow;
+      const nested = (a.firstRow <= b.firstRow && a.lastRow >= b.lastRow) || (b.firstRow <= a.firstRow && b.lastRow >= a.lastRow);
+      if (shares && !nested) pairs.push([a, b]);
+    }),
+  );
+  return pairs;
 }
 
 interface SheetExtraction {
@@ -75,7 +96,17 @@ function extractSheet(grid: SheetGrid, plan: SheetPlan, granularity: Granularity
         return typeof value === 'number' ? value : null;
       });
       if (values.every((v) => v === null)) continue; // header / spacer rows carry no data
-      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: section.name, name: label, values });
+      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: section.name, name: [...groupPath(rowNumber, section.groups), label].join(' — '), values });
+    }
+  }
+  for (const section of plan.sections) {
+    for (const [a, b] of partialOverlaps(section.groups)) {
+      warnings.push(`Sheet "${plan.sheet}", section "${section.name}": groups "${a.title}" and "${b.title}" overlap without nesting.`);
+    }
+    const names = lines.filter((l) => l.section === section.name).map((l) => l.name);
+    const repeated = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
+    if (repeated.length > 0) {
+      warnings.push(`Sheet "${plan.sheet}", section "${section.name}": ${repeated.length} repeated line name${repeated.length === 1 ? '' : 's'} (e.g. "${repeated[0]}") — a group may be missing.`);
     }
   }
   for (const [i, column] of columns.entries()) {

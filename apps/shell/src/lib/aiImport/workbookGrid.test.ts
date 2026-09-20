@@ -48,6 +48,20 @@ describe('readWorkbookGrids', () => {
   });
 });
 
+describe('readWorkbookGrids — sheets that do not start at A1', () => {
+  it('keeps absolute row numbers and column positions when the first populated cell is C3', async () => {
+    const wb = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([['Revenue', 100]]);
+    XLSX.utils.sheet_add_aoa(sheet, [['Revenue', 100]], { origin: 'C3' });
+    delete sheet['A1'];
+    delete sheet['B1'];
+    sheet['!ref'] = 'C3:D3';
+    XLSX.utils.book_append_sheet(wb, sheet, 'Offset');
+    const [grid] = await readWorkbookGrids(new Blob([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })]));
+    expect(grid.rows).toEqual([{ rowNumber: 3, cells: [null, null, 'Revenue', 100] }]);
+  });
+});
+
 describe('FakeLlmProvider', () => {
   it('returns the canned response and records requests', async () => {
     const provider = new FakeLlmProvider({ ok: true });

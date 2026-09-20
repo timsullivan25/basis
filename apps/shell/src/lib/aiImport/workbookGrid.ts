@@ -59,7 +59,17 @@ export async function readWorkbookGrids(file: Blob): Promise<SheetGrid[]> {
   return workbook.SheetNames.map((name, i) => {
     const sheet = workbook.Sheets[name];
     const hidden = (workbook.Workbook?.Sheets?.[i]?.Hidden ?? 0) !== 0;
-    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: null });
+    // Anchor at A1 explicitly: by default sheet_to_json starts at the first populated cell, which would silently
+    // renumber every row and column of a model whose used range begins at, say, B2.
+    const ref = sheet['!ref'];
+    const data = ref
+      ? XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          raw: true,
+          defval: null,
+          range: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: XLSX.utils.decode_range(ref).e }),
+        })
+      : [];
     return buildSheetGrid(name, hidden, data);
   });
 }

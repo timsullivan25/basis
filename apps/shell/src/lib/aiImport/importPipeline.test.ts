@@ -51,8 +51,8 @@ const MODEL_PLAN: SheetPlan = {
     { column: 'H', kind: 'Quarter', actual: true },
   ],
   sections: [
-    { name: 'Income Statement', firstRow: 9, lastRow: 11 },
-    { name: 'Balance Sheet', firstRow: 14, lastRow: 19 },
+    { name: 'Income Statement', firstRow: 9, lastRow: 11, groups: [] },
+    { name: 'Balance Sheet', firstRow: 14, lastRow: 19, groups: [] },
   ],
 };
 
@@ -73,7 +73,7 @@ describe('parseSheetPlan', () => {
   });
 
   it('collects every problem: wrong sheet, bad column, inverted rows, bad confidence', () => {
-    const bad = rawResult(MODEL_PLAN, { labelColumn: '3', sections: [{ name: 'IS', firstRow: 9, lastRow: 2 }], confidence: 'sure', sheet: 'Nope' });
+    const bad = rawResult(MODEL_PLAN, { labelColumn: '3', sections: [{ name: 'IS', firstRow: 9, lastRow: 2, groups: [] }], confidence: 'sure', sheet: 'Nope' });
     try {
       parseSheetPlan(bad, 'Model', [MODEL]);
       expect.unreachable();
@@ -186,6 +186,8 @@ describe('extractHistoricals — single sheet', () => {
     expect(warnings).toEqual([
       'Sheet "Model", column D: no readable period-end date.',
       'Sheet "Model", column E: no readable period-end date.',
+      // The fixture's two "Deferred Revenue" lines (current and non-current) share a name and no groups were given.
+      'Sheet "Model", section "Balance Sheet": 1 repeated line name (e.g. "Deferred Revenue") — a group may be missing.',
     ]);
   });
 });
@@ -204,8 +206,8 @@ describe('extractHistoricals — supporting schedules beyond the three statement
     sheet: 'Sched', labelColumn: 'A', dateRow: null, nameRow: 1,
     periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
     sections: [
-      { name: 'Segment Breakout', firstRow: 3, lastRow: 4 },
-      { name: 'Debt Schedule', firstRow: 6, lastRow: 7 },
+      { name: 'Segment Breakout', firstRow: 3, lastRow: 4, groups: [] },
+      { name: 'Debt Schedule', firstRow: 6, lastRow: 7, groups: [] },
     ],
   };
 
@@ -220,9 +222,79 @@ describe('extractHistoricals — supporting schedules beyond the three statement
   });
 
   it('warns when two sections claim the same row, since it would be imported twice', () => {
-    const overlapping = { ...plan, sections: [{ name: 'Segment Breakout', firstRow: 3, lastRow: 5 }, { name: 'Debt Schedule', firstRow: 5, lastRow: 7 }] };
+    const overlapping = { ...plan, sections: [{ name: 'Segment Breakout', firstRow: 3, lastRow: 5, groups: [] }, { name: 'Debt Schedule', firstRow: 5, lastRow: 7, groups: [] }] };
     const { warnings } = extractHistoricals([SCHEDULES], planOf(overlapping));
     expect(warnings).toContain('Sheet "Sched", row 5: in both "Segment Breakout" and "Debt Schedule" — imported twice.');
+  });
+});
+
+describe('groups — repeated labels keep their context', () => {
+  //   A                          B      C
+  const SEGMENTS = buildSheetGrid('Seg', false, [
+    ['Line', 'FY 2024', 'FY 2025'],
+    ['Segments'],                     // 2: section title
+    ['Academia'],                     // 3: group header
+    ['Revenue', 60, 70],              // 4
+    ['% of Revenue'],                 // 5: nested header
+    ['Costs', 20, 22],                // 6
+    ['Life Sciences'],                // 7: group header
+    ['Revenue', 40, 50],              // 8
+    ['Total', 100, 120],              // 9: outside any group
+  ]);
+  const base: SheetPlan = {
+    sheet: 'Seg', labelColumn: 'A', dateRow: null, nameRow: 1,
+    periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
+    sections: [{
+      name: 'Segments', firstRow: 3, lastRow: 9,
+      groups: [
+        { title: 'Academia', headerRow: 3, firstRow: 4, lastRow: 6 },
+        { title: '% of Revenue', headerRow: 5, firstRow: 6, lastRow: 6 },
+        { title: 'Life Sciences', headerRow: 7, firstRow: 8, lastRow: 8 },
+      ],
+    }],
+  };
+  const names = (plan: SheetPlan) => extractHistoricals([SEGMENTS], planOf(plan)).workbook.lines.map((l) => l.name);
+
+  it('prefixes each line with its enclosing groups, outermost first, and leaves ungrouped lines alone', () => {
+    expect(names(base)).toEqual([
+      'Academia — Revenue',
+      'Academia — % of Revenue — Costs',
+      'Life Sciences — Revenue',
+      'Total',
+    ]);
+  });
+
+  it('makes previously repeated names unique, so no duplicate warning fires', () => {
+    expect(extractHistoricals([SEGMENTS], planOf(base)).warnings.filter((w) => w.includes('repeated'))).toEqual([]);
+  });
+
+  it('warns when names still repeat because no groups were given', () => {
+    const { warnings } = extractHistoricals([SEGMENTS], planOf({ ...base, sections: [{ ...base.sections[0], groups: [] }] }));
+    expect(warnings).toContain('Sheet "Seg", section "Segments": 1 repeated line name (e.g. "Revenue") — a group may be missing.');
+  });
+
+  it('warns about groups that overlap without nesting', () => {
+    const crossing = { ...base, sections: [{ ...base.sections[0], groups: [
+      { title: 'A', headerRow: 3, firstRow: 4, lastRow: 6 },
+      { title: 'B', headerRow: 5, firstRow: 6, lastRow: 8 },
+    ] }] };
+    expect(extractHistoricals([SEGMENTS], planOf(crossing)).warnings.some((w) => w.includes('groups "A" and "B" overlap without nesting'))).toBe(true);
+  });
+
+  it('parses groups from a provider answer, defaulting to none and rejecting a malformed group', () => {
+    const grids = [SEGMENTS];
+    const withGroups = parseSheetPlan(rawResult(base), 'Seg', grids);
+    expect(withGroups.plan.sections[0].groups).toHaveLength(3);
+    const noGroups = parseSheetPlan(rawResult({ ...base, sections: [{ name: 'Segments', firstRow: 3, lastRow: 9 }] as never }), 'Seg', grids);
+    expect(noGroups.plan.sections[0].groups).toEqual([]);
+    const bad = rawResult({ ...base, sections: [{ ...base.sections[0], groups: [{ title: 'X', headerRow: 5, firstRow: 4, lastRow: 6 }] }] });
+    expect(() => parseSheetPlan(bad, 'Seg', grids)).toThrow(PlanError);
+  });
+
+  it('tells the model how to describe groups', async () => {
+    const provider = new FakeLlmProvider(rawResult(base));
+    await planSheets(provider, [SEGMENTS], index, [{ name: 'Seg', sections: [] }], []);
+    expect(provider.requests[0].system).toContain('groups (inside each section)');
   });
 });
 
@@ -240,12 +312,12 @@ describe('extractHistoricals — several sheets consolidated', () => {
   const isPlan: SheetPlan = {
     sheet: 'IS', labelColumn: 'A', dateRow: null, nameRow: 1,
     periodColumns: ['B', 'C', 'D'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
-    sections: [{ name: 'Income Statement', firstRow: 2, lastRow: 3 }],
+    sections: [{ name: 'Income Statement', firstRow: 2, lastRow: 3, groups: [] }],
   };
   const bsPlan: SheetPlan = {
     sheet: 'BS', labelColumn: 'A', dateRow: null, nameRow: 1,
     periodColumns: ['B', 'C'].map((column) => ({ column, kind: 'FY' as const, actual: true })),
-    sections: [{ name: 'Balance Sheet', firstRow: 2, lastRow: 2 }],
+    sections: [{ name: 'Balance Sheet', firstRow: 2, lastRow: 2, groups: [] }],
   };
 
   it('aligns periods by name, ignoring punctuation, and fills gaps with null', () => {

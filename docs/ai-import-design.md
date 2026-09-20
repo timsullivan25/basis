@@ -68,6 +68,11 @@ supporting schedules (segments, KPIs, EBITDA build, working capital, debt, credi
 matches a Basis section is written under that exact name; otherwise under the sheet's own heading. Assumptions,
 drivers, scenarios and valuation/returns analysis are left out. Known limitation: sub-headers *inside* a block
 (a segment's name, a debt sub-block like "Ending balance") are dropped, so repeated labels ("Revenue", tranche
-names) lose their context — see roadmap (sub-lines / duplicate handling).
+names) lose their context — addressed by **groups** below.
+
+Groups: each planned section may list titled sub-blocks (title, header row, inclusive row range; nesting by
+containment). Extraction names lines "<group> — <label>" (outermost first) so repeated labels stay distinct.
+Code then flags any names that *still* repeat in a section — a mechanical check for a missing group. Planned
+next: use that flag to trigger one targeted LLM follow-up for just that section, then re-check.
 
 Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adapter and dev proxy.

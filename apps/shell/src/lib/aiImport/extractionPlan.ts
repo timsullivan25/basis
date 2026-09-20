@@ -12,6 +12,21 @@ export interface PeriodColumn {
   actual: boolean;
 }
 
+/**
+ * A titled group of rows inside a section — a segment's block, a debt sub-block, "Revenue by Geography". Lines
+ * inside it are named "<title> — <label>" so repeated labels stay distinguishable. Groups nest by containment
+ * (a group's range inside another's is its child); there is no explicit level.
+ */
+export interface SectionGroup {
+  /** The group's name, cleaned of trailing colons and the like. */
+  title: string;
+  /** The row that introduces the group (carries no numbers of its own). */
+  headerRow: number;
+  /** The group's line items, inclusive. */
+  firstRow: number;
+  lastRow: number;
+}
+
 /** One block of historical line items on a sheet — a primary statement or a supporting schedule (segments, KPIs, debt, ...). */
 export interface SectionRange {
   /** Section name in the Basis Template: the exact Basis section name when the block corresponds to one (e.g. "Income Statement", "EBITDA"), otherwise the sheet's own heading (e.g. "Segment Breakout"). */
@@ -19,6 +34,8 @@ export interface SectionRange {
   /** 1-based source rows, inclusive: the first line item through the last (totals included). */
   firstRow: number;
   lastRow: number;
+  /** Sub-blocks inside the range, possibly nested. Empty when line labels are already unambiguous. */
+  groups: SectionGroup[];
 }
 
 /** How to read one sheet: everything the executor needs, none of the values. */
@@ -126,7 +143,24 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
         issues.push(`invalid sections entry ${JSON.stringify(entry)}`);
         continue;
       }
-      sections.push({ name: entry.name.trim(), firstRow: entry.firstRow, lastRow: entry.lastRow });
+      const groups: SectionGroup[] = [];
+      for (const g of Array.isArray(entry.groups) ? entry.groups : []) {
+        if (
+          !isObject(g) ||
+          typeof g.title !== 'string' ||
+          g.title.trim() === '' ||
+          !isRow(g.headerRow) ||
+          !isRow(g.firstRow) ||
+          !isRow(g.lastRow) ||
+          g.headerRow >= g.firstRow ||
+          g.firstRow > g.lastRow
+        ) {
+          issues.push(`invalid group in section "${entry.name}": ${JSON.stringify(g)}`);
+          continue;
+        }
+        groups.push({ title: g.title.trim(), headerRow: g.headerRow, firstRow: g.firstRow, lastRow: g.lastRow });
+      }
+      sections.push({ name: entry.name.trim(), firstRow: entry.firstRow, lastRow: entry.lastRow, groups });
     }
   }
 
@@ -172,8 +206,21 @@ export const SHEET_PLAN_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'firstRow', 'lastRow'],
-        properties: { name: { type: 'string' }, firstRow: { type: 'integer' }, lastRow: { type: 'integer' } },
+        required: ['name', 'firstRow', 'lastRow', 'groups'],
+        properties: {
+          name: { type: 'string' },
+          firstRow: { type: 'integer' },
+          lastRow: { type: 'integer' },
+          groups: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['title', 'headerRow', 'firstRow', 'lastRow'],
+              properties: { title: { type: 'string' }, headerRow: { type: 'integer' }, firstRow: { type: 'integer' }, lastRow: { type: 'integer' } },
+            },
+          },
+        },
       },
     },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] },

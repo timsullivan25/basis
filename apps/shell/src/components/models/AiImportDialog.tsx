@@ -288,12 +288,28 @@ export function AiImportDialog({ open, file, companyName, sections, onClose, onD
                       {sheet.sheet} <span style={mutedText}>· labels in column {sheet.labelColumn}</span>
                     </span>
                     {sheet.sections.map((section, sectionIdx) => (
-                      <div key={`${section.name}-${sectionIdx}`} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                        <span style={{ width: 200, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>{section.name}</span>
-                        <span style={mutedText}>rows</span>
-                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.firstRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'firstRow', e.target.value)} />
-                        <span style={mutedText}>to</span>
-                        <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.lastRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'lastRow', e.target.value)} />
+                      <div key={`${section.name}-${sectionIdx}`} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                          <span style={{ width: 200, fontSize: 'var(--text-sm)', color: 'var(--text-body)' }}>{section.name}</span>
+                          <span style={mutedText}>rows</span>
+                          <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.firstRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'firstRow', e.target.value)} />
+                          <span style={mutedText}>to</span>
+                          <Input size="sm" mono type="number" style={{ width: 84 }} selectOnFocus value={section.lastRow} onChange={(e) => updateRange(sheetIdx, sectionIdx, 'lastRow', e.target.value)} />
+                        </div>
+                        {section.groups.length > 0 ? (
+                          <details style={{ marginLeft: 200 + 16 }}>
+                            <summary style={{ ...mutedText, cursor: 'pointer' }}>
+                              {section.groups.length} group{section.groups.length === 1 ? '' : 's'} — lines are named "group — label"
+                            </summary>
+                            <ul style={{ ...mutedText, margin: 'var(--space-2) 0 0', paddingLeft: 'var(--space-6)' }}>
+                              {section.groups.map((group) => (
+                                <li key={`${group.headerRow}-${group.title}`}>
+                                  {group.title} <span style={{ fontFamily: 'var(--font-mono)' }}>· rows {group.firstRow}–{group.lastRow}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : null}
                       </div>
                     ))}
                   </div>
