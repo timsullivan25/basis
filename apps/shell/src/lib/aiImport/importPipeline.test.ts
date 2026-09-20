@@ -4,6 +4,7 @@ import { parseBasisTemplate } from '../parseBasisTemplate';
 import { FakeLlmProvider } from './fakeLlmProvider';
 import { extractHistoricals, ExtractionError } from './extractHistoricals';
 import { type ExtractionPlan, PlanError, parseSheetPlan, planNeedsConfirmation, type SheetPlan } from './extractionPlan';
+import { defaultPeriodKeys, periodOptions } from './periodOptions';
 import { planSheets } from './planSheets';
 import { buildSchemaLineIndex } from './schemaLineIndex';
 import { buildSheetEvidence } from './sheetEvidence';
@@ -228,6 +229,40 @@ describe('extractHistoricals — supporting schedules beyond the three statement
   });
 });
 
+describe('period options and explicit period selection', () => {
+  const options = periodOptions([MODEL], planOf(MODEL_PLAN));
+
+  it('lists every period column once, marking which can be imported (reported FY/Quarter/Semi-Annual only)', () => {
+    expect(options.map((o) => [o.name, o.kind, o.actual, o.importable])).toEqual([
+      ['FY-2024', 'FY', true, true],
+      ['FY-2025', 'FY', true, true],
+      ['LTM', 'LTM', true, false], // reported, but not a period Basis models
+      ['FY-2026', 'FY', false, false], // projection
+      ['Q4-2025', 'Quarter', true, true],
+    ]);
+  });
+
+  it('defaults to annual actuals, or the finest grain present', () => {
+    expect([...defaultPeriodKeys(options, 'annual')]).toEqual(['fy2024', 'fy2025']);
+    expect([...defaultPeriodKeys(options, 'lowest')]).toEqual(['q42025']);
+  });
+
+  it('imports exactly the chosen periods, including a mix of types', () => {
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN), { keys: new Set(['fy2025', 'q42025']) });
+    expect(workbook.periods.map((p) => [p.name, p.type])).toEqual([['FY-2025', 'FY'], ['Q4-2025', 'Quarter']]);
+    expect(workbook.lines.find((l) => l.name === 'Revenue')?.values).toEqual([120, 31]);
+  });
+
+  it('never imports a projection or LTM column, even if its key is selected', () => {
+    const { workbook } = extractHistoricals([MODEL], planOf(MODEL_PLAN), { keys: new Set(['fy2024', 'fy2026', 'ltm']) });
+    expect(workbook.periods.map((p) => p.name)).toEqual(['FY-2024']);
+  });
+
+  it('errors clearly when nothing is selected', () => {
+    expect(() => extractHistoricals([MODEL], planOf(MODEL_PLAN), { keys: new Set() })).toThrow('No periods are selected.');
+  });
+});
+
 describe('groups — repeated labels keep their context', () => {
   //   A                          B      C
   const SEGMENTS = buildSheetGrid('Seg', false, [
@@ -335,7 +370,7 @@ describe('extractHistoricals — several sheets consolidated', () => {
     const noActual = { ...bsPlan, periodColumns: bsPlan.periodColumns.map((c) => ({ ...c, actual: false })) };
     const { workbook, warnings } = extractHistoricals([IS, BS], planOf(isPlan, noActual));
     expect(workbook.lines.map((l) => l.name)).toEqual(['Revenue', 'Net Income']);
-    expect(warnings.some((w) => w.includes('Sheet "BS": no actual annual period columns'))).toBe(true);
+    expect(warnings.some((w) => w.includes('Sheet "BS": none of the selected periods are on this sheet'))).toBe(true);
   });
 });
 

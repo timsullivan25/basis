@@ -1,9 +1,12 @@
 import type { ParsedPeriod, ParsedSourceLine, ParsedWorkbook } from '../../data';
-import type { ExtractionPlan, PeriodColumn, PeriodColumnKind, SectionGroup, SheetPlan } from './extractionPlan';
+import type { ExtractionPlan, PeriodColumn, SectionGroup, SheetPlan } from './extractionPlan';
+import { defaultPeriodKeys, isImportableKind, periodKey, periodName, periodOptions, type Granularity } from './periodOptions';
 import { columnIndex, type GridCell, type SheetGrid } from './workbookGrid';
 
-/** Which period columns to pull. 'lowest' takes the finest grain present (quarters over years), for when Basis aggregates annuals itself. */
-export type Granularity = 'annual' | 'lowest';
+export type { Granularity } from './periodOptions';
+
+/** Which periods to import: a granularity preset, or an explicit set of period keys (see periodOptions). */
+export type PeriodChoice = Granularity | { keys: ReadonlySet<string> };
 
 export interface ExtractionResult {
   workbook: ParsedWorkbook;
@@ -13,23 +16,10 @@ export interface ExtractionResult {
 
 export class ExtractionError extends Error {}
 
-const GRAIN_ORDER: PeriodColumnKind[] = ['Quarter', 'Semi-Annual', 'FY'];
-
-function chooseKind(columns: PeriodColumn[], granularity: Granularity): PeriodColumnKind | undefined {
-  const present = new Set(columns.filter((c) => c.actual).map((c) => c.kind));
-  if (granularity === 'annual') return present.has('FY') ? 'FY' : undefined;
-  return GRAIN_ORDER.find((kind) => present.has(kind));
-}
-
 function toIsoDate(cell: GridCell): string {
   if (typeof cell !== 'string') return '';
   const parsed = new Date(cell);
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
-}
-
-/** How periods from different sheets are matched up: by name, ignoring case and punctuation ("FY-2024" = "FY 2024"). */
-function periodKey(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
 /** Names of the groups whose row range contains this row, outermost first — how a repeated label gets its context. */
@@ -59,23 +49,21 @@ interface SheetExtraction {
   lines: { id: string; section: string; name: string; values: (number | null)[] }[];
 }
 
-function extractSheet(grid: SheetGrid, plan: SheetPlan, granularity: Granularity, warnings: string[]): SheetExtraction | null {
-  const kind = chooseKind(plan.periodColumns, granularity);
-  if (!kind) {
-    warnings.push(`Sheet "${plan.sheet}": no actual ${granularity === 'annual' ? 'annual ' : ''}period columns were identified, so it was skipped.`);
+function extractSheet(grid: SheetGrid, plan: SheetPlan, keys: ReadonlySet<string>, warnings: string[]): SheetExtraction | null {
+  const columns: PeriodColumn[] = plan.periodColumns.filter((c) => c.actual && isImportableKind(c.kind) && keys.has(periodKey(periodName(grid, plan, c))));
+  if (columns.length === 0) {
+    warnings.push(`Sheet "${plan.sheet}": none of the selected periods are on this sheet, so it was skipped.`);
     return null;
   }
-  const columns = plan.periodColumns.filter((c) => c.actual && c.kind === kind);
 
   const rowByNumber = new Map(grid.rows.map((row) => [row.rowNumber, row.cells]));
   const cellAt = (rowNumber: number | null, column: string): GridCell =>
     rowNumber === null ? null : (rowByNumber.get(rowNumber)?.[columnIndex(column)] ?? null);
 
   const periods: ParsedPeriod[] = columns.map((c) => {
-    const nameCell = cellAt(plan.nameRow, c.column);
     const date = toIsoDate(cellAt(plan.dateRow, c.column));
     if (!date) warnings.push(`Sheet "${plan.sheet}", column ${c.column}: no readable period-end date.`);
-    return { type: kind as ParsedPeriod['type'], date, name: nameCell === null ? c.column : String(nameCell) };
+    return { type: c.kind as ParsedPeriod['type'], date, name: periodName(grid, plan, c) };
   });
 
   const labelCol = columnIndex(plan.labelColumn);
@@ -123,17 +111,18 @@ function extractSheet(grid: SheetGrid, plan: SheetPlan, granularity: Granularity
  * Several sheets consolidate into one workbook: periods are matched across sheets by name, and a line gets
  * null for any period its sheet lacks. Mismatches are warned about, never guessed at.
  */
-export function extractHistoricals(grids: SheetGrid[], plan: ExtractionPlan, granularity: Granularity = 'annual'): ExtractionResult {
+export function extractHistoricals(grids: SheetGrid[], plan: ExtractionPlan, choice: PeriodChoice = 'annual'): ExtractionResult {
   const warnings: string[] = [];
+  const selected = typeof choice === 'string' ? defaultPeriodKeys(periodOptions(grids, plan), choice) : choice.keys;
   const extractions: SheetExtraction[] = [];
   for (const sheetPlan of plan.sheets) {
     const grid = grids.find((g) => g.name === sheetPlan.sheet);
     if (!grid) throw new ExtractionError(`Sheet "${sheetPlan.sheet}" not found.`);
-    const extraction = extractSheet(grid, sheetPlan, granularity, warnings);
+    const extraction = extractSheet(grid, sheetPlan, selected, warnings);
     if (extraction) extractions.push(extraction);
   }
   if (extractions.length === 0) {
-    throw new ExtractionError(granularity === 'annual' ? 'No actual annual period columns were identified.' : 'No actual period columns were identified.');
+    throw new ExtractionError(selected.size === 0 ? 'No periods are selected.' : 'None of the selected periods were found in the planned sheets.');
   }
 
   // Union of periods across sheets, keyed by name; first sheet to mention a period supplies its type and date.
