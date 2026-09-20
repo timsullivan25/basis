@@ -82,7 +82,11 @@ export function llmProxyPlugin(options: LlmProxyOptions): Plugin {
               await mkdir(options.cacheDir, { recursive: true })
               await writeFile(cacheFile, text)
             } else {
-              log.warn(`[llm] reply not cached (unclean finish or no JSON object): ${text.slice(0, 200)}`)
+              // Keep the exchange so a bad reply can be replayed and diagnosed.
+              const failedDir = join(options.cacheDir, 'failed')
+              await mkdir(failedDir, { recursive: true })
+              await writeFile(join(failedDir, `${Date.now()}.json`), JSON.stringify({ request: JSON.parse(body), response: JSON.parse(text) }, null, 2))
+              log.warn('[llm] reply not cached (unclean finish or no JSON object); saved to .llm-cache/failed/')
             }
           } else {
             log.error(`[llm] ${upstream.status} in ${seconds}s: ${text.slice(0, 500)}`)
