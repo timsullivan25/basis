@@ -3,11 +3,16 @@ import { createPortal } from 'react-dom';
 import { FORMULA_FUNCTION_NAMES, getFormulaSegment } from './formulaUtils';
 import { compileFormula, formatFormula, type NameIndex, type ResolvedFormula } from '../../lib/engine/resolve';
 
-/** One autocomplete row — a line name (inserted as-is) or a function (inserted with "()" and the
- *  cursor left between them). */
+/** One autocomplete row — a function (inserted with "()" and the cursor left between them) or a
+ *  line. A line row shows its name prominently and its section muted; what actually gets
+ *  inserted (`text`) is the qualified "Section.Name" form only when the name is shared. */
 interface Suggestion {
+  /** What goes into the formula. */
   text: string;
   isFunction: boolean;
+  /** Lines only — the display name and section shown in the list. */
+  name?: string;
+  sectionName?: string;
 }
 
 interface FormulaInputProps {
@@ -92,18 +97,32 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     }
     const lower = word.toLowerCase();
     // Functions whose name starts with what's typed come first (a fully typed "sum" still offers
-    // "sum()" — unless its "(" is already there). Then line names containing it, but only ever
-    // strings that would actually resolve if picked — an ambiguous name's bare form is
-    // deliberately excluded here (see NameIndex.suggestions).
+    // "sum()" — unless its "(" is already there). Then lines, ranked: name starts with the text,
+    // name contains it, then a match only via the section / qualified form ("Debt Schedule.Int"
+    // or just "debt sched") — so a qualified name can always be searched for, whether or not
+    // the bare name happens to be shared.
     const parenFollows = nextValue.slice(end).trimStart().startsWith('(');
     const functions: Suggestion[] = FORMULA_FUNCTION_NAMES.filter(
       (f) => f.toLowerCase().startsWith(lower) && !(parenFollows && f.toLowerCase() === lower),
     ).map((f) => ({ text: f, isFunction: true }));
-    const lines: Suggestion[] = nameIndex
+    const ranked = nameIndex
       .suggestions(ownLineId)
-      .filter((c) => c.toLowerCase() !== lower && c.toLowerCase().includes(lower))
-      .map((c) => ({ text: c, isFunction: false }));
-    setSuggestions([...functions, ...lines].slice(0, 8));
+      .map((entry) => {
+        const name = entry.name.toLowerCase();
+        const qualifiedName = `${entry.sectionName}.${entry.name}`.toLowerCase();
+        const rank = name.startsWith(lower) ? 0 : name.includes(lower) ? 1 : qualifiedName.includes(lower) ? 2 : -1;
+        return { entry, rank };
+      })
+      // Not what's already fully typed — nothing left to complete.
+      .filter(({ entry, rank }) => rank >= 0 && entry.insertText.toLowerCase() !== lower);
+    ranked.sort((a, b) => a.rank - b.rank); // stable: schema order within a rank
+    const lines: Suggestion[] = ranked.map(({ entry }) => ({
+      text: entry.insertText,
+      isFunction: false,
+      name: entry.name,
+      sectionName: entry.sectionName,
+    }));
+    setSuggestions([...functions, ...lines].slice(0, 20));
   }
 
   function commitText(t: string) {
@@ -205,7 +224,7 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
         >
           {suggestions.map((suggestion, index) => (
             <button
-              key={`${suggestion.isFunction ? 'fn' : 'line'}:${suggestion.text}`}
+              key={`${index}:${suggestion.text}`}
               type="button"
               ref={index === highlighted ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
               onMouseDown={(event) => event.preventDefault()}
@@ -224,7 +243,10 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
                   <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>function</span>
                 </>
               ) : (
-                suggestion.text
+                <>
+                  <span>{suggestion.name}</span>
+                  <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>{suggestion.sectionName}</span>
+                </>
               )}
             </button>
           ))}

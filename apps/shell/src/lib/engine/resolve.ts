@@ -18,6 +18,18 @@ export interface NameIndexInput {
   drivers?: Array<{ id: string; name: string }>;
 }
 
+/** One line offered by autocomplete. `insertText` is what gets typed into the formula: the
+ *  qualified "Section.Name" form exactly when another line ANYWHERE in the schema shares the
+ *  name — the same rule formatFormula uses to display a reference, so what autocomplete inserts
+ *  and what reopening the line shows always match. */
+export interface NameSuggestion {
+  lineId: string;
+  name: string;
+  sectionName: string;
+  insertText: string;
+  qualified: boolean;
+}
+
 export interface NameIndex {
   /** Every matchable string — plain name, plus "Section.Name" for every line — fed straight
    *  into tokenize()/parseFormula() as the candidate list. */
@@ -30,11 +42,10 @@ export interface NameIndex {
   /** Current display name for a line, and whether some other line currently shares its
    *  (unqualified) name — used by formatFormula to decide whether to qualify on display. */
   describe(lineId: string): { name: string; qualifiedName: string; ambiguous: boolean } | undefined;
-  /** Autocomplete suggestions for a formula being edited on `fromLineId` — unlike `candidates()`
-   *  (the full tokenizer vocabulary), this omits anything that would fail to resolve if picked:
-   *  a name ambiguous from this line's perspective appears only in its qualified form(s), and a
-   *  name only this line itself has (nothing else to resolve to) doesn't appear at all. */
-  suggestions(fromLineId: string): string[];
+  /** Autocomplete entries for a formula being edited on `fromLineId`: every other named line,
+   *  once each, in schema order (the caller filters and ranks by what's typed). Never the line
+   *  itself — a bare self-reference wouldn't resolve, and it would self-cycle anyway. */
+  suggestions(fromLineId: string): NameSuggestion[];
   /** Current display name for a driver — used by formatFormula to render a driverRef node. No
    *  ambiguity/qualification concept (unlike describe()), since a driver is never resolved from
    *  typed text — this is display-only. */
@@ -92,27 +103,17 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
     },
 
     suggestions(fromLineId) {
-      const seen = new Set<string>();
-      const result: string[] = [];
-      for (const group of byNameKey.values()) {
-        const remaining = group.filter((g) => g.lineId !== fromLineId);
-        if (remaining.length === 0) continue; // only this line has the name — nothing to resolve to
-        if (remaining.length === 1) {
-          const target = entries.find((e) => e.line.id === remaining[0].lineId)!;
-          if (!seen.has(target.line.name)) {
-            seen.add(target.line.name);
-            result.push(target.line.name);
-          }
-        } else {
-          for (const g of remaining) {
-            const target = entries.find((e) => e.line.id === g.lineId)!;
-            const qualified = `${g.sectionName}.${target.line.name}`;
-            if (!seen.has(qualified)) {
-              seen.add(qualified);
-              result.push(qualified);
-            }
-          }
-        }
+      const result: NameSuggestion[] = [];
+      for (const { line, section } of entries) {
+        if (line.id === fromLineId || !line.name.trim()) continue;
+        const qualified = (byNameKey.get(line.name.trim().toLowerCase()) ?? []).length > 1;
+        result.push({
+          lineId: line.id,
+          name: line.name,
+          sectionName: section.name,
+          insertText: qualified ? `${section.name}.${line.name}` : line.name,
+          qualified,
+        });
       }
       return result;
     },

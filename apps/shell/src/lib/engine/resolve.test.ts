@@ -216,32 +216,42 @@ describe('remapFormulaIds', () => {
 });
 
 describe('buildNameIndex — suggestions', () => {
-  it('offers a bare suggestion for a name unambiguous from this line', () => {
+  const byLine = (suggestions: ReturnType<ReturnType<typeof buildNameIndex>['suggestions']>, lineId: string) =>
+    suggestions.find((x) => x.lineId === lineId)!;
+
+  it('inserts the bare name for a name no other line shares', () => {
     const index = buildNameIndex(fixtureSchema());
-    expect(index.suggestions('op-income')).toContain('Revenue');
+    const revenue = byLine(index.suggestions('op-income'), 'revenue');
+    expect(revenue.insertText).toBe('Revenue');
+    expect(revenue.qualified).toBe(false);
   });
 
-  it('never offers a bare suggestion for a name ambiguous from this line', () => {
+  it('inserts the qualified name, for every line, when the name is shared anywhere', () => {
     const index = buildNameIndex(fixtureSchema());
     const suggestions = index.suggestions('op-income');
-    expect(suggestions).not.toContain('Depreciation & Amortization');
-    expect(suggestions).toContain('Income Statement.Depreciation & Amortization');
-    expect(suggestions).toContain('Cash Flow Statement.Depreciation & Amortization');
+    expect(byLine(suggestions, 'da-is').insertText).toBe('Income Statement.Depreciation & Amortization');
+    expect(byLine(suggestions, 'da-cf').insertText).toBe('Cash Flow Statement.Depreciation & Amortization');
   });
 
-  it('offers a bare suggestion for a pull-through line reading its own name elsewhere', () => {
+  it('qualifies a duplicated name even when suggesting from one of the duplicates (matches what reopening shows)', () => {
     const index = buildNameIndex(fixtureSchema());
-    // From da-cf's own formula, "Depreciation & Amortization" resolves unambiguously to da-is
-    // once self is excluded — so the bare form is fine to suggest here, unlike from op-income.
-    const suggestions = index.suggestions('da-cf');
-    expect(suggestions).toContain('Depreciation & Amortization');
-    expect(suggestions).not.toContain('Income Statement.Depreciation & Amortization');
+    // From da-cf's own formula the bare name would resolve to da-is once self is excluded — but
+    // formatFormula shows it qualified (the name IS shared), so autocomplete must insert that form.
+    const fromCf = byLine(index.suggestions('da-cf'), 'da-is');
+    expect(fromCf.insertText).toBe('Income Statement.Depreciation & Amortization');
+    const compiled = compileFormula(fromCf.insertText, index, 'da-cf');
+    expect(compiled.ok && formatFormula(compiled.formula, index)).toBe(fromCf.insertText);
   });
 
-  it('never suggests a name only this line itself has', () => {
+  it('carries the section name for every entry so it can be searched and shown', () => {
     const index = buildNameIndex(fixtureSchema());
-    // "Revenue" belongs to no one else — referencing it from its own formula would self-cycle.
-    expect(index.suggestions('revenue')).not.toContain('Revenue');
+    expect(byLine(index.suggestions('op-income'), 'revenue').sectionName).toBe('Income Statement');
+  });
+
+  it('never suggests the line itself', () => {
+    const index = buildNameIndex(fixtureSchema());
+    // A bare self-reference wouldn't resolve, and it would self-cycle anyway.
+    expect(index.suggestions('revenue').some((x) => x.lineId === 'revenue')).toBe(false);
   });
 });
 
