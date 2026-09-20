@@ -231,7 +231,8 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
             onSetRole={setLineRole}
             onDeleteChildLine={deleteChildLine}
             onClose={() => setSelectedRowId(null)}
-            style={{ position: 'sticky', top: 'var(--space-8)', maxHeight: 'calc(100vh - 160px)' }}
+            // Sticks just below the screen's own sticky header when it publishes one (--defs-header-h).
+            style={{ position: 'sticky', top: 'calc(var(--defs-header-h, 0px) + var(--space-4))', maxHeight: 'calc(100vh - var(--defs-header-h, 0px) - 160px)' }}
           />
         ) : null}
       </div>

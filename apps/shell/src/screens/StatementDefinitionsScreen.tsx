@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button, Dialog, Field, IconButton, Input, Select, Toast } from '@basis/design-system';
 import { statementSchemaRepository, type StatementSchema } from '../data';
 import { DEFAULT_SCHEMA_ID } from '../data/defaultStatementSchema';
@@ -73,6 +73,19 @@ export function StatementDefinitionsScreen() {
   const [pendingName, setPendingName] = useState('');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  // The sticky header's height, published as a CSS variable so the line-settings panel (which
+  // sticks below it — see SchemaStructureEditor) knows how far down to sit.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () => setHeaderHeight(el.offsetHeight);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,7 +216,18 @@ export function StatementDefinitionsScreen() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--gutter)', '--defs-header-h': `${headerHeight}px` } as CSSProperties}>
+      {/* Stays put while the statements scroll, so the schema in use and Save are always in reach.
+          The negative margins + matching padding let it span the page's full width and reach the
+          scroll container's top edge without moving anything at rest. */}
+      <div
+        ref={headerRef}
+        style={{
+          position: 'sticky', top: 0, zIndex: 20, background: 'var(--surface-app)',
+          display: 'flex', flexDirection: 'column', gap: 'var(--gutter)',
+          margin: 'calc(-1 * var(--gutter)) calc(-1 * var(--gutter)) 0', padding: 'var(--gutter) var(--gutter) var(--space-4)',
+        }}
+      >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <h1 style={{ fontSize: 'var(--text-xl)' }}>Financial statement definitions</h1>
@@ -272,6 +296,7 @@ export function StatementDefinitionsScreen() {
             Save or discard changes to switch schemas.
           </span>
         ) : null}
+      </div>
       </div>
 
       {draftSchema ? <SchemaStructureEditor
