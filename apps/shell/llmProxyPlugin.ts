@@ -66,15 +66,24 @@ export function llmProxyPlugin(options: LlmProxyOptions): Plugin {
           const seconds = ((Date.now() - started) / 1000).toFixed(1)
           if (upstream.ok) {
             let tokens = ''
+            let cacheable = false
             try {
-              const usage = JSON.parse(text).usage
+              const body = JSON.parse(text)
+              const choice = body.choices?.[0]
+              // Only cache clean answers, so a garbled or truncated reply is never replayed.
+              cacheable = choice?.finish_reason === 'stop' && typeof choice?.message?.content === 'string' && choice.message.content.includes('{')
+              const usage = body.usage
               tokens = ` — ${usage?.completion_tokens ?? '?'} completion tokens (${usage?.completion_tokens_details?.reasoning_tokens ?? 0} reasoning)`
             } catch {
               // body wasn't JSON; nothing to summarize
             }
             log.info(`[llm] ${upstream.status} in ${seconds}s${tokens}`)
-            await mkdir(options.cacheDir, { recursive: true })
-            await writeFile(cacheFile, text)
+            if (cacheable) {
+              await mkdir(options.cacheDir, { recursive: true })
+              await writeFile(cacheFile, text)
+            } else {
+              log.warn(`[llm] reply not cached (unclean finish or no JSON object): ${text.slice(0, 200)}`)
+            }
           } else {
             log.error(`[llm] ${upstream.status} in ${seconds}s: ${text.slice(0, 500)}`)
           }

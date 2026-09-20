@@ -37,6 +37,13 @@ describe('OpenAiCompatibleProvider', () => {
     expect(last.messages.at(-1).content).toContain('not valid JSON');
   });
 
+  it('retries when the reply is JSON but not an object, or the model stopped with an error', async () => {
+    const errored = new Response(JSON.stringify({ choices: [{ finish_reason: 'error', message: { content: '{"a":1}' } }] }), { status: 200 });
+    const { provider, fetchImpl } = make([reply('1.0000000000000002e+0000'), errored, reply('{"ok":2}')]);
+    expect(await provider.generateStructured(request)).toEqual({ ok: 2 });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it('fails fast on client errors (bad key, no credit) and after exhausting retries', async () => {
     const a = make([new Response('{"error":"no credit"}', { status: 402 })]);
     await expect(a.provider.generateStructured(request)).rejects.toThrow(/402/);

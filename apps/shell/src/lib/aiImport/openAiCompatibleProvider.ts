@@ -59,15 +59,23 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       }
       if (!response.ok) throw new Error(`LLM request failed (HTTP ${response.status}): ${await errorText(response)}`);
 
-      const content = extractContent(await response.json());
+      const body = await response.json();
+      const finish = (body as { choices?: { finish_reason?: string }[] })?.choices?.[0]?.finish_reason;
+      if (finish === 'error' || finish === 'length') {
+        lastError = `the model stopped early (finish_reason: ${finish})`;
+        continue;
+      }
+      const content = extractContent(body);
       if (content === undefined) {
         lastError = 'response had no message content';
         continue;
       }
       try {
-        return parseJsonLoosely(content);
+        const parsed = parseJsonLoosely(content);
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('expected a JSON object');
+        return parsed;
       } catch (error) {
-        lastError = `reply was not valid JSON (${error instanceof Error ? error.message : String(error)})`;
+        lastError = `reply was not a valid JSON object (${error instanceof Error ? error.message : String(error)})`;
         // Show the model its own bad output so the retry can correct it.
         messages.push(
           { role: 'assistant', content },
