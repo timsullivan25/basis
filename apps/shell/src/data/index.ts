@@ -46,6 +46,8 @@ export type {
   LineAggregation,
   LineMapping,
   LineNumberFormat,
+  LineProjection,
+  LineRole,
   LineRowFormat,
   LineSign,
   Mapping,

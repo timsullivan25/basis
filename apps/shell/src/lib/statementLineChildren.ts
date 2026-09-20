@@ -73,7 +73,7 @@ export function addChildLine(
   const newLine: StatementLine = {
     id: newId,
     name,
-    required: false,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',

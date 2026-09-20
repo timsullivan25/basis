@@ -17,9 +17,9 @@ describe('createDefaultStatementSchema — capital structure', () => {
     expect(lineByName.get('1L Debt')?.allowsSubLines).toBe(true);
     expect(lineByName.get('2L Debt')?.allowsSubLines).toBe(true);
     expect(lineByName.get('Unsecured Debt')?.allowsSubLines).toBe(true);
-    // Tiers are optional (required: false) — a company with no tranches under a tier shouldn't
-    // be blocked from mapping/saving.
-    expect(lineByName.get('1L Debt')?.required).toBe(false);
+    // Tiers are optional — a company with no tranches under a tier shouldn't be blocked from
+    // mapping/saving.
+    expect(lineByName.get('1L Debt')?.role).toBe('optional');
   });
 
   it('marks each tier as lineKind "debt" — a schema-declared flag, not a hardcoded line-name check', () => {
@@ -104,9 +104,12 @@ describe('createDefaultStatementSchema — Checks', () => {
   const balanceSheet = schema.sections.find((s) => s.name === 'Balance Sheet')!;
   const lineByName = new Map(balanceSheet.lines.map((l) => [l.name, l]));
 
-  it('tags both check lines as lineKind "check", not debt', () => {
+  it('makes both check lines the Check role, not debt', () => {
     expect(checks.lines.map((l) => l.name)).toEqual(['Balance Sheet Check', 'Cash Flow Check']);
-    for (const l of checks.lines) expect(l.lineKind).toBe('check');
+    for (const l of checks.lines) {
+      expect(l.role).toBe('check');
+      expect(l.lineKind).toBeUndefined();
+    }
   });
 
   // Every source (non-formula) Balance Sheet line needs a real value here — Total

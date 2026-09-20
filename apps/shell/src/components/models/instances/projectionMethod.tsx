@@ -51,7 +51,11 @@ export function ProjectionMethodEditor({
   onChange: (selection: ChildProjectionSelection) => void;
 }) {
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
-  const currentMethod = pendingMethod ?? projection?.method ?? 'flat';
+  // A child only ever carries a standard projection here (link / formula / hardcode are top-level
+  // sourced-line types, chosen in the schema editor) — anything else reads as the flat default.
+  const storedMethod = projection?.method;
+  const currentMethod: 'flat' | ProjectionMethod =
+    pendingMethod ?? (storedMethod && storedMethod !== 'link' && storedMethod !== 'formula' && storedMethod !== 'hardcode' ? storedMethod : 'flat');
   const currentBasisLineId = pendingMethod ? '' : (basisLineId ?? '');
 
   function handleMethodChange(method: 'flat' | ProjectionMethod) {

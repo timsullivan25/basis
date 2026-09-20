@@ -8,6 +8,7 @@ import {
   renameSection,
   reorderLine,
   setLineProjection,
+  setLineRole,
   setSectionAllowsFreeformLines,
   updateLine,
 } from './statementSchemaEdit';
@@ -81,7 +82,9 @@ describe('line mutations', () => {
     const schema = schemaWith([{ id: 'a', name: 'A', lines: [] }]);
     const next = addLine(schema, 'a');
     expect(next.sections[0].lines).toHaveLength(1);
-    expect(next.sections[0].lines[0]).toMatchObject({ name: '', formula: null, projection: null });
+    // Required, and carried forward flat — a sourced line always has a projection.
+    expect(next.sections[0].lines[0]).toMatchObject({ name: '', role: 'required', projection: { method: 'flat' } });
+    expect(next.sections[0].lines[0].formula).not.toBeNull();
   });
 
   it('updateLine patches only the matching line, wherever it lives', () => {
@@ -142,16 +145,38 @@ describe('line mutations', () => {
 });
 
 describe('setLineProjection', () => {
-  it('"none" clears the formula, projection, and any existing driver', () => {
+  it('"hardcode" clears the formula and any existing driver, and is stored as its own type', () => {
     const schema = schemaWith(
       [{ id: 'a', name: 'A', lines: [line('l1', 'Revenue', { projection: { method: 'growth', driverId: 'd1' } })] }],
       [{ id: 'd1', name: 'Revenue Growth', unit: '%', targetLineId: 'l1', method: 'growth' }],
     );
-    const next = setLineProjection(schema, 'l1', { method: 'none' });
+    const next = setLineProjection(schema, 'l1', { method: 'hardcode' });
     const l1 = next.sections[0].lines[0];
     expect(l1.formula).toBeNull();
-    expect(l1.projection).toBeNull();
+    expect(l1.projection).toEqual({ method: 'hardcode' });
     expect(next.drivers).toEqual([]);
+  });
+
+  it('"link" reads the basis line period for period and drops any prior driver', () => {
+    const schema = schemaWith(
+      [{ id: 'a', name: 'A', lines: [line('l1', 'D&A CF', { projection: { method: 'growth', driverId: 'd1' } }), line('l2', 'D&A IS')] }],
+      [{ id: 'd1', name: 'Growth', unit: '%', targetLineId: 'l1', method: 'growth' }],
+    );
+    const l1 = setLineProjection(schema, 'l1', { method: 'link', basisLineId: 'l2' });
+    expect(l1.sections[0].lines[0].projection).toEqual({ method: 'link', basisLineId: 'l2' });
+    expect(l1.sections[0].lines[0].formula).toEqual({ kind: 'ref', lineId: 'l2' });
+    expect(l1.drivers).toEqual([]);
+  });
+
+  it('"formula" keeps an existing hand-written formula but discards a generated one', () => {
+    const handWritten = { kind: 'num', value: 7 } as const;
+    const keeps = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { projection: { method: 'formula' }, formula: handWritten })] }]);
+    expect(setLineProjection(keeps, 'l1', { method: 'formula' }).sections[0].lines[0].formula).toEqual(handWritten);
+
+    const generated = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { projection: { method: 'flat' }, formula: handWritten })] }]);
+    const next = setLineProjection(generated, 'l1', { method: 'formula' }).sections[0].lines[0];
+    expect(next.formula).toBeNull();
+    expect(next.projection).toEqual({ method: 'formula' });
   });
 
   it('"growth" writes a formula and creates a fresh driver, replacing any prior one', () => {
@@ -169,5 +194,62 @@ describe('setLineProjection', () => {
     const next = setLineProjection(schema, 'l1', { method: 'percent-of', basisLineId: 'l2' });
     expect(next.drivers[0].name).toBe('COGS % of Revenue');
     expect(next.drivers[0].basisLineId).toBe('l2');
+  });
+});
+
+describe('setLineRole', () => {
+  const hand = { kind: 'num', value: 7 } as const;
+  const roleOf = (schema: StatementSchema, id: string) => schema.sections[0].lines.find((l) => l.id === id)!;
+
+  it('Required <-> Optional only flips the role', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'required', projection: { method: 'flat' } })] }]);
+    const next = setLineRole(schema, 'l1', 'optional');
+    expect(roleOf(next, 'l1')).toMatchObject({ role: 'optional', projection: { method: 'flat' } });
+  });
+
+  it('to Calculated drops the projection, its driver and a generated formula', () => {
+    const schema = schemaWith(
+      [{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'required', projection: { method: 'growth', driverId: 'd1' }, formula: hand })] }],
+      [{ id: 'd1', name: 'g', unit: '%', targetLineId: 'l1', method: 'growth' }],
+    );
+    const next = setLineRole(schema, 'l1', 'calculated');
+    expect(roleOf(next, 'l1')).toMatchObject({ role: 'calculated', projection: null, formula: null });
+    expect(next.drivers).toEqual([]);
+  });
+
+  it('to Calculated keeps a hand-written formula', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'optional', projection: { method: 'formula' }, formula: hand })] }]);
+    expect(roleOf(setLineRole(schema, 'l1', 'calculated'), 'l1').formula).toEqual(hand);
+  });
+
+  it('Calculated <-> Check keeps the formula and adds no projection', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'calculated', formula: hand })] }]);
+    const next = setLineRole(schema, 'l1', 'check');
+    expect(roleOf(next, 'l1')).toMatchObject({ role: 'check', projection: null, formula: hand });
+  });
+
+  it('to Required keeps an existing formula as a Formula projection', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'calculated', formula: hand })] }]);
+    expect(roleOf(setLineRole(schema, 'l1', 'required'), 'l1')).toMatchObject({ role: 'required', projection: { method: 'formula' }, formula: hand });
+  });
+
+  it('to Required with no formula starts on Flat', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'calculated' })] }]);
+    expect(roleOf(setLineRole(schema, 'l1', 'optional'), 'l1')).toMatchObject({ role: 'optional', projection: { method: 'flat' } });
+  });
+
+  it('going formula-only clears debt kind and sub-line permission', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'Debt', { role: 'optional', lineKind: 'debt', allowsSubLines: true, debtProperties: {} })] }]);
+    expect(roleOf(setLineRole(schema, 'l1', 'calculated'), 'l1')).toMatchObject({ lineKind: undefined, allowsSubLines: false, debtProperties: undefined });
+  });
+
+  it('refuses to make a line with real sub-lines Calculated', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('p', 'Parent', { role: 'optional' }), line('c', 'Child', { parentLineId: 'p' })] }]);
+    expect(setLineRole(schema, 'p', 'calculated')).toBe(schema);
+  });
+
+  it('leaves a Debt Schedule line alone', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('g', 'Gen', { role: 'calculated', debtScheduleRole: { role: 'totalInterestExpense' } })] }]);
+    expect(setLineRole(schema, 'g', 'required')).toBe(schema);
   });
 });

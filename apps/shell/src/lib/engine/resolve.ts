@@ -256,6 +256,11 @@ function lastActualOf(inner: ResolvedFormula): ResolvedFormula {
 
 /** A pure carry-forward: this period repeats the line's own immediately preceding value. No
  *  driver at all — 'flat' needs no per-period assumption to hold constant. */
+/** A Link projection — the line simply reads another line, period for period. */
+export function buildLinkFormula(basisLineId: string): ResolvedFormula {
+  return ref(basisLineId);
+}
+
 export function buildFlatFormula(lineId: string): ResolvedFormula {
   return priorPeriodOf(ref(lineId));
 }

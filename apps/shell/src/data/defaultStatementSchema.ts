@@ -1,5 +1,6 @@
 import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildNameIndex, buildRatioFormula, compileFormula, type NameIndex } from '../lib/engine/resolve';
 import { regenerateTemplateDebtSchedule } from '../lib/debtSchedule';
+import { normalizeStatementSchema } from '../lib/lineRole';
 import type {
   DriverDefinition,
   LineAggregation,
@@ -18,7 +19,8 @@ interface LineOptions {
   numberFormat?: LineNumberFormat;
   sign?: LineSign;
   aggregation?: LineAggregation;
-  /** Sourced lines default to required; calculated and optional memo lines pass false. */
+  /** Sourced lines default to required; optional memo lines pass false. A line with a `formula`
+   *  is Calculated (or a Check, with `lineKind: 'check'`) regardless. */
   required?: boolean;
   /** See StatementLine.allowsSubLines' own doc comment. */
   allowsSubLines?: boolean;
@@ -40,7 +42,7 @@ function line(name: string, options: LineOptions = {}): DraftLine {
   return {
     id: crypto.randomUUID(),
     name,
-    required: options.required ?? formula === '',
+    role: options.lineKind === 'check' ? 'check' : formula !== '' ? 'calculated' : options.required === false ? 'optional' : 'required',
     rowFormat: options.rowFormat ?? (formula ? 'total' : 'normal'),
     numberFormat: options.numberFormat ?? 'number',
     sign: options.sign ?? 'natural',
@@ -49,7 +51,7 @@ function line(name: string, options: LineOptions = {}): DraftLine {
     projection: null,
     aliases: options.aliases ?? [],
     allowsSubLines: options.allowsSubLines,
-    lineKind: options.lineKind,
+    lineKind: options.lineKind === 'debt' ? 'debt' : undefined,
   };
 }
 
@@ -246,7 +248,7 @@ function creditMetrics(): DraftSection {
  *  exist, nothing generated/overlay-like needed (contrast lib/debtSchedule.ts, which exists
  *  because tranches are per-model instance data). Each is a relative (% of Total Assets, not raw
  *  dollars) difference so one materiality threshold works across companies of very different
- *  scale; lineKind 'check' + checkTolerance (see types.ts) is what the workspace grid reads to
+ *  scale; role 'check' + checkTolerance (see types.ts) is what the workspace grid reads to
  *  flag a failing period red instead of just showing the number like any other metric. Both read
  *  0.1%+ as a real tie-out gap worth investigating, not rounding noise. */
 function checks(): DraftSection {
@@ -471,5 +473,7 @@ export function createDefaultStatementSchema(): StatementSchema {
   schema = regenerateTemplateDebtSchedule(schema);
   schema = applyDebtScheduleReferences(schema);
 
-  return applyDefaultProjections(schema);
+  // Every sourced line the seeds above don't name still gets a projection (Flat) — a sourced line
+  // always has one — via the same normalization saved data goes through when it's read.
+  return normalizeStatementSchema(applyDefaultProjections(schema));
 }

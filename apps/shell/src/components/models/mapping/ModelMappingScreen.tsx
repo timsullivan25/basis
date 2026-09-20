@@ -9,6 +9,7 @@ import {
   type DebtTrancheProperties,
   type LineMapping,
   type Model,
+  type LineRole,
   type ModelImport,
   type ModelTemplateType,
   type ParsedWorkbook,
@@ -21,7 +22,8 @@ import { matchStatementLines } from '../../../lib/matchStatementLines';
 import { recomputeAndCacheModel } from '../../../lib/modelRecompute';
 import { buildTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
-import { buildNameIndex, formatFormula, isCalculated } from '../../../lib/engine/resolve';
+import { buildNameIndex, formatFormula } from '../../../lib/engine/resolve';
+import { expectsMapping, isFormulaOnly } from '../../../lib/lineRole';
 import { evaluateModel } from '../../../lib/engine/evaluate';
 import { cloneStatementSchemaStructure } from '../../../lib/statementSchemaClone';
 import { addChildLine, effectiveLineKind, removeChildLine } from '../../../lib/statementLineChildren';
@@ -272,14 +274,14 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     () => (schema ? schema.sections.map((s) => ({ sectionName: s.name, lines: s.lines.map((l) => ({ id: l.id, name: l.name })) })) : []),
     [schema],
   );
+  const parentLineIds = useMemo(() => new Set((schema?.sections ?? []).flatMap((sec) => sec.lines.map((l) => l.parentLineId)).filter(Boolean) as string[]), [schema]);
   const allLines = useMemo(() => (schema ? schema.sections.flatMap((section) => section.lines.map((line) => ({ line, section }))) : []), [schema]);
-  // Lines expected to carry a real mapped value — every non-calculated line, plus a
-  // projection-carrying calculated line (still needs one for its actual periods). A purely
-  // structural formula (no projection) never needs one — it's mappable too (an issuer-reported
-  // subtotal can still be matched), just not required to be.
+  // Lines expected to carry a real mapped value — the Required and Optional ones. A calculated
+  // or check line is never mapped (its formula is its value in every period), and a parent that
+  // sums real sub-lines has handed mapping to them.
   const mappableLines = useMemo(
-    () => allLines.filter(({ line }) => !isDebtScheduleGenerated(line) && (!isCalculated(line) || line.projection)),
-    [allLines],
+    () => allLines.filter(({ line }) => !isDebtScheduleGenerated(line) && expectsMapping(line) && !parentLineIds.has(line.id)),
+    [allLines, parentLineIds],
   );
   const mappedCount = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) > 0).length;
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
@@ -425,6 +427,9 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   function setLineProjectionSchema(lineId: string, selection: schemaEdit.ProjectionSelection) {
     if (schema) changeSchema(schemaEdit.setLineProjection(schema, lineId, selection));
   }
+  function setLineRoleSchema(lineId: string, role: LineRole) {
+    if (schema) changeSchema(schemaEdit.setLineRole(schema, lineId, role));
+  }
   function changeDebtPropertiesSchema(lineId: string, patch: Partial<DebtTrancheProperties>) {
     if (!schema) return;
     const line = schemaEdit.findLine(schema, lineId);
@@ -532,7 +537,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
 
   const query = search.trim().toLowerCase();
   function passes(line: StatementLine): boolean {
-    if (onlyReview && !needsReview(line, mapping[line.id])) return false;
+    if (onlyReview && !needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0)) return false;
     if (query) {
       const sourceNames = (mapping[line.id]?.sourceLineIds ?? [])
         .map((id) => wb.lines.find((source) => source.id === id)?.name ?? '')
@@ -610,14 +615,15 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         const m = mapping[row.line.id];
         const childCount = childCountByLineId.get(row.line.id) ?? 0;
         const byDebtSchedule = isDebtScheduleGenerated(row.line);
-        const superseded = childCount > 0 || byDebtSchedule;
+        const formulaOnly = isFormulaOnly(row.line);
+        const superseded = childCount > 0 || byDebtSchedule || formulaOnly;
         // "Missing required"/"low confidence" are mapping concepts — meaningless while editing
         // structure, so schema mode skips both the computation and (more importantly for the
         // drag handle's own spacing) reserving this dot's width + gap at all, rather than
         // rendering it transparent. A transparent-but-present dot was invisible in either mode,
         // but its reserved space combined with the handle's own gutter looked like a second,
         // uneven padding next to the handle — schema mode is the one place that visibly showed.
-        const missing = mode === 'mapping' && !superseded && isMissingRequired(row.line, m);
+        const missing = mode === 'mapping' && !superseded && isMissingRequired(row.line, m, childCount > 0);
         const low = mode === 'mapping' && !superseded && isLowConfidence(m);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
         const rowLineStyle = getLineRowStyle(row.line);
@@ -645,7 +651,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
               <span title="Auto-generated by the Debt Schedule — expand for its formula">
                 <Icon name="sparkles" size={11} color="var(--text-tertiary)" />
               </span>
-            ) : isCalculated(row.line) && !row.line.projection ? (
+            ) : formulaOnly ? (
               <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="function-square" size={11} color="var(--text-tertiary)" />
               </span>
@@ -716,11 +722,14 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
             </span>
           );
         }
-        // A structural formula (no projection) is never expected to be mapped — an empty cell
-        // for it is a non-event, not worth a "Not mapped" label competing for attention with a
-        // genuinely missing line.
-        const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
-        if (empty && !expectsMapping) return null;
+        // A calculated / check line is never mapped — its formula is its value in every period.
+        if (isFormulaOnly(row.line)) {
+          return (
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+              Calculated — not mapped
+            </span>
+          );
+        }
         const summary = empty ? 'Not mapped' : m.sourceLineIds.map((id) => workbook.lines.find((source) => source.id === id)?.name).join('  +  ');
         return (
           <span
@@ -762,9 +771,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         if (!row.line) return null;
         if ((childCountByLineId.get(row.line.id) ?? 0) > 0 || isDebtScheduleGenerated(row.line)) return null;
         const m = mapping[row.line.id];
-        const expectsMapping = !isCalculated(row.line) || Boolean(row.line.projection);
-        if ((!m || m.method === 'none') && !expectsMapping) return null;
-        if (!m) return null;
+        if (isFormulaOnly(row.line) || !m) return null;
         const meta = MATCH_METHOD_META[m.method];
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -815,7 +822,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const tabs = [
     { value: 'all', label: 'All' },
     ...schema.sections.map((section) => {
-      const issues = section.lines.filter((line) => !line.parentLineId && needsReview(line, mapping[line.id])).length;
+      const issues = section.lines.filter((line) => !line.parentLineId && needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0)).length;
       return { value: section.id, label: section.name, count: issues > 0 ? issues : undefined };
     }),
   ];
@@ -992,6 +999,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 nameIndex={nameIndex}
                 onUpdateLine={updateLineSchema}
                 onSetProjection={setLineProjectionSchema}
+                onSetRole={setLineRoleSchema}
                 onDeleteChildLine={isChild ? requestDeleteChild : undefined}
                 onClose={() => setExpandedLineId(null)}
               />
@@ -1029,6 +1037,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 onApprove={() => updateMapping(line.id, { approved: true })}
                 supersededByInstanceCount={childCount}
                 calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
+                calculated={isFormulaOnly(line)}
                 formula={formatFormula(line.formula, nameIndex)}
                 onClose={() => setExpandedLineId(null)}
               />

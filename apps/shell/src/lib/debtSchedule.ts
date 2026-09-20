@@ -314,7 +314,7 @@ function blankLine(id: string, name: string, role: { trancheLineId?: string; rol
   return {
     id,
     name,
-    required: false,
+    role: 'calculated',
     rowFormat: TOTAL_ROLES.has(role.role) ? 'total' : 'normal',
     numberFormat: 'number',
     sign: 'natural',

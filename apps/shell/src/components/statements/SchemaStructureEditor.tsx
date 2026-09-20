@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, Dialog } from '@basis/design-system';
-import type { DebtTrancheProperties, StatementLine, StatementSchema } from '../../data';
+import type { DebtTrancheProperties, LineRole, StatementLine, StatementSchema } from '../../data';
 import { SectionEditor, LineSettingsPanelContent } from './SectionEditor';
 import { buildNameIndex, collectRefIds, isCalculated } from '../../lib/engine/resolve';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../lib/lineDependents';
@@ -110,6 +110,10 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
     onChangeSchema(schemaEdit.setLineProjection(schema, lineId, selection));
   }
 
+  function setLineRole(lineId: string, role: LineRole) {
+    onChangeSchema(schemaEdit.setLineRole(schema, lineId, role));
+  }
+
   function changeDebtProperties(lineId: string, patch: Partial<DebtTrancheProperties>) {
     const line = schemaEdit.findLine(schema, lineId);
     onChangeSchema(schemaEdit.updateLine(schema, lineId, { debtProperties: { ...line?.debtProperties, ...patch } }));
@@ -199,6 +203,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
               onDelete={() => deleteSection(section.id)}
               onAddLine={() => addLine(section.id)}
               onUpdateLine={updateLine}
+              onSetRole={setLineRole}
               onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
               onReorderLine={(lineId, beforeLineId) => reorderLine(section.id, lineId, beforeLineId)}
             />
@@ -223,6 +228,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
             nameIndex={nameIndex}
             onUpdateLine={updateLine}
             onSetProjection={setLineProjection}
+            onSetRole={setLineRole}
             onDeleteChildLine={deleteChildLine}
             onClose={() => setSelectedRowId(null)}
             style={{ position: 'sticky', top: 'var(--space-8)', maxHeight: 'calc(100vh - 160px)' }}
