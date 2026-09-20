@@ -616,7 +616,6 @@ export function LineSettingsPanelContent({
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
           <FieldLabel>Formula</FieldLabel>
-          <Input size="sm" value="" readOnly disabled />
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Values to be input manually.</span>
         </div>
       )}
