@@ -15,11 +15,22 @@ describe('parseJsonLoosely', () => {
     expect(parseJsonLoosely('```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(parseJsonLoosely('<think>hmm {x}</think>{"a":1}')).toEqual({ a: 1 });
     expect(parseJsonLoosely('Sure! Here it is: {"a":1} Hope that helps')).toEqual({ a: 1 });
+    expect(parseJsonLoosely('Thinking Process:\n1. use {braces} like {"x": [1]}\n\nFinal:\n{"a":{"b":2}}')).toEqual({ a: { b: 2 } });
     expect(() => parseJsonLoosely('nothing here')).toThrow();
   });
 });
 
 describe('OpenAiCompatibleProvider request body', () => {
+  it('maps the effort hint to a reasoning setting only when given', async () => {
+    const fetchImpl = vi.fn(async () => reply('{"ok":true}'));
+    const provider = new OpenAiCompatibleProvider({ endpoint: '/x', model: 'm', fetchImpl: fetchImpl as unknown as typeof fetch });
+    await provider.generateStructured({ ...request, effort: 'medium' });
+    await provider.generateStructured(request);
+    const bodies = fetchImpl.mock.calls.map((c) => JSON.parse((c as unknown as [string, { body: string }])[1].body));
+    expect(bodies[0].reasoning).toEqual({ effort: 'medium' });
+    expect('reasoning' in bodies[1]).toBe(false);
+  });
+
   it('merges extraBody and lets null remove a default field', async () => {
     const fetchImpl = vi.fn(async () => reply('{"ok":true}'));
     const provider = new OpenAiCompatibleProvider({

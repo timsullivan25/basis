@@ -7,6 +7,8 @@ export interface StructuredRequest {
   /** Identifier for the schema (e.g. a tool name), for adapters whose structured-output API wants one. */
   schemaName: string;
   schema: JsonSchema;
+  /** How much deliberation the task deserves. Adapters map it to their model's own setting (or ignore it); unset means the adapter's default. */
+  effort?: 'none' | 'low' | 'medium' | 'high';
 }
 
 /**

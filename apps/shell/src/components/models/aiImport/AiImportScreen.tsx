@@ -24,6 +24,39 @@ const RUNNING_LABELS: Record<AnalysisStep, string> = {
   planning: 'Planning the extraction…',
 };
 
+interface SharedRun {
+  sections: StatementSection[];
+  promise: Promise<WorkbookAnalysis>;
+  step: AnalysisStep;
+  listeners: Set<(step: AnalysisStep) => void>;
+}
+const runs = new WeakMap<File, SharedRun>();
+
+/**
+ * Starts the analysis for a file, or joins the one already running. React StrictMode mounts effects
+ * twice in development; without this each mount would make its own (paid) LLM calls.
+ */
+function analyzeOnce(file: File, sections: StatementSection[], onStep: (step: AnalysisStep) => void): { promise: Promise<WorkbookAnalysis>; leave: () => void } {
+  let run = runs.get(file);
+  if (!run || run.sections !== sections) {
+    const created: SharedRun = { sections, step: 'reading', listeners: new Set(), promise: undefined as unknown as Promise<WorkbookAnalysis> };
+    created.promise = analyzeWorkbook(getLlmProvider(), file, sections, (step) => {
+      created.step = step;
+      created.listeners.forEach((listener) => listener(step));
+    });
+    // A failed run must not be replayed to a later mount of the same file.
+    created.promise.catch(() => {
+      if (runs.get(file) === created) runs.delete(file);
+    });
+    runs.set(file, created);
+    run = created;
+  }
+  run.listeners.add(onStep);
+  onStep(run.step);
+  const joined = run;
+  return { promise: joined.promise, leave: () => joined.listeners.delete(onStep) };
+}
+
 function templateFileName(original: string): string {
   return `${original.replace(/\.xlsx$/i, '')} (Basis Template).xlsx`;
 }
@@ -63,9 +96,10 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
 
   useEffect(() => {
     let cancelled = false;
-    analyzeWorkbook(getLlmProvider(), file, sections, (s) => {
+    const { promise, leave } = analyzeOnce(file, sections, (s) => {
       if (!cancelled) setStatus({ kind: 'running', step: s });
-    })
+    });
+    promise
       .then((result) => {
         if (cancelled) return;
         setAnalysis(result);
@@ -79,6 +113,7 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
       });
     return () => {
       cancelled = true;
+      leave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per upload
   }, [file, sections]);

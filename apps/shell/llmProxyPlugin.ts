@@ -81,6 +81,7 @@ export function llmProxyPlugin(options: LlmProxyOptions): Plugin {
             if (cacheable) {
               await mkdir(options.cacheDir, { recursive: true })
               await writeFile(cacheFile, text)
+              await writeFile(cacheFile.replace(/\.json$/, '.request.json'), body) // for replaying the exact call
             } else {
               // Keep the exchange so a bad reply can be replayed and diagnosed.
               const failedDir = join(options.cacheDir, 'failed')

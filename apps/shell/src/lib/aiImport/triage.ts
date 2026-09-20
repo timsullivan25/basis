@@ -79,6 +79,7 @@ export async function triageSheets(provider: LlmProvider, evidence: SheetEvidenc
     prompt: `Basis section names: ${sectionNames.join(', ')}\n\nSheets:\n${evidenceToText(evidence)}`,
     schemaName: 'financials_sheet_triage',
     schema: TRIAGE_SCHEMA,
+    effort: 'none',
   });
   return parseTriage(raw, evidence.map((e) => e.name));
 }

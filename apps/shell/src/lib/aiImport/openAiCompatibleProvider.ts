@@ -47,7 +47,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
         body: JSON.stringify(
           // A null in extraBody removes that default field (e.g. `"response_format": null` turns JSON mode off).
           Object.fromEntries(
-            Object.entries({ model: this.options.model, messages, response_format: { type: 'json_object' }, temperature: 0, ...this.options.extraBody }).filter(
+            Object.entries({
+              model: this.options.model,
+              messages,
+              response_format: { type: 'json_object' },
+              temperature: 0,
+              ...(request.effort ? { reasoning: { effort: request.effort } } : {}),
+              ...this.options.extraBody,
+            }).filter(
               ([, value]) => value !== null,
             ),
           ),
@@ -108,17 +115,40 @@ function extractContent(body: unknown): string | undefined {
   return typeof content === 'string' && content.trim() ? content : undefined;
 }
 
-/** Parses JSON from a model reply, tolerating the wrappers models commonly add: <think> blocks, code fences, surrounding prose. */
+/** Parses JSON from a model reply, tolerating the wrappers models commonly add: <think> blocks, code fences, prose — including a visible "thinking process" before the answer, in which case the last JSON object is the answer. */
 export function parseJsonLoosely(text: string): unknown {
   const stripped = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   try {
     return JSON.parse(stripped);
   } catch {
-    const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenced) return JSON.parse(fenced[1].trim());
-    const start = stripped.indexOf('{');
-    const end = stripped.lastIndexOf('}');
-    if (start !== -1 && end > start) return JSON.parse(stripped.slice(start, end + 1));
+    const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```(?![\s\S]*```)/);
+    if (fenced) {
+      try {
+        return JSON.parse(fenced[1].trim());
+      } catch {
+        // fall through to brace matching
+      }
+    }
+    const last = lastJsonObject(stripped);
+    if (last !== undefined) return last;
     throw new Error('no JSON object found');
   }
+}
+
+/** The last top-level `{...}` in the text that parses as JSON, found by brace matching from the end. */
+function lastJsonObject(text: string): unknown {
+  for (let end = text.lastIndexOf('}'); end !== -1; end = text.lastIndexOf('}', end - 1)) {
+    let depth = 0;
+    for (let i = end; i >= 0; i--) {
+      if (text[i] === '}') depth++;
+      else if (text[i] === '{' && --depth === 0) {
+        try {
+          return JSON.parse(text.slice(i, end + 1));
+        } catch {
+          break;
+        }
+      }
+    }
+  }
+  return undefined;
 }
