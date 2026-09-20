@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button, Dialog, Field, IconButton, Input, Select, Toast } from '@basis/design-system';
 import { statementSchemaRepository, type StatementSchema } from '../data';
 import { DEFAULT_SCHEMA_ID } from '../data/defaultStatementSchema';
+import { regenerateTemplateDebtSchedule } from '../lib/debtSchedule';
 import { SchemaStructureEditor } from '../components/statements/SchemaStructureEditor';
 
 /** Shared, fully-controlled name-prompt dialog for "New schema", "Duplicate" and "Rename". */
@@ -81,8 +82,7 @@ export function StatementDefinitionsScreen() {
       setSchemas(list);
       const first = list[0] ?? null;
       setSelectedSchemaId(first?.id ?? null);
-      setDraftSchema(first);
-      setSavedSnapshot(snapshotOf(first));
+      openInEditor(first);
       setLoading(false);
     })();
     return () => {
@@ -96,6 +96,15 @@ export function StatementDefinitionsScreen() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  /** Puts a schema in the editor with its Debt Schedule up to date — as both the draft AND the
+   *  dirty-check baseline, so merely opening an older template (say, one saved before the
+   *  schedule existed) doesn't read as an unsaved edit. It persists with the next Save. */
+  function openInEditor(schema: StatementSchema | null) {
+    const prepared = schema ? regenerateTemplateDebtSchedule(schema) : null;
+    setDraftSchema(prepared);
+    setSavedSnapshot(snapshotOf(prepared));
+  }
+
   const selectedSchema = schemas.find((s) => s.id === selectedSchemaId) ?? null;
   const isDirty = savedSnapshot !== null && snapshotOf(draftSchema) !== savedSnapshot;
 
@@ -104,8 +113,7 @@ export function StatementDefinitionsScreen() {
     const schema = schemas.find((s) => s.id === id);
     if (!schema) return;
     setSelectedSchemaId(id);
-    setDraftSchema(schema);
-    setSavedSnapshot(snapshotOf(schema));
+    openInEditor(schema);
   }
 
   function openDialog(kind: 'new' | 'duplicate' | 'rename', initialName: string) {
@@ -118,8 +126,7 @@ export function StatementDefinitionsScreen() {
     setSchemas((prev) => [...prev, created]);
     setDialog(null);
     setSelectedSchemaId(created.id);
-    setDraftSchema(created);
-    setSavedSnapshot(snapshotOf(created));
+    openInEditor(created);
   }
 
   async function handleDuplicate() {
@@ -128,8 +135,7 @@ export function StatementDefinitionsScreen() {
     setSchemas((prev) => [...prev, copy]);
     setDialog(null);
     setSelectedSchemaId(copy.id);
-    setDraftSchema(copy);
-    setSavedSnapshot(snapshotOf(copy));
+    openInEditor(copy);
   }
 
   async function handleRename() {
@@ -148,8 +154,7 @@ export function StatementDefinitionsScreen() {
     setDeleteConfirmOpen(false);
     const next = remaining[0] ?? null;
     setSelectedSchemaId(next?.id ?? null);
-    setDraftSchema(next);
-    setSavedSnapshot(snapshotOf(next));
+    openInEditor(next);
     setToast('Schema deleted');
   }
 
@@ -160,10 +165,7 @@ export function StatementDefinitionsScreen() {
   async function handleResetDefault() {
     const fresh = await statementSchemaRepository.resetDefault();
     setSchemas((prev) => prev.map((s) => (s.id === fresh.id ? fresh : s)));
-    if (selectedSchemaId === fresh.id) {
-      setDraftSchema(fresh);
-      setSavedSnapshot(snapshotOf(fresh));
-    }
+    if (selectedSchemaId === fresh.id) openInEditor(fresh);
     setResetConfirmOpen(false);
     setToast('Basis Default reset to the current built-in template');
   }
@@ -272,7 +274,12 @@ export function StatementDefinitionsScreen() {
         ) : null}
       </div>
 
-      {draftSchema ? <SchemaStructureEditor schema={draftSchema} onChangeSchema={setDraftSchema} /> : null}
+      {draftSchema ? <SchemaStructureEditor
+          schema={draftSchema}
+          // Every edit re-derives the Debt Schedule (a new debt tranche, a changed coupon...), the
+          // same as the model screens do — so its lines can be referenced in formulas right away.
+          onChangeSchema={(next) => setDraftSchema(regenerateTemplateDebtSchedule(next))}
+        /> : null}
 
       <NameDialog
         open={dialog === 'new'}

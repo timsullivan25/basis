@@ -243,6 +243,17 @@ export function regenerateDebtSchedule(
   return next;
 }
 
+/** regenerateDebtSchedule for a bare template, which has no timeline or model settings to read:
+ *  annual periods and no circular calcs, the same assumption createDefaultStatementSchema seeds
+ *  its own schedule with. Those two only change constants inside the generated formulas (per-
+ *  period proration, avg-vs-beginning balance) — never which lines exist or their ids — and a
+ *  model regenerates with its real values the moment it forks the template, so nothing here
+ *  needs to be right about them. Safe to call on every edit: idempotent, and every generated
+ *  line's id is stable (see regenerateDebtSchedule), so a formula referencing one keeps working. */
+export function regenerateTemplateDebtSchedule(schema: StatementSchema): StatementSchema {
+  return regenerateDebtSchedule(schema, periodsPerYearFor('FY'), false);
+}
+
 const SECTION_NAME = 'Debt Schedule';
 /** Fallback ids, used only the very first time a given schedule-level role has never existed in
  *  a schema before (see regenerateDebtSchedule's own doc comment and resolveScheduleLevelId) —

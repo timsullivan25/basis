@@ -1,5 +1,5 @@
 import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildNameIndex, buildRatioFormula, compileFormula, type NameIndex } from '../lib/engine/resolve';
-import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
+import { regenerateTemplateDebtSchedule } from '../lib/debtSchedule';
 import type {
   DriverDefinition,
   LineAggregation,
@@ -468,7 +468,7 @@ export function createDefaultStatementSchema(): StatementSchema {
   // Seeds the "Debt Schedule" section's three always-present totals (zero tranches yet, so each
   // is a sum() of nothing) — see lib/debtSchedule.ts's own doc comment for why these exist from
   // the start, before applyDebtScheduleReferences below can point ordinary formulas at them.
-  schema = regenerateDebtSchedule(schema, periodsPerYearFor('FY'), false);
+  schema = regenerateTemplateDebtSchedule(schema);
   schema = applyDebtScheduleReferences(schema);
 
   return applyDefaultProjections(schema);
