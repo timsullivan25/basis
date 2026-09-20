@@ -19,7 +19,7 @@ export function Tooltip({ content, children, placement = 'top', delay = 120, max
         <span
           role="tooltip"
           style={{
-            position: 'absolute', zIndex: 60, maxWidth, padding: 'var(--space-3) var(--space-5)',
+            position: 'absolute', zIndex: 60, width: 'max-content', maxWidth, padding: 'var(--space-3) var(--space-5)',
             background: 'var(--surface-tooltip)', color: 'var(--white)',
             fontFamily: 'var(--font-sans)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-regular)',
             lineHeight: 'var(--leading-snug)', letterSpacing: 'var(--tracking-normal)',

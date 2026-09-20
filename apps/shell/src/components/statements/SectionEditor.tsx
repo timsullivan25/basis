@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedControl, Switch, Tag } from '@basis/design-system';
+import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedControl, Switch, Tag, Tooltip } from '@basis/design-system';
 import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
@@ -421,6 +421,7 @@ function isSchemaEditorMethod(method: string): method is 'none' | 'flat' | Proje
   return method === 'none' || method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of';
 }
 
+// 'properties' (the four table columns, mirrored) starts collapsed — it's the least-touched group.
 const DEFAULT_OPEN_SECTIONS = ['name', 'structure', 'calculation'];
 
 type CalcType = 'formula' | 'projection' | 'hardcode';
@@ -438,6 +439,9 @@ function FieldLabel({ children }: { children: string }) {
     </span>
   );
 }
+
+const SIGN_TOOLTIP =
+  'Natural keeps values as reported. Absolute treats them as positive amounts — e.g. costs listed without a minus sign.';
 
 const LINE_TYPE_OPTIONS = [
   { value: 'normal', label: 'Normal' },
@@ -721,8 +725,63 @@ export function LineSettingsPanelContent({
     </div>
   );
 
+  // The same four fields as the table's own columns, edited through the same onUpdateLine — just
+  // another way in. Top-level lines only, matching the table (a child/KPI shows none of these).
+  // A genuine structural formula locks Required, exactly as the table's canEdit does.
+  const requiredLocked = isCalculated(line) && !line.projection;
+  const propertiesContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <FieldLabel>Required</FieldLabel>
+        {requiredLocked ? (
+          <Select size="sm" disabled options={[{ value: 'calculated', label: 'Calculated' }]} value="calculated" />
+        ) : (
+          <Select
+            size="sm"
+            options={REQUIRED_OPTIONS}
+            value={line.required ? 'required' : 'optional'}
+            onChange={(e) => onUpdateLine(line.id, { required: e.target.value === 'required' })}
+          />
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <FieldLabel>Row format</FieldLabel>
+        <Select
+          size="sm"
+          options={ROW_FORMAT_OPTIONS}
+          value={line.rowFormat}
+          onChange={(e) => onUpdateLine(line.id, { rowFormat: e.target.value as LineRowFormat })}
+        />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <FieldLabel>Number format</FieldLabel>
+        <Select
+          size="sm"
+          options={NUMBER_FORMAT_OPTIONS}
+          value={line.numberFormat}
+          onChange={(e) => onUpdateLine(line.id, { numberFormat: e.target.value as LineNumberFormat })}
+        />
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <FieldLabel>Sign</FieldLabel>
+          <Tooltip content={SIGN_TOOLTIP} placement="right" maxWidth={260}>
+            <IconButton icon="info" label="About sign" size="sm" variant="ghost" />
+          </Tooltip>
+        </div>
+        <Select
+          size="sm"
+          options={SIGN_OPTIONS}
+          value={line.sign}
+          onChange={(e) => onUpdateLine(line.id, { sign: e.target.value as LineSign })}
+        />
+      </div>
+    </div>
+  );
+
   const sections: LineSettingsSection[] = [
     { key: 'name', label: 'Line name', summary: !isChild && lineType !== 'check' && line.aliases.length ? `${line.aliases.length} alias${line.aliases.length === 1 ? '' : 'es'}` : undefined, content: nameControls },
+    ...(isChild ? [] : [{ key: 'properties', label: 'Line properties', content: propertiesContent }]),
     { key: 'structure', label: 'Structure', content: structureContent },
   ];
   // A top-level debt line's value comes from the Debt Schedule, so it has nothing to calculate here.
