@@ -40,8 +40,8 @@ export async function planSheets(
         prompt: `Basis section names: ${sectionNames.join(', ')}\nSections the triage step expects on this sheet: ${sections.join(', ') || '(none listed)'}\n\n${windowsToText(buildSheetWindows(grid, index))}`,
         schemaName: 'sheet_extraction_plan',
         schema: SHEET_PLAN_SCHEMA,
-        // Finding every block on a long sheet benefits from some deliberation; triage does not.
-        effort: 'medium',
+        // Finding every block on a long sheet benefits from some deliberation (triage does not). Kept low for fast, cheap testing; raise it, or use a stronger model, for production.
+        effort: 'low',
       });
       return parseSheetPlan(raw, name, grids);
     }),
