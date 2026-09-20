@@ -182,6 +182,20 @@ export function StatementDefinitionsScreen() {
     }
   }
 
+  /** TEMPORARY dev aid: downloads the schema on screen (including unsaved edits) as JSON, so a
+   *  template built here survives a browser-storage reset and can be committed as a seed. Remove
+   *  once templates are managed by a real backend. */
+  function handleExport() {
+    if (!draftSchema) return;
+    const blob = new Blob([JSON.stringify(draftSchema, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${draftSchema.name.replace(/[^\w-]+/g, '-').toLowerCase()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   if (loading) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
@@ -196,6 +210,9 @@ export function StatementDefinitionsScreen() {
           </span>
         </div>
         <div style={{ flex: '1 1 auto' }} />
+        <Button iconLeft="download" onClick={handleExport} disabled={!draftSchema}>
+          Export JSON
+        </Button>
         <Button variant="primary" iconLeft="save" onClick={handleSave} loading={saving} disabled={!isDirty}>
           Save
         </Button>
