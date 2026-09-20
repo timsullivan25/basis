@@ -1,7 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { getFormulaSegment } from './formulaUtils';
+import { FORMULA_FUNCTION_NAMES, getFormulaSegment } from './formulaUtils';
 import { compileFormula, formatFormula, type NameIndex, type ResolvedFormula } from '../../lib/engine/resolve';
+
+/** One autocomplete row — a line name (inserted as-is) or a function (inserted with "()" and the
+ *  cursor left between them). */
+interface Suggestion {
+  text: string;
+  isFunction: boolean;
+}
 
 interface FormulaInputProps {
   value: ResolvedFormula | null;
@@ -23,7 +30,7 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState(() => formatFormula(value, nameIndex));
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   // Which suggestion Enter/Tab would apply — always starts on the first one.
   const [highlighted, setHighlighted] = useState(0);
@@ -77,21 +84,26 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
   function refreshSuggestions(nextValue: string, cursorPos: number) {
     // Segment lookup still needs the full tokenizer vocabulary (a typed qualified form must
     // tokenize correctly even if it's not one of the suggestions offered below).
-    const { word } = getFormulaSegment(nextValue, cursorPos, nameIndex.candidates());
+    const { word, end } = getFormulaSegment(nextValue, cursorPos, nameIndex.candidates());
     setHighlighted(0);
     if (!word) {
       setSuggestions([]);
       return;
     }
     const lower = word.toLowerCase();
-    // But only ever suggest strings that would actually resolve if picked — an ambiguous name's
-    // bare form is deliberately excluded here (see NameIndex.suggestions).
-    setSuggestions(
-      nameIndex
-        .suggestions(ownLineId)
-        .filter((c) => c.toLowerCase() !== lower && c.toLowerCase().includes(lower))
-        .slice(0, 8),
-    );
+    // Functions whose name starts with what's typed come first (a fully typed "sum" still offers
+    // "sum()" — unless its "(" is already there). Then line names containing it, but only ever
+    // strings that would actually resolve if picked — an ambiguous name's bare form is
+    // deliberately excluded here (see NameIndex.suggestions).
+    const parenFollows = nextValue.slice(end).trimStart().startsWith('(');
+    const functions: Suggestion[] = FORMULA_FUNCTION_NAMES.filter(
+      (f) => f.toLowerCase().startsWith(lower) && !(parenFollows && f.toLowerCase() === lower),
+    ).map((f) => ({ text: f, isFunction: true }));
+    const lines: Suggestion[] = nameIndex
+      .suggestions(ownLineId)
+      .filter((c) => c.toLowerCase() !== lower && c.toLowerCase().includes(lower))
+      .map((c) => ({ text: c, isFunction: false }));
+    setSuggestions([...functions, ...lines].slice(0, 8));
   }
 
   function commitText(t: string) {
@@ -105,17 +117,21 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     setShowSuggestions(true);
   }
 
-  function applySuggestion(name: string) {
+  function applySuggestion(suggestion: Suggestion) {
     const input = inputRef.current;
     const cursorPos = input?.selectionStart ?? text.length;
     const { start, end } = getFormulaSegment(text, cursorPos, nameIndex.candidates());
-    const next = text.slice(0, start) + name + text.slice(end);
+    // A function inserts its own parentheses and leaves the cursor between them — unless a "("
+    // already follows, in which case it's just the name.
+    const addParens = suggestion.isFunction && !text.slice(end).trimStart().startsWith('(');
+    const inserted = addParens ? `${suggestion.text}()` : suggestion.text;
+    const next = text.slice(0, start) + inserted + text.slice(end);
     setText(next);
     setSuggestions([]);
     setShowSuggestions(false);
     commitText(next);
     requestAnimationFrame(() => {
-      const pos = start + name.length;
+      const pos = start + (addParens ? inserted.length - 1 : inserted.length);
       input?.focus();
       input?.setSelectionRange(pos, pos);
     });
@@ -187,21 +203,29 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
             maxHeight: LIST_MAX_HEIGHT, overflowY: 'auto',
           }}
         >
-          {suggestions.map((name, index) => (
+          {suggestions.map((suggestion, index) => (
             <button
-              key={name}
+              key={`${suggestion.isFunction ? 'fn' : 'line'}:${suggestion.text}`}
               type="button"
               ref={index === highlighted ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlighted(index)}
-              onClick={() => applySuggestion(name)}
+              onClick={() => applySuggestion(suggestion)}
               style={{
-                display: 'block', width: '100%', textAlign: 'left', padding: 'var(--space-3) var(--space-5)',
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--space-4)',
+                width: '100%', textAlign: 'left', padding: 'var(--space-3) var(--space-5)',
                 background: index === highlighted ? 'var(--surface-hover)' : 'transparent', border: 'none', cursor: 'pointer',
                 fontFamily: 'var(--font-sans)', fontSize: 'var(--text-xs)', color: 'var(--text-body)',
               }}
             >
-              {name}
+              {suggestion.isFunction ? (
+                <>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>{suggestion.text}()</span>
+                  <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>function</span>
+                </>
+              ) : (
+                suggestion.text
+              )}
             </button>
           ))}
         </div>,

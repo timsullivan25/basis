@@ -20,3 +20,7 @@ export function getFormulaSegment(
   }
   return { start: cursorPos, end: cursorPos, word: '' };
 }
+
+/** The functions the formula parser accepts (parse.ts's FUNCTION_ALIASES, minus the 'average'
+ *  alias), spelled the way autocomplete inserts them. */
+export const FORMULA_FUNCTION_NAMES = ['sum', 'avg', 'min', 'max', 'abs', 'priorPeriod', 'priorYear'] as const;
