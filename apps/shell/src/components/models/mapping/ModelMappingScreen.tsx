@@ -411,8 +411,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   function addSection() {
     if (schema) changeSchema(schemaEdit.addSection(schema));
   }
+  // Selects the new line so its settings panel opens with the name field ready to type into.
   function addLine(sectionId: string) {
-    if (schema) changeSchema(schemaEdit.addLine(schema, sectionId));
+    if (!schema) return;
+    const next = schemaEdit.addLine(schema, sectionId);
+    changeSchema(next);
+    const added = next.sections.find((s) => s.id === sectionId)?.lines.at(-1);
+    if (added) setExpandedLineId(added.id);
   }
   function updateLineSchema(lineId: string, patch: Partial<StatementLine>) {
     if (schema) changeSchema(schemaEdit.updateLine(schema, lineId, patch));

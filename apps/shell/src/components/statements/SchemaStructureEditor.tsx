@@ -93,8 +93,13 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
     }
   }
 
+  /** Appends a blank line and selects it, so its settings panel opens with the (autofocused)
+   *  name field ready to type into — same as addSubLine below. */
   function addLine(sectionId: string) {
-    onChangeSchema(schemaEdit.addLine(schema, sectionId));
+    const next = schemaEdit.addLine(schema, sectionId);
+    onChangeSchema(next);
+    const added = next.sections.find((s) => s.id === sectionId)?.lines.at(-1);
+    if (added) setSelectedRowId(added.id);
   }
 
   function updateLine(lineId: string, patch: Partial<StatementLine>) {
