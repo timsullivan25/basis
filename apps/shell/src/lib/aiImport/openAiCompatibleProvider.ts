@@ -4,7 +4,7 @@ export interface OpenAiCompatibleOptions {
   /** Full URL of the chat-completions endpoint (in dev, the Vite proxy that adds the API key). */
   endpoint: string;
   model: string;
-  /** Provider-specific fields merged into every request body — e.g. OpenRouter's `{ reasoning: { enabled: false } }` to skip a reasoning model's slow thinking phase. */
+  /** Provider-specific fields merged into every request body — e.g. OpenRouter's `{ reasoning: { effort: 'none' } }` to skip a reasoning model's slow thinking phase. A null value removes a default field such as `response_format`. */
   extraBody?: Record<string, unknown>;
   /** Extra attempts after the first when the call is rate-limited, fails upstream, or returns unparseable JSON. */
   maxRetries?: number;
@@ -44,13 +44,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       const response = await fetchImpl(this.options.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.options.model,
-          messages,
-          response_format: { type: 'json_object' },
-          temperature: 0,
-          ...this.options.extraBody,
-        }),
+        body: JSON.stringify(
+          // A null in extraBody removes that default field (e.g. `"response_format": null` turns JSON mode off).
+          Object.fromEntries(
+            Object.entries({ model: this.options.model, messages, response_format: { type: 'json_object' }, temperature: 0, ...this.options.extraBody }).filter(
+              ([, value]) => value !== null,
+            ),
+          ),
+        ),
       });
 
       if (response.status === 429 || response.status >= 500) {

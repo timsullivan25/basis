@@ -19,6 +19,22 @@ describe('parseJsonLoosely', () => {
   });
 });
 
+describe('OpenAiCompatibleProvider request body', () => {
+  it('merges extraBody and lets null remove a default field', async () => {
+    const fetchImpl = vi.fn(async () => reply('{"ok":true}'));
+    const provider = new OpenAiCompatibleProvider({
+      endpoint: '/x',
+      model: 'm',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      extraBody: { reasoning: { effort: 'none' }, response_format: null },
+    });
+    await provider.generateStructured(request);
+    const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body);
+    expect(body.reasoning).toEqual({ effort: 'none' });
+    expect('response_format' in body).toBe(false);
+  });
+});
+
 describe('OpenAiCompatibleProvider', () => {
   it('sends the schema in the system prompt and returns parsed JSON', async () => {
     const { provider, fetchImpl } = make([reply('{"ok":true}')]);
