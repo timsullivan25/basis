@@ -26,6 +26,8 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
   const [text, setText] = useState(() => formatFormula(value, nameIndex));
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // Which suggestion Enter/Tab would apply — always starts on the first one.
+  const [highlighted, setHighlighted] = useState(0);
 
   // Reset the display text when we're handed a different line's formula (not on every `value`
   // change — our own commit() already produces text that round-trips to the same display).
@@ -66,6 +68,7 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     // Segment lookup still needs the full tokenizer vocabulary (a typed qualified form must
     // tokenize correctly even if it's not one of the suggestions offered below).
     const { word } = getFormulaSegment(nextValue, cursorPos, nameIndex.candidates());
+    setHighlighted(0);
     if (!word) {
       setSuggestions([]);
       return;
@@ -125,7 +128,19 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
           setTimeout(() => setShowSuggestions(false), 150);
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') setShowSuggestions(false);
+          const listOpen = showSuggestions && suggestions.length > 0;
+          if (event.key === 'Escape') {
+            setShowSuggestions(false);
+          } else if (listOpen && event.key === 'ArrowDown') {
+            event.preventDefault();
+            setHighlighted((i) => (i + 1) % suggestions.length);
+          } else if (listOpen && event.key === 'ArrowUp') {
+            event.preventDefault();
+            setHighlighted((i) => (i - 1 + suggestions.length) % suggestions.length);
+          } else if (listOpen && (event.key === 'Enter' || event.key === 'Tab')) {
+            event.preventDefault();
+            applySuggestion(suggestions[Math.min(highlighted, suggestions.length - 1)]);
+          }
         }}
       />
       {showSuggestions && suggestions.length > 0 ? createPortal(
@@ -137,15 +152,17 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
             maxHeight: LIST_MAX_HEIGHT, overflowY: 'auto',
           }}
         >
-          {suggestions.map((name) => (
+          {suggestions.map((name, index) => (
             <button
               key={name}
               type="button"
+              ref={index === highlighted ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}
               onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setHighlighted(index)}
               onClick={() => applySuggestion(name)}
               style={{
                 display: 'block', width: '100%', textAlign: 'left', padding: 'var(--space-3) var(--space-5)',
-                background: 'transparent', border: 'none', cursor: 'pointer',
+                background: index === highlighted ? 'var(--surface-hover)' : 'transparent', border: 'none', cursor: 'pointer',
                 fontFamily: 'var(--font-sans)', fontSize: 'var(--text-xs)', color: 'var(--text-body)',
               }}
             >

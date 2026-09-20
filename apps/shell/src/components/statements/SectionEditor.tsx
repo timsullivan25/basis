@@ -5,6 +5,7 @@ import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../.
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
 import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
+import { FormulaHelp } from './FormulaHelp';
 import { DEFAULT_CHECK_TOLERANCE, NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
 import { LineSettingsPanel, type LineSettingsSection } from '../common/LineSettingsPanel';
 import { DebtTranchePropertiesEditor, NumberInput, PercentInput } from '../models/instances/DebtTranchePropertiesEditor';
@@ -608,7 +609,10 @@ export function LineSettingsPanelContent({
         </>
       ) : calcType === 'formula' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <FieldLabel>Formula</FieldLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <FieldLabel>Formula</FieldLabel>
+            <FormulaHelp />
+          </div>
           <FormulaInput
             value={line.formula}
             onChange={(formula) => onUpdateLine(line.id, { formula })}
@@ -793,7 +797,10 @@ export function LineSettingsPanelContent({
           // A check is nothing but a hand-written formula expected to read ~0 — no projection, no
           // hardcode.
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <FieldLabel>Formula</FieldLabel>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <FieldLabel>Formula</FieldLabel>
+              <FormulaHelp />
+            </div>
             <FormulaInput value={line.formula} onChange={(formula) => onUpdateLine(line.id, { formula })} nameIndex={nameIndex} ownLineId={line.id} />
           </div>
         ) : (
