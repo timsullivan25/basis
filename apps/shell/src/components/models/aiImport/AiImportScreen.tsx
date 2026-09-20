@@ -10,6 +10,7 @@ import { triageNeedsConfirmation } from '../../../lib/aiImport/triage';
 import { writeBasisTemplate } from '../../../lib/aiImport/writeBasisTemplate';
 import { ImportStepper } from '../ImportStepper';
 import { DataStep, sectionKey } from './DataStep';
+import type { RowRange } from './SheetViewer';
 import { PreviewStep } from './PreviewStep';
 import { SheetsStep } from './SheetsStep';
 import { mutedText } from './styles';
@@ -122,14 +123,14 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
   const planSheetNames = plan?.sheets.map((s) => s.sheet) ?? [];
   const selectionChanged = selectedSheets.slice().sort().join('|') !== planSheetNames.slice().sort().join('|');
 
-  function updateRange(sheetIdx: number, sectionIdx: number, key: 'firstRow' | 'lastRow', raw: string) {
-    const value = Number.parseInt(raw, 10);
-    if (!Number.isInteger(value) || value < 1) return;
+  function setRange(sheetIdx: number, sectionIdx: number, range: RowRange) {
     setPlan((current) =>
       current && {
         ...current,
         sheets: current.sheets.map((sheet, si) =>
-          si !== sheetIdx ? sheet : { ...sheet, sections: sheet.sections.map((sec, i) => (i === sectionIdx ? { ...sec, [key]: value } : sec)) },
+          si !== sheetIdx
+            ? sheet
+            : { ...sheet, sections: sheet.sections.map((sec, i) => (i === sectionIdx ? { ...sec, firstRow: range.first, lastRow: range.last } : sec)) },
         ),
       },
     );
@@ -230,6 +231,7 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
             ) : null}
             {step === 2 && plan ? (
               <DataStep
+                grids={analysis.grids}
                 plan={plan}
                 options={options}
                 selectedPeriods={selectedPeriods}
@@ -243,7 +245,7 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
                     return next;
                   })
                 }
-                onRange={updateRange}
+                onSetRange={setRange}
                 lineCounts={lineCounts}
                 extractionError={extraction.error}
               />

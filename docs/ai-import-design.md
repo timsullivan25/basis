@@ -52,11 +52,16 @@ propose schema additions), projections, post-mapping AI checks (flag errors, sug
 | `extractHistoricals.ts`, `writeBasisTemplate.ts` | 9 (multi-sheet, periods aligned by name) |
 | `llmProvider.ts`, `fakeLlmProvider.ts` | provider seam |
 
-UI: `components/models/AiImportDialog.tsx` (steps 4 and 8 — one review dialog: sheet checklist with re-plan,
-annual/lowest toggle, editable statement row ranges, live preview, download of the generated template),
-opened from `FinancialsTab` when Create Model's "Extract with AI" option is chosen. `analyzeWorkbook.ts`
-orchestrates steps 1-3 and 5-6. `ModelImport.originalFile` keeps the user's upload as the root file/name while
-`file` holds the generated template (so Edit mapping re-parses the template unchanged).
+UI: `components/models/aiImport/` — a full-viewport, three-step screen (`AiImportScreen`) with the same step
+tracker as mapping (`ImportStepper`), opened from `FinancialsTab` when Create Model's "Extract with AI" option is
+chosen. 1 **Choose sheets** (model's pick preselected; changing it re-plans on Next). 2 **Choose data**: period
+types and individual periods (projections and LTM/NTM shown but never imported; types may be mixed), then a
+section list beside a **worksheet viewer** (`SheetViewer`) that shows the label column and the chosen period
+columns, tints and outlines the section, and lets its top and bottom edges be dragged (snapping to real rows,
+auto-scrolling near the edges); sections can be switched off and flipped through. 3 **Preview** what mapping will
+receive, with warnings, Download template, and Continue to mapping. `analyzeWorkbook.ts` orchestrates steps 1-3
+and 5-6 of the pipeline. `ModelImport.originalFile` keeps the user's upload as the root file/name while `file`
+holds the generated template (so Edit mapping re-parses the template unchanged).
 
 `provider.ts` is the one place that picks the model; it returns a dev-only `DemoLlmProvider` (recognizes one
 private test workbook by sheet name) until a real adapter exists.
