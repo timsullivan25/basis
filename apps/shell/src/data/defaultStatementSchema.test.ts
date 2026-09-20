@@ -259,3 +259,35 @@ describe('createDefaultStatementSchema — Equity roll-forward and Change in NWC
     expect(evaluationWithDebt.getValue(financing.id, 0)).toBe(-20);
   });
 });
+
+describe('createDefaultStatementSchema — roles and projections', () => {
+  const template = createDefaultStatementSchema();
+  const allLines = template.sections.flatMap((s) => s.lines);
+  const find = (sectionName: string, lineName: string) => template.sections.find((s) => s.name === sectionName)!.lines.find((l) => l.name === lineName)!;
+
+  it('links Net Interest Expense, Debt Borrowings and Debt Repayments to the Debt Schedule totals', () => {
+    const cases: Array<[string, string, string]> = [
+      ['Income Statement', 'Net Interest Expense', 'Interest Expense'],
+      ['Cash Flow Statement', 'Debt Borrowings', 'Borrowings'],
+      ['Cash Flow Statement', 'Debt Repayments', 'Repayments'],
+    ];
+    for (const [sectionName, lineName, scheduleLineName] of cases) {
+      const target = find(sectionName, lineName);
+      const scheduleLine = find('Debt Schedule', scheduleLineName);
+      expect(target.projection).toEqual({ method: 'link', basisLineId: scheduleLine.id });
+      expect(target.formula).toEqual({ kind: 'ref', lineId: scheduleLine.id });
+    }
+  });
+
+  it('gives every sourced line a projection, except a debt line or a parent that sums sub-lines', () => {
+    const missing = allLines
+      .filter((l) => (l.role === 'required' || l.role === 'optional') && l.projection === null && l.lineKind !== 'debt' && !l.allowsSubLines)
+      .map((l) => l.name);
+    expect(missing).toEqual([]);
+  });
+
+  it('never gives a Calculated or Check line a projection', () => {
+    const withProjection = allLines.filter((l) => (l.role === 'calculated' || l.role === 'check') && l.projection !== null && !l.debtScheduleRole).map((l) => l.name);
+    expect(withProjection).toEqual([]);
+  });
+});

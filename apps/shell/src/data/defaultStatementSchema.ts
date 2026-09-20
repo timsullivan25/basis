@@ -441,10 +441,15 @@ function applyDebtScheduleReferences(schema: StatementSchema): StatementSchema {
     if (!result.ok) {
       throw new Error(`Default schema cross-reference failed to compile for "${r.lineName}": ${result.errors.join('; ')}`);
     }
+    // Each is a sourced line (mapped for actuals) whose projection is a Link to that schedule total.
+    const scheduleLineId = result.formula && result.formula.kind === 'ref' ? result.formula.lineId : undefined;
+    if (!scheduleLineId) throw new Error(`Default schema cross-reference for "${r.lineName}" did not resolve to a single line`);
     next = {
       ...next,
       sections: next.sections.map((s) =>
-        s.name === r.sectionName ? { ...s, lines: s.lines.map((l) => (l.id === target.id ? { ...l, formula: result.formula } : l)) } : s,
+        s.name === r.sectionName
+          ? { ...s, lines: s.lines.map((l) => (l.id === target.id ? { ...l, formula: result.formula, projection: { method: 'link' as const, basisLineId: scheduleLineId } } : l)) }
+          : s,
       ),
     };
   }

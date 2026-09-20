@@ -4,6 +4,7 @@ import type { DriverDefinition, LineNumberFormat, LineRole, LineRowFormat, LineS
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
 import { isFormulaOnly } from '../../lib/lineRole';
+import { summarizeProjection } from '../../lib/projectionSummary';
 import type { ProjectionSelection } from '../../lib/statementSchemaEdit';
 import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
@@ -190,6 +191,33 @@ export function SectionEditor({
             onChange={(e) => onSetRole(row.line!.id, e.target.value as LineRole)}
           />
         ) : null,
+    },
+    {
+      key: 'projection',
+      label: 'Projection',
+      width: 150,
+      // Read-only on purpose — a projection is only ever edited in the line's settings panel.
+      // Blank for a Calculated / Check line (nothing to project); a sourced line with none reads
+      // "Not set" in red, which is the thing this column is here to make easy to spot.
+      render: (_: unknown, row: SectionRow) => {
+        const target = row.line ?? row.childLine;
+        if (!target) return null;
+        const summary = summarizeProjection(target, schema.drivers, nameIndex);
+        if (!summary) return null;
+        return (
+          <span
+            title={summary.label}
+            style={{
+              display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontSize: 'var(--text-xs)',
+              color: summary.tone === 'missing' ? 'var(--text-negative)' : summary.tone === 'derived' ? 'var(--text-tertiary)' : 'var(--text-body)',
+              fontStyle: summary.tone === 'derived' ? 'italic' : undefined,
+            }}
+          >
+            {summary.label}
+          </span>
+        );
+      },
     },
     {
       key: 'rowFormat',
