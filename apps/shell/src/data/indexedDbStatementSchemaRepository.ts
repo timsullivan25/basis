@@ -2,7 +2,6 @@ import type { StatementSchema, StatementSchemaRepository } from './types';
 import { openBasisDb } from './db';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
 import { cloneStatementSchemaStructure } from '../lib/statementSchemaClone';
-import { normalizeStatementSchema } from '../lib/lineRole';
 
 /** First StatementSchemaRepository adapter. Swap for an API-backed one later without touching callers. */
 export class IndexedDbStatementSchemaRepository implements StatementSchemaRepository {
@@ -15,7 +14,7 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
   async list(): Promise<StatementSchema[]> {
     const db = await openBasisDb();
     const existing = await db.getAllFromIndex('statementSchema', 'by-createdAt');
-    if (existing.length > 0) return existing.filter((s) => !s.copiedFromSchemaId).map(normalizeStatementSchema);
+    if (existing.length > 0) return existing.filter((s) => !s.copiedFromSchemaId);
 
     // put (not add): concurrent calls on an empty store (e.g. two screens mounting at once)
     // all seed the same fixed id, so they converge on one row instead of racing to add duplicates.
@@ -26,10 +25,7 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
 
   async get(id: string): Promise<StatementSchema | undefined> {
     const db = await openBasisDb();
-    const schema = await db.get('statementSchema', id);
-    // Saved before roles existed? Bring it to the current shape on the way out — see
-    // lib/lineRole.ts's normalizeLine. Idempotent, so an already-current schema is unchanged.
-    return schema ? normalizeStatementSchema(schema) : undefined;
+    return db.get('statementSchema', id);
   }
 
   async create(input: { name: string }): Promise<StatementSchema> {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { addChildLine } from '../lib/statementLineChildren';
+import { setLineRole } from '../lib/statementSchemaEdit';
 import type { TimelinePeriod } from './types';
 
 function period(id: string): TimelinePeriod {
@@ -198,7 +199,9 @@ describe('createDefaultStatementSchema — Equity roll-forward and Change in NWC
         [dividendsPaid.id]: [null, 20],
       } as Record<string, (number | null)[]>,
     };
-    const evaluation = evaluateModel(schema, model);
+    // Net Income is Calculated in the template (never mapped); this test is about the roll-forward
+    // itself, so feed it directly by treating that one line as sourced.
+    const evaluation = evaluateModel(setLineRole(schema, netIncomeLine.id, 'optional'), model);
     expect(evaluation.getValue(retainedEarnings.id, 0)).toBe(500);
     expect(evaluation.getValue(retainedEarnings.id, 1)).toBe(560); // 500 + 80 − 20
   });

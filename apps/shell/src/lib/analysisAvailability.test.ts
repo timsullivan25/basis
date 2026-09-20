@@ -6,7 +6,7 @@ import type { StatementLine, StatementSchema } from '../data';
 
 function line(id: string, name: string, aliases: string[] = []): StatementLine {
   return {
-    id, name, required: true, rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
+    id, name, role: 'required', rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
     formula: null, projection: null, aliases,
   };
 }

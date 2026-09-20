@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine } from '../../data';
-import { lineRole } from '../../lib/lineRole';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
 
@@ -21,9 +20,9 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
   absolute: { label: 'Absolute', tone: 'caution' },
 };
 
-/** The "Required" column's badge: the line's role (see lib/lineRole.ts). */
+/** The "Role" column's badge. */
 export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
-  switch (lineRole(line)) {
+  switch (line.role) {
     case 'calculated':
       return { label: 'Calculated', tone: 'positive' };
     case 'check':
@@ -43,7 +42,7 @@ export const DEFAULT_CHECK_TOLERANCE = 0.001;
  *  meaningful for a Check line; every other line is always 'unknown'. */
 export type CheckStatus = 'pass' | 'fail' | 'unknown';
 export function getCheckStatus(line: StatementLine, value: number | null): CheckStatus {
-  if (lineRole(line) !== 'check' || value === null) return 'unknown';
+  if (line.role !== 'check' || value === null) return 'unknown';
   return Math.abs(value) > (line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE) ? 'fail' : 'pass';
 }
 

@@ -1,10 +1,10 @@
 import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildNameIndex, buildRatioFormula, compileFormula, type NameIndex } from '../lib/engine/resolve';
 import { regenerateTemplateDebtSchedule } from '../lib/debtSchedule';
-import { normalizeStatementSchema } from '../lib/lineRole';
 import type {
   DriverDefinition,
   LineAggregation,
   LineNumberFormat,
+  LineRole,
   LineRowFormat,
   LineSign,
   StatementLine,
@@ -19,13 +19,14 @@ interface LineOptions {
   numberFormat?: LineNumberFormat;
   sign?: LineSign;
   aggregation?: LineAggregation;
-  /** Sourced lines default to required; optional memo lines pass false. A line with a `formula`
-   *  is Calculated (or a Check, with `lineKind: 'check'`) regardless. */
-  required?: boolean;
+  /** Defaults to Calculated when the line has a `formula`, else Required. Pass 'required' with a
+   *  formula for a sourced line whose formula is its projection (a roll-forward); 'optional' for
+   *  a memo line; 'check' for a tie-out. */
+  role?: LineRole;
   /** See StatementLine.allowsSubLines' own doc comment. */
   allowsSubLines?: boolean;
   /** See StatementLine.lineKind' own doc comment. */
-  lineKind?: 'debt' | 'check';
+  lineKind?: 'debt';
 }
 
 /** Authored with a raw formula string for readability — resolved into a real ResolvedFormula
@@ -39,19 +40,22 @@ interface DraftSection extends Omit<StatementSection, 'lines'> {
 
 function line(name: string, options: LineOptions = {}): DraftLine {
   const formula = options.formula ?? '';
+  const role: LineRole = options.role ?? (formula !== '' ? 'calculated' : 'required');
+  const sourced = role === 'required' || role === 'optional';
   return {
     id: crypto.randomUUID(),
     name,
-    role: options.lineKind === 'check' ? 'check' : formula !== '' ? 'calculated' : options.required === false ? 'optional' : 'required',
+    role,
     rowFormat: options.rowFormat ?? (formula ? 'total' : 'normal'),
     numberFormat: options.numberFormat ?? 'number',
     sign: options.sign ?? 'natural',
     aggregation: options.aggregation ?? 'sum',
     formula,
-    projection: null,
+    // A sourced line with a hand-written formula: that formula IS its projection.
+    projection: sourced && formula !== '' ? { method: 'formula' } : null,
     aliases: options.aliases ?? [],
     allowsSubLines: options.allowsSubLines,
-    lineKind: options.lineKind === 'debt' ? 'debt' : undefined,
+    lineKind: options.lineKind,
   };
 }
 
@@ -99,7 +103,7 @@ function balanceSheet(): DraftSection {
     // otherwise resolve this to THAT line instead of a true self-reference.
     line('Cash & Equivalents', {
       formula: 'priorPeriod(Balance Sheet.Cash & Equivalents) + Cash Flow Statement.Net Change in Cash',
-      required: true,
+      role: 'required',
       aliases: ['Cash and cash equivalents'],
     }),
     line('Accounts Receivable', { aliases: ['AR', 'Trade receivables'] }),
@@ -125,10 +129,10 @@ function balanceSheet(): DraftSection {
     // debt-specific property fields (including the Term/Revolver choice, which is not a
     // separate schema flag at all); a custom schema is free to name its tiers anything, or have
     // any number of them.
-    line('1L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
-    line('2L Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
+    line('1L Debt', { sign: 'absolute', role: 'optional', rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
+    line('2L Debt', { sign: 'absolute', role: 'optional', rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
     line('Secured Debt', { formula: 'sum(1L Debt, 2L Debt)' }),
-    line('Unsecured Debt', { sign: 'absolute', required: false, rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
+    line('Unsecured Debt', { sign: 'absolute', role: 'optional', rowFormat: 'normal', allowsSubLines: true, lineKind: 'debt' }),
     line('Total Debt', { formula: 'sum(Secured Debt, Unsecured Debt)', aliases: ['Total borrowings'] }),
     line('Other Long Term Liabilities', { sign: 'absolute' }),
     // "Total Debt" also exists as a Credit Metrics pull-through — qualified so this reads the
@@ -142,7 +146,7 @@ function balanceSheet(): DraftSection {
     // cross-section reference, same mechanism Net Interest Expense uses for the Debt Schedule.
     line('Retained Earnings', {
       formula: 'priorPeriod(Balance Sheet.Retained Earnings) + Income Statement.Net Income - Cash Flow Statement.Dividends Paid',
-      required: true,
+      role: 'required',
       aliases: ['Accumulated deficit', 'Retained earnings (deficit)'],
     }),
     // No longer a plug (Total Assets − Total Liabilities) — a real subtotal over the two equity
@@ -155,8 +159,8 @@ function balanceSheet(): DraftSection {
 
 function cashFlowStatement(): DraftSection {
   return section('Cash Flow Statement', [
-    line('Net Income', { formula: 'Net Income', required: false }),
-    line('Depreciation & Amortization', { formula: 'Depreciation & Amortization', required: false, rowFormat: 'normal' }),
+    line('Net Income', { formula: 'Net Income' }),
+    line('Depreciation & Amortization', { formula: 'Depreciation & Amortization', rowFormat: 'normal' }),
     line('Stock Based Compensation', { sign: 'absolute', aliases: ['SBC'] }),
     // The balance-sheet movements a pure income-statement-driven build misses: an increase in AR
     // is a cash outflow, an increase in AP/Deferred Revenue is a cash inflow. Each term uses
@@ -180,9 +184,9 @@ function cashFlowStatement(): DraftSection {
     // mandatory amortization + swept repayment into one CFS line; the split only matters at the
     // per-tranche schedule level). Null for a company with no tranches, same as any sum() of
     // nothing — no special "blank until" handling needed.
-    line('Debt Borrowings', { required: false }),
-    line('Debt Repayments', { sign: 'absolute', required: false }),
-    line('Dividends Paid', { sign: 'absolute', required: false, aliases: ['Dividends paid', 'Common dividends paid', 'Cash dividends paid'] }),
+    line('Debt Borrowings', { role: 'optional' }),
+    line('Debt Repayments', { sign: 'absolute', role: 'optional' }),
+    line('Dividends Paid', { sign: 'absolute', role: 'optional', aliases: ['Dividends paid', 'Common dividends paid', 'Cash dividends paid'] }),
     line('Net Cash from Financing Activities', { formula: 'Debt Borrowings - Debt Repayments - Dividends Paid' }),
     line('Net Change in Cash', { formula: 'Free Cash Flow + Net Cash from Financing Activities' }),
   ]);
@@ -197,12 +201,14 @@ function cashFlowStatement(): DraftSection {
  *  unused levels" logic needed anywhere. */
 function ebitdaBridge(): DraftSection {
   return section('EBITDA', [
-    line('Reported EBITDA', { formula: 'EBITDA', required: false }),
-    line('Adjusted EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    // The as-reported figure: mapped when the source states one, else the Income Statement's
+    // EBITDA — a sourced line whose formula is its fallback.
+    line('Reported EBITDA', { formula: 'EBITDA', role: 'optional' }),
+    line('Adjusted EBITDA Delta', { role: 'optional', rowFormat: 'normal', allowsSubLines: true }),
     line('Adjusted EBITDA', { formula: 'sum(Reported EBITDA, Adjusted EBITDA Delta)' }),
-    line('Cash EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Cash EBITDA Delta', { role: 'optional', rowFormat: 'normal', allowsSubLines: true }),
     line('Cash EBITDA', { formula: 'sum(Adjusted EBITDA, Cash EBITDA Delta)' }),
-    line('Pro Forma EBITDA Delta', { required: false, rowFormat: 'normal', allowsSubLines: true }),
+    line('Pro Forma EBITDA Delta', { role: 'optional', rowFormat: 'normal', allowsSubLines: true }),
     line('Pro Forma EBITDA', { formula: 'sum(Cash EBITDA, Pro Forma EBITDA Delta)' }),
     line('Adjusted EBITDA Margin %', { formula: 'Adjusted EBITDA / Revenue', rowFormat: 'metric', numberFormat: 'percentage', aggregation: 'none' }),
   ]);
@@ -210,8 +216,8 @@ function ebitdaBridge(): DraftSection {
 
 function workingCapital(): DraftSection {
   return section('Working Capital', [
-    line('Days Sales Outstanding', { required: false, rowFormat: 'metric', aggregation: 'none', aliases: ['DSO'] }),
-    line('Days Payable Outstanding', { required: false, rowFormat: 'metric', aggregation: 'none', aliases: ['DPO'] }),
+    line('Days Sales Outstanding', { role: 'optional', rowFormat: 'metric', aggregation: 'none', aliases: ['DSO'] }),
+    line('Days Payable Outstanding', { role: 'optional', rowFormat: 'metric', aggregation: 'none', aliases: ['DPO'] }),
     line('Net Working Capital', {
       formula: 'Accounts Receivable - Accounts Payable - Deferred Revenue',
       aggregation: 'last',
@@ -221,8 +227,8 @@ function workingCapital(): DraftSection {
 
 function creditMetrics(): DraftSection {
   return section('Credit Metrics', [
-    line('Total Debt', { formula: 'Total Debt', required: false, aggregation: 'last' }),
-    line('Cash & Equivalents', { formula: 'Cash & Equivalents', required: false, rowFormat: 'normal', aggregation: 'last' }),
+    line('Total Debt', { formula: 'Total Debt', aggregation: 'last' }),
+    line('Cash & Equivalents', { formula: 'Cash & Equivalents', rowFormat: 'normal', aggregation: 'last' }),
     // "Total Debt" and "Cash & Equivalents" are also Balance Sheet lines — qualified so this
     // reads the Credit Metrics section's own pull-through lines defined just above.
     line('Net Debt', {
@@ -258,14 +264,14 @@ function checks(): DraftSection {
       rowFormat: 'normal',
       numberFormat: 'percentage',
       aggregation: 'none',
-      lineKind: 'check',
+      role: 'check',
     }),
     line('Cash Flow Check', {
       formula: 'abs(Cash Flow Statement.Net Change in Cash - (Balance Sheet.Cash & Equivalents - priorPeriod(Balance Sheet.Cash & Equivalents))) / Total Assets',
       rowFormat: 'normal',
       numberFormat: 'percentage',
       aggregation: 'none',
-      lineKind: 'check',
+      role: 'check',
     }),
   ]);
 }
@@ -445,6 +451,22 @@ function applyDebtScheduleReferences(schema: StatementSchema): StatementSchema {
   return next;
 }
 
+/** Gives every sourced line that still has no projection the default Flat carry-forward — except
+ *  a debt line (the Debt Schedule feeds it) and a parent that sums sub-lines, which have none. */
+function withDefaultFlatProjection(schema: StatementSchema): StatementSchema {
+  return {
+    ...schema,
+    sections: schema.sections.map((section) => ({
+      ...section,
+      lines: section.lines.map((l) => {
+        const sourced = l.role === 'required' || l.role === 'optional';
+        if (!sourced || l.projection !== null || l.lineKind === 'debt' || l.allowsSubLines) return l;
+        return { ...l, formula: buildFlatFormula(l.id), projection: { method: 'flat' } };
+      }),
+    })),
+  };
+}
+
 /** Seeded once, the first time no schema has been saved yet. Fully editable afterward. */
 export function createDefaultStatementSchema(): StatementSchema {
   const draftSections = [
@@ -474,6 +496,6 @@ export function createDefaultStatementSchema(): StatementSchema {
   schema = applyDebtScheduleReferences(schema);
 
   // Every sourced line the seeds above don't name still gets a projection (Flat) — a sourced line
-  // always has one — via the same normalization saved data goes through when it's read.
-  return normalizeStatementSchema(applyDefaultProjections(schema));
+  // always has one.
+  return withDefaultFlatProjection(applyDefaultProjections(schema));
 }

@@ -3,7 +3,7 @@ import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedCon
 import type { DriverDefinition, LineNumberFormat, LineRole, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
-import { isFormulaOnly, lineRole } from '../../lib/lineRole';
+import { isFormulaOnly } from '../../lib/lineRole';
 import type { ProjectionSelection } from '../../lib/statementSchemaEdit';
 import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
@@ -62,7 +62,7 @@ interface SectionEditorProps {
   onDelete: () => void;
   onAddLine: () => void;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
-  /** The "Required" column's editor — a role change can also reshape the line's formula,
+  /** The "Role" column's editor — a role change can also reshape the line's formula,
    *  projection and structure (see lib/statementSchemaEdit.ts's setLineRole), so it isn't just an
    *  onUpdateLine patch. */
   onSetRole: (lineId: string, role: LineRole) => void;
@@ -122,7 +122,7 @@ export function SectionEditor({
         // Checked regardless of projection — a broken reference matters whether the formula was
         // hand-written or generated, but the informational sigma icon below is deliberately not:
         // it's only for a genuine structural formula, since a projection-carrying line already
-        // shows its (non-"Calculated") status in the Required column and its formula in the
+        // shows its (non-"Calculated") status in the Role column and its formula in the
         // expanded row detail — showing the icon on every projected line too would just be noise.
         const dangling = hasFormula ? collectRefIds(row.line.formula!).filter((id) => !nameIndex.describe(id)) : [];
         return (
@@ -164,8 +164,8 @@ export function SectionEditor({
         ) : null,
     },
     {
-      key: 'required',
-      label: 'Required',
+      key: 'role',
+      label: 'Role',
       width: 120,
       // The line's role — Required / Optional / Calculated / Check. A Debt Schedule line is
       // generated, so its role is fixed. Only a top-level line shows this at all — a child/KPI's
@@ -186,7 +186,7 @@ export function SectionEditor({
             size="sm"
             autoFocus
             options={ROLE_OPTIONS}
-            value={lineRole(row.line)}
+            value={row.line.role}
             onChange={(e) => onSetRole(row.line!.id, e.target.value as LineRole)}
           />
         ) : null,
@@ -460,9 +460,11 @@ export function LineSettingsPanelContent({
   // meanwhile rather than writing a half-configured projection onto the line.
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
   const [pendingLink, setPendingLink] = useState(false);
+  // The Link's Flip sign switch — held here so it can be set before a basis line is chosen.
+  const [flipSign, setFlipSign] = useState(line.projection?.method === 'link' && line.projection.flipSign === true);
   const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
 
-  const role = lineRole(line);
+  const role = line.role;
   const sourced = role === 'required' || role === 'optional';
   const projection = line.projection;
   const rawMethod = projection?.method ?? 'flat';
@@ -510,8 +512,13 @@ export function LineSettingsPanelContent({
 
   function handleLinkBasisChange(nextBasisLineId: string) {
     if (!nextBasisLineId) return;
-    onSetProjection(line.id, { method: 'link', basisLineId: nextBasisLineId });
+    onSetProjection(line.id, { method: 'link', basisLineId: nextBasisLineId, flipSign });
     setPendingLink(false);
+  }
+
+  function handleFlipSignChange(next: boolean) {
+    setFlipSign(next);
+    if (linkBasisLineId) onSetProjection(line.id, { method: 'link', basisLineId: linkBasisLineId, flipSign: next });
   }
 
   function addAlias() {
@@ -614,6 +621,7 @@ export function LineSettingsPanelContent({
               onChange={(e) => handleLinkBasisChange(e.target.value)}
             />
           </div>
+          <Switch size="sm" label="Flip sign" checked={flipSign} onChange={handleFlipSignChange} />
           <div style={fieldColumn}>
             <FieldLabel>Formula</FieldLabel>
             {linkBasisLineId ? (
@@ -684,7 +692,7 @@ export function LineSettingsPanelContent({
   const propertiesContent = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
       <div style={fieldColumn}>
-        <FieldLabel>Required</FieldLabel>
+        <FieldLabel>Role</FieldLabel>
         <Select
           size="sm"
           disabled={Boolean(line.debtScheduleRole)}

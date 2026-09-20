@@ -25,7 +25,7 @@ function driverRef(driverId: string): ResolvedFormula {
 
 function line(id: string, name: string, formula: ResolvedFormula | null = null): StatementLine {
   return {
-    id, name, required: false, rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
+    id, name, role: 'optional', rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
     formula, projection: null, aliases: [],
   };
 }

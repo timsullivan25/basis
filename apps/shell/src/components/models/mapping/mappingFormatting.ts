@@ -1,5 +1,4 @@
 import type { LineMapping, LineNumberFormat, MatchMethod, StatementLine } from '../../../data';
-import { lineRole } from '../../../lib/lineRole';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
 
@@ -36,7 +35,7 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
  *  Required can be missing: Optional, Calculated and Check lines never are. A parent that sums
  *  real sub-lines (`hasChildren`) isn't either — its own mapping is inactive while they exist. */
 export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined, hasChildren = false): boolean {
-  if (hasChildren || lineRole(target) !== 'required') return false;
+  if (hasChildren || target.role !== 'required') return false;
   return !mapping || mapping.sourceLineIds.length === 0;
 }
 

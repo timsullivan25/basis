@@ -18,7 +18,7 @@ function line(id: string, name: string, opts: Partial<StatementLine> = {}): Stat
   return {
     id,
     name,
-    required: false,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -166,6 +166,13 @@ describe('setLineProjection', () => {
     expect(l1.sections[0].lines[0].projection).toEqual({ method: 'link', basisLineId: 'l2' });
     expect(l1.sections[0].lines[0].formula).toEqual({ kind: 'ref', lineId: 'l2' });
     expect(l1.drivers).toEqual([]);
+  });
+
+  it('"link" with flipSign reads the basis line negated', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'Capex CF'), line('l2', 'Capex')] }]);
+    const next = setLineProjection(schema, 'l1', { method: 'link', basisLineId: 'l2', flipSign: true }).sections[0].lines[0];
+    expect(next.projection).toEqual({ method: 'link', basisLineId: 'l2', flipSign: true });
+    expect(next.formula).toEqual({ kind: 'neg', arg: { kind: 'ref', lineId: 'l2' } });
   });
 
   it('"formula" keeps an existing hand-written formula but discards a generated one', () => {

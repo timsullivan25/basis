@@ -1,6 +1,5 @@
 import type { DriverDefinition, LineRole, ProjectionMethod, StatementLine, StatementSchema } from '../data';
 import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildLinkFormula, buildRatioFormula } from './engine/resolve';
-import { lineRole } from './lineRole';
 import { childrenOf } from './statementLineChildren';
 
 // Roll-off/Actual are child-line-only projection methods (see instances/projectionMethod.tsx) —
@@ -26,7 +25,7 @@ export type ProjectionSelection =
   | { method: 'flat' }
   | { method: 'growth' }
   | { method: 'percent-of' | 'days-of'; basisLineId: string }
-  | { method: 'link'; basisLineId: string }
+  | { method: 'link'; basisLineId: string; flipSign?: boolean }
   | { method: 'formula' }
   | { method: 'hardcode' };
 
@@ -139,9 +138,10 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
     return updateLine(base, lineId, { formula: keep, projection: { method: 'formula' } });
   }
   if (selection.method === 'link') {
+    const flipSign = selection.flipSign === true;
     return updateLine(base, lineId, {
-      formula: buildLinkFormula(selection.basisLineId),
-      projection: { method: 'link', basisLineId: selection.basisLineId },
+      formula: buildLinkFormula(selection.basisLineId, flipSign),
+      projection: { method: 'link', basisLineId: selection.basisLineId, ...(flipSign ? { flipSign } : {}) },
     });
   }
   if (selection.method === 'flat') {
@@ -177,7 +177,7 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
   return updateLine({ ...base, drivers: [...remainingDrivers, driver] }, lineId, { formula, projection: { method: selection.method, driverId } });
 }
 
-/** Changes a line's role (the "Required" column). Required <-> Optional is just the flag. Moving
+/** Changes a line's role (the "Role" column). Required <-> Optional is just the flag. Moving
  *  to Calculated/Check drops the projection (and its driver) and any generated formula — one
  *  hand-written formula is all such a line has, and a hand-written one is kept — plus anything
  *  that only a sourced line can have (debt kind, sub-lines). Moving to Required/Optional gives
@@ -187,7 +187,7 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
 export function setLineRole(schema: StatementSchema, lineId: string, role: LineRole): StatementSchema {
   const line = findLine(schema, lineId);
   if (!line || line.debtScheduleRole) return schema;
-  const current = lineRole(line);
+  const current = line.role;
   if (current === role) return schema;
   const nowSourced = current === 'required' || current === 'optional';
   const nextSourced = role === 'required' || role === 'optional';

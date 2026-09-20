@@ -54,13 +54,11 @@ export type ResolvedFormula =
  *  value, a per-period hardcoded number. */
 export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' | 'actual';
 
-/** How a line gets its values — the one field the schema editor's "Required" column edits.
+/** How a line gets its values — the one field the schema editor's "Role" column edits.
  *  'required' / 'optional' are SOURCED: mapped from an uploaded model for the actual periods (a
  *  required one must be), with a projection (see StatementLine.projection) for the rest.
  *  'calculated' is never mapped — one formula produces its value in every period, actual and
- *  projected alike. 'check' is a calculated line that must tie out (see checkTolerance). Read it
- *  through lib/lineRole.ts's lineRole(), never `line.role` directly: it also derives the role of
- *  older data saved before this field existed. */
+ *  projected alike. 'check' is a calculated line that must tie out (see checkTolerance). */
 export type LineRole = 'required' | 'optional' | 'calculated' | 'check';
 
 /** A SOURCED line's projection type — how its projected periods get a value. The first group
@@ -70,7 +68,9 @@ export type LineRole = 'required' | 'optional' | 'calculated' | 'check';
 export type LineProjection =
   | { method: 'flat' }
   | { method: ProjectionMethod; driverId: string }
-  | { method: 'link'; basisLineId: string }
+  /** `flipSign` reads the basis line negated — a Link's one adjustment, so a plain pull-through
+   *  of an opposite-signed line doesn't need a hand-written Formula. */
+  | { method: 'link'; basisLineId: string; flipSign?: boolean }
   | { method: 'formula' }
   | { method: 'hardcode' };
 
@@ -121,13 +121,8 @@ export interface StatementLine {
   /** Stable once created — never regenerated on rename/reorder/move, since formulas and aliases reference it. */
   id: string;
   name: string;
-  /** How this line gets its values — see LineRole. Absent only on data saved before roles
-   *  existed; always read via lib/lineRole.ts's lineRole(), which derives it from the legacy
-   *  fields (`required`, `lineKind: 'check'`, and "has a formula but no projection"). */
-  role?: LineRole;
-  /** LEGACY — superseded by `role` ('required' vs 'optional'). Kept optional so older saved data
-   *  and fixtures still type-check; new code never writes it. */
-  required?: boolean;
+  /** How this line gets its values — see LineRole. */
+  role: LineRole;
   rowFormat: LineRowFormat;
   numberFormat: LineNumberFormat;
   sign: LineSign;
@@ -161,8 +156,7 @@ export interface StatementLine {
    *  a section whose allowsFreeformLines is true is the KPI case — no separate field needed for
    *  that, since the line simply lives in that section's own `lines` array like any other. */
   parentLineId?: string;
-  /** 'debt' today (a legacy 'check' may still appear on older data — a check is now the 'check'
-   *  `role`); other kinds may exist later. Fully independent of allowsSubLines —
+  /** 'debt' today; other kinds may exist later. Fully independent of allowsSubLines —
    *  a line can be debt with no children (a single lump-sum balance carrying its own properties
    *  directly), have children without being debt (a revenue segment's parent), both, or neither.
    *  A child's EFFECTIVE kind is always its parent's (via parentLineId) — never independently set
@@ -170,7 +164,7 @@ export interface StatementLine {
    *  and non-debt children wouldn't mean anything). Only a line with no parentLineId has this
    *  field mean anything on its own. 'check' is unrelated to the debt fields below — see
    *  checkTolerance. */
-  lineKind?: 'debt' | 'check';
+  lineKind?: 'debt';
   /** Set on whichever debt-kind line (lineKind === 'debt', directly or inherited) currently has
    *  no children of its own — a standalone debt line, or a leaf tranche. The moment a debt line
    *  gains a real child, it becomes a pure rollup (its own formula sums the children — see
@@ -187,7 +181,7 @@ export interface StatementLine {
    *  plays no role in deciding what's eligible for the schedule (that's still effectiveLineKind
    *  === 'debt' on a childless line, unchanged from Capital Structure). */
   debtScheduleRole?: { trancheLineId?: string; role: DebtScheduleRole };
-  /** Only meaningful when lineKind === 'check' — the largest absolute computed value (in the
+  /** Only meaningful for a Check line (role 'check') — the largest absolute computed value (in the
    *  line's own units, e.g. a fraction for a percentage-formatted check) still considered "tied
    *  out". Absent falls back to DEFAULT_CHECK_TOLERANCE (see statementFormatting.ts's
    *  getCheckStatus) rather than treating every nonzero value as a failure. */

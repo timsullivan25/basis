@@ -6,7 +6,7 @@ function line(id: string, name: string, opts: Partial<StatementLine> = {}): Stat
   return {
     id,
     name,
-    required: false,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',

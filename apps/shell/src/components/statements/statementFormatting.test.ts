@@ -6,7 +6,7 @@ function checkLine(overrides: Partial<StatementLine> = {}): StatementLine {
   return {
     id: 'l1',
     name: 'Some Check',
-    required: false,
+    role: 'check',
     rowFormat: 'normal',
     numberFormat: 'percentage',
     sign: 'natural',
@@ -14,7 +14,6 @@ function checkLine(overrides: Partial<StatementLine> = {}): StatementLine {
     formula: null,
     projection: null,
     aliases: [],
-    lineKind: 'check',
     ...overrides,
   };
 }
@@ -24,8 +23,8 @@ describe('getCheckStatus', () => {
     expect(getCheckStatus(checkLine(), null)).toBe('unknown');
   });
 
-  it('is "unknown" for a line that is not lineKind "check", regardless of value', () => {
-    expect(getCheckStatus(checkLine({ lineKind: undefined }), 5)).toBe('unknown');
+  it('is "unknown" for a line that is not a Check, regardless of value', () => {
+    expect(getCheckStatus(checkLine({ role: 'calculated' }), 5)).toBe('unknown');
   });
 
   it('passes at exactly the default tolerance, fails just past it', () => {
