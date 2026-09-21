@@ -197,13 +197,14 @@ export function SectionEditor({
       label: 'Projection',
       width: 150,
       // Read-only on purpose — a projection is only ever edited in the line's settings panel.
-      // Blank for a Calculated / Check line (nothing to project); a sourced line with none reads
-      // "Not set" in red, which is the thing this column is here to make easy to spot.
+      // An em-dash for a Calculated / Check line (nothing to project); a sourced line with none
+      // reads "Not set" in red, which is the thing this column is here to make easy to spot.
       render: (_: unknown, row: SectionRow) => {
         const target = row.line ?? row.childLine;
         if (!target) return null;
         const summary = summarizeProjection(target, schema.drivers, nameIndex);
-        if (!summary) return null;
+        // An em-dash, not blank: "nothing to project here" reads differently from "missing".
+        if (!summary) return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>—</span>;
         return (
           <span
             title={summary.label}
