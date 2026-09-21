@@ -87,15 +87,30 @@ Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adap
 Both run from buttons on the mapping screen, so the deterministic pass stays instant. Both send line names,
 groups, sections and each line's **latest value** (not the full series) to the model; every id in an answer is
 validated against what was sent, and every result lands flagged for review (`method: 'ai'`, confidence below the
-0.8 review threshold) — code never lets the model settle a mapping on its own.
+0.8 review threshold) — code never lets the model settle a mapping on its own. Manual and approved matches are
+never changed.
 
-- **Review with AI** (`aiImport/suggestMappings.ts`): unmapped lines and ties only, one request per statement
-  section. Sources already used by a settled match are marked and rejected. Empty answers are allowed and preferred
-  to guesses. Saving accepted matches back as aliases is deliberately not done yet.
-- **Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,
-  `StructureOp`) — a parent that allows sub-lines, a clean name, and the unassigned imported lines behind it. Ops
-  are applied only through `addChildLine`, so schema invariants hold, and are reviewed one by one in
-  `StructureProposalDialog` with code-computed evidence (sub-line total vs the parent's mapped total). Debt tranche
-  settings (coupon, maturity, ...) and new lines/sections are later ops on the same path; settings usually live outside
-  the historical window, so they need a second extraction window.
+**Review with AI** (`aiImport/runAiReview.ts`) runs three passes:
+1. **Fill** (`suggestMappings.ts`): unmapped and tied targets, from unmapped source lines, one request per
+   statement section. Empty answers are allowed and preferred to guesses.
+2. **Consolidate** (`suggestConsolidations.ts`): unmapped, non-empty source lines that belong *added* onto an
+   existing match (Goodwill onto an Intangibles match). One request per section, pairing a target section with the
+   imported section of the same name, so a Balance Sheet line is only offered to Balance Sheet targets. Code
+   rejects an addition that just adds up to what the target already reports (its own components — Operating Income
+   plus Depreciation against a mapped EBITDA), and the checks referee the pass: a section whose check gets worse
+   under the additions has them undone.
+3. **Checks** (`reviewChecks.ts`): failing check lines mark sections where something is missing. Code searches for
+   sets of up to three unmapped lines whose values close the gap in every period (arithmetic, so code's job), and
+   consolidation is asked again for those sections only, with the gap and any closing lines as evidence. A check
+   still failing is reported at the end.
 
+**Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,
+`StructureOp`) — a parent that allows sub-lines, a clean name, and the unassigned imported lines behind it. Leftover
+lines are shown clustered by group (biggest first). Focus parents: Revenue, Cost of Revenue (kept only when revenue
+is broken down too — code enforces it), EBITDA adjustment levels and debt classes; segment-level EBITDA is ignored.
+Ops are applied only through `addChildLine`, so schema invariants hold, and are reviewed one by one in
+`StructureProposalDialog` with code-computed evidence (sub-line total vs the parent's mapped total). Debt tranche
+settings and new lines/sections are later ops on the same path; settings usually live outside the historical
+window, so they need a second extraction window.
+
+Saving accepted matches back as aliases is deliberately not done yet.

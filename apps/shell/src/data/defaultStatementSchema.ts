@@ -66,7 +66,7 @@ function section(name: string, lines: DraftLine[]): DraftSection {
 function incomeStatement(): DraftSection {
   return section('Income Statement', [
     line('Revenue', { aliases: ['Total revenue', 'Net revenue'], allowsSubLines: true }),
-    line('Cost of Revenue', { sign: 'absolute', aliases: ['COGS', 'Cost of goods sold', 'Cost of sales'] }),
+    line('Cost of Revenue', { sign: 'absolute', aliases: ['COGS', 'Cost of goods sold', 'Cost of sales'], allowsSubLines: true }),
     line('Gross Profit', { formula: 'Revenue - Cost of Revenue' }),
     line('Gross Margin %', { formula: 'Gross Profit / Revenue', rowFormat: 'metric', numberFormat: 'percentage', aggregation: 'none' }),
     line('Sales & Marketing', { sign: 'absolute', aliases: ['S&M', 'Sales and marketing'] }),

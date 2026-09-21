@@ -50,7 +50,10 @@ The standard statement has some "parent" lines that break down into sub-lines: r
 
 Rules:
 - Answer only with parent ids and imported-line ids you are given. Never invent an id.
-- Propose a sub-line only when imported lines clearly break down that parent: revenue by segment or geography under a revenue parent, add-backs and adjustments under an EBITDA delta line, individual loans, notes and revolvers under a debt class.
+- Propose a sub-line only when imported lines clearly break down that parent. Focus on: revenue by segment, product or geography under a revenue parent; the matching cost of revenue by that same segment under a cost-of-revenue parent; add-backs and adjustments under an EBITDA delta line; individual loans, notes and revolvers under a debt class.
+- Cost of revenue is only broken down by segments that revenue is also broken down by. If the file gives no revenue breakdown, propose none for cost of revenue.
+- Ignore segment-level EBITDA, margin, gross profit and growth lines: they are calculations, not components.
+- Imported lines are shown in clusters by the group they sit under in the file. A group with several lines is the strongest sign of a breakdown, so consider each group before single lines.
 - A sub-line's name is a clean, short label (for example "Academia", "Restructuring", "Term Loan B"). Do not include the group or section in it.
 - One sub-line normally comes from one imported line. Use several only when they are pieces of the same item.
 - Use each imported line at most once. Do not use lines marked as used.
@@ -64,6 +67,20 @@ function describeSource(line: ParsedSourceLine, lastIndex: number): string {
   if (line.group) parts.push(`group=${line.group}`);
   parts.push(`name=${line.name}`, `latest=${value === null || value === undefined ? 'blank' : value}`);
   return parts.join(' | ');
+}
+
+/** Lines grouped by (section, group) — the biggest clusters first, since a group of several lines is the likeliest breakdown — then the ungrouped ones in file order. */
+export function clusterText(lines: ParsedSourceLine[], lastIndex: number): string {
+  const clusters = new Map<string, ParsedSourceLine[]>();
+  const loose: ParsedSourceLine[] = [];
+  for (const l of lines) {
+    if (!l.group) { loose.push(l); continue; }
+    const key = `${l.section} / ${l.group}`;
+    clusters.set(key, [...(clusters.get(key) ?? []), l]);
+  }
+  const blocks = [...clusters.entries()].sort((a, b) => b[1].length - a[1].length).map(([key, members]) => `[${key}] (${members.length} lines)\n${members.map((l) => describeSource(l, lastIndex)).join('\n')}`);
+  if (loose.length > 0) blocks.push(`[ungrouped] (${loose.length} lines)\n${loose.map((l) => describeSource(l, lastIndex)).join('\n')}`);
+  return blocks.join('\n\n');
 }
 
 const latest = (line: ParsedSourceLine | undefined, lastIndex: number): number | null => line?.values[lastIndex] ?? null;
@@ -112,7 +129,7 @@ export async function proposeStructure(
 
   const raw = await provider.generateStructured({
     system: SYSTEM_PROMPT,
-    prompt: `Parent lines that can take sub-lines:\n${parentText}\n\nImported lines not matched to any standard line:\n${leftover.map((l) => describeSource(l, lastIndex)).join('\n')}`,
+    prompt: `Parent lines that can take sub-lines:\n${parentText}\n\nImported lines not matched to any standard line, clustered by group:\n${clusterText(leftover, lastIndex)}`,
     schemaName: 'structure_proposals',
     schema: STRUCTURE_SCHEMA,
     effort: 'low',
@@ -151,7 +168,18 @@ export function parseStructureOps(raw: unknown, schema: StatementSchema, workboo
       reason: typeof entry.reason === 'string' ? entry.reason : '',
     });
   }
-  return ops;
+  return dropCostBreakdownWithoutRevenue(ops, schema);
+}
+
+const COST_OF_REVENUE = /^(cost of (revenues?|sales|goods sold)|cogs)$/i;
+const REVENUE = /^((total|net) )?revenues?$/i;
+
+/** A cost-of-revenue breakdown only makes sense against a revenue breakdown — the same segments — so without one (already in the schema, or proposed in this same answer) it is dropped. */
+function dropCostBreakdownWithoutRevenue(ops: StructureOp[], schema: StatementSchema): StructureOp[] {
+  const lines = schema.sections.flatMap((s) => s.lines);
+  const nameOf = (id: string) => lines.find((l) => l.id === id)?.name ?? '';
+  const revenueBroken = lines.some((l) => REVENUE.test(l.name) && childrenOf(schema, l.id).length > 0) || ops.some((o) => REVENUE.test(nameOf(o.parentLineId)));
+  return revenueBroken ? ops : ops.filter((o) => !COST_OF_REVENUE.test(nameOf(o.parentLineId)));
 }
 
 /** Code-computed evidence for a parent's proposed sub-lines: their latest-period total against what the parent was mapped to (null when it wasn't mapped). Shown to the reviewer, never a gate. */

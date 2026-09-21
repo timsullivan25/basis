@@ -42,7 +42,7 @@ import { MappingRowDetail } from './MappingRowDetail';
 import { applyStructureOp, proposeStructure, subLineParents, type StructureOp } from '../../../lib/aiImport/proposeStructure';
 import { StructureProposalDialog } from './StructureProposalDialog';
 import { getLlmProvider } from '../../../lib/aiImport/provider';
-import { suggestMappings } from '../../../lib/aiImport/suggestMappings';
+import { runAiReview, type AiReviewResult, type AiReviewStep } from '../../../lib/aiImport/runAiReview';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
@@ -131,7 +131,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
-  const [aiState, setAiState] = useState<{ status: 'idle' | 'running' } | { status: 'done'; suggested: number; asked: number } | { status: 'failed'; message: string }>({ status: 'idle' });
+  const [aiState, setAiState] = useState<{ status: 'idle' } | { status: 'running'; step: AiReviewStep } | { status: 'done'; result: AiReviewResult; asked: number } | { status: 'failed'; message: string }>({ status: 'idle' });
   // "Edit mapping" (the historical default) vs "Edit schema" — same rows either way (see
   // buildSectionRows), only the columns and the side panel differ. See changeSchema's own
   // comment for how a schema-mode edit gets persisted.
@@ -341,11 +341,15 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
 
   async function reviewWithAi() {
     if (!workbook) return;
-    setAiState({ status: 'running' });
+    if (!schema) return;
+    setAiState({ status: 'running', step: 'fill' });
     try {
-      const suggestions = await suggestMappings(getLlmProvider(), mappableLines, workbook, mapping, isAiSettled);
-      setMapping((prev) => ({ ...prev, ...suggestions }));
-      setAiState({ status: 'done', suggested: Object.keys(suggestions).length, asked: aiCandidateCount });
+      const result = await runAiReview({
+        provider: getLlmProvider(), schema, targets: mappableLines, workbook, mapping, manualHistoricals, isSettled: isAiSettled,
+        onStep: (step) => setAiState({ status: 'running', step }),
+      });
+      setMapping(result.mapping);
+      setAiState({ status: 'done', result, asked: aiCandidateCount });
     } catch (error) {
       setAiState({ status: 'failed', message: error instanceof Error ? error.message : String(error) });
     }
@@ -973,11 +977,11 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
               <Button
                 size="sm"
                 iconLeft="sparkles"
-                disabled={aiState.status === 'running' || aiCandidateCount === 0}
+                disabled={aiState.status === 'running'}
                 onClick={reviewWithAi}
-                title={aiCandidateCount === 0 ? 'Every mappable line already has a match' : 'Ask AI to place the unmapped and tied lines. Sends line names and latest values to the model.'}
+                title="Ask AI to (1) place unmapped and tied lines, (2) add leftover lines onto existing matches, and (3) use failing checks to find what's missing. Sends line names and latest values to the model."
               >
-                {aiState.status === 'running' ? 'Reviewing…' : `Review with AI · ${aiCandidateCount}`}
+                {aiState.status === 'running' ? `${{ fill: 'Matching', consolidate: 'Consolidating', checks: 'Checking' }[aiState.step]}…` : `Review with AI · ${aiCandidateCount}`}
               </Button>
             ) : null}
             {mode === 'mapping' && canSuggestStructure ? (
@@ -1263,15 +1267,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       {aiState.status === 'done' || aiState.status === 'failed' ? (
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
           <Toast
-            tone={aiState.status === 'failed' ? 'negative' : aiState.suggested > 0 ? 'positive' : 'info'}
+            tone={aiState.status === 'failed' ? 'negative' : aiState.result.checks.some((c) => c.status === 'unresolved') ? 'caution' : aiState.result.filled + aiState.result.consolidated > 0 ? 'positive' : 'info'}
             title={aiState.status === 'failed' ? 'AI review failed' : 'AI review finished'}
             onDismiss={() => setAiState({ status: 'idle' })}
           >
             {aiState.status === 'failed'
               ? aiState.message
-              : aiState.suggested > 0
-                ? `Suggested a match for ${aiState.suggested} of ${aiState.asked} lines. They're flagged for review — check each one.`
-                : `No confident suggestions for the ${aiState.asked} remaining lines.`}
+              : aiReviewSummary(aiState.result, aiState.asked)}
           </Toast>
         </div>
       ) : null}
@@ -1313,4 +1315,17 @@ function MetricRow({ label, value, icon, tone, onDrill }: { label: string; value
       <Icon name={icon} size={18} color={tone === 'caution' ? 'var(--text-caution)' : 'var(--text-tertiary)'} />
     </div>
   );
+}
+
+/** One plain sentence per pass, ending with any check the review could not close — that one is the reviewer's to chase. */
+function aiReviewSummary(result: AiReviewResult, asked: number): string {
+  const parts = [
+    result.filled > 0 ? `Suggested a match for ${result.filled} of ${asked} open lines.` : asked > 0 ? `No suggestion for the ${asked} open lines.` : '',
+    result.consolidated > 0 ? `Suggested adding lines to ${result.consolidated} existing match${result.consolidated === 1 ? '' : 'es'}.` : '',
+    ...result.reverted.map((section) => `Undid the consolidation suggestions in ${section}: they made its check worse.`),
+    ...result.checks.map((c) =>
+      c.status === 'resolved' ? `${c.section} check now passes.` : `${c.section} check still fails${c.latest === null ? '' : ` (${Math.round(c.latest * 100) / 100} in the latest period)`} — a line may still be missing.`,
+    ),
+  ].filter(Boolean);
+  return `${parts.join(' ')} Everything suggested is flagged for review.`;
 }

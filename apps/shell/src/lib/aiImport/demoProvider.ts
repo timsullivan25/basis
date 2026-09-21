@@ -79,6 +79,7 @@ export class DemoLlmProvider implements LlmProvider {
       };
     }
 
+    if (request.schemaName === 'mapping_consolidations') return { additions: [] };
     if (request.schemaName === 'structure_proposals') return { subLines: [] };
     if (request.schemaName === 'mapping_suggestions') return { matches: [] }; // the demo has no view on mappings
     throw new Error(`Demo provider does not handle "${request.schemaName}".`);

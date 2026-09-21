@@ -10,6 +10,7 @@ const schema: StatementSchema = {
   id: 'x', name: 'x', createdAt: '', updatedAt: '', drivers: [],
   sections: [{ id: 's', name: 'Income Statement', lines: [line('rev', 'Revenue', { allowsSubLines: true }), line('cogs', 'COGS')] }],
 };
+const withCostParent: StatementSchema = { ...schema, sections: [{ ...schema.sections[0], lines: [schema.sections[0].lines[0], line('cogs', 'Cost of Revenue', { allowsSubLines: true })] }] };
 const workbook: ParsedWorkbook = {
   periods: [{ type: 'FY', date: '', name: 'FY24' }],
   lines: [
@@ -61,5 +62,22 @@ describe('proposeStructure', () => {
     expect((await proposeStructure(provider, schema, workbook, guess)).map((o) => o.name)).toEqual(['Academia']);
     const approved = { rev: { ...guess.rev, approved: true } };
     expect(await proposeStructure(new FakeLlmProvider({ subLines: [{ parent: 'rev', name: 'Academia', sources: ['a'], confidence: 'high', reason: '' }] }), schema, workbook, approved)).toEqual([]);
+  });
+
+  it('only keeps a cost-of-revenue breakdown when revenue is broken down too', async () => {
+    const cost = { parent: 'cogs', name: 'Academia cost', sources: ['b'], confidence: 'high', reason: '' };
+    const revenue = { parent: 'rev', name: 'Academia', sources: ['a'], confidence: 'high', reason: '' };
+    const alone = await proposeStructure(new FakeLlmProvider({ subLines: [cost] }), withCostParent, workbook, mapping);
+    expect(alone).toEqual([]);
+    const both = await proposeStructure(new FakeLlmProvider({ subLines: [revenue, cost] }), withCostParent, workbook, mapping);
+    expect(both.map((o) => o.name)).toEqual(['Academia', 'Academia cost']);
+  });
+
+  it('shows the model leftover lines clustered by group, biggest cluster first', async () => {
+    const provider = new FakeLlmProvider({ subLines: [] });
+    await proposeStructure(provider, schema, { ...workbook, lines: [...workbook.lines, { id: 'c', section: 'Segments', group: 'Academia', name: 'Costs', values: [20] }] }, mapping);
+    const prompt = provider.requests[0].prompt;
+    expect(prompt.indexOf('[Segments / Academia] (2 lines)')).toBeGreaterThan(-1);
+    expect(prompt.indexOf('[Segments / Academia] (2 lines)')).toBeLessThan(prompt.indexOf('[Segments / Life Sciences] (1 lines)'));
   });
 });
