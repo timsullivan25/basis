@@ -38,6 +38,7 @@ const PROJECTION_METHOD_OPTIONS: { value: 'flat' | ProjectionMethod; label: stri
   { value: 'growth', label: 'Growth Rate' },
   { value: 'percent-of', label: 'Percent of…' },
   { value: 'days-of', label: 'Days of…' },
+  { value: 'roll-off', label: 'Roll-off…' },
 ];
 
 interface SectionEditorProps {
@@ -433,7 +434,7 @@ export interface LineSettingsPanelContentProps {
   style?: CSSProperties;
 }
 
-type StandardMethod = 'flat' | 'growth' | 'percent-of' | 'days-of';
+type StandardMethod = 'flat' | 'growth' | 'percent-of' | 'days-of' | 'roll-off';
 type ProjectionType = 'standard' | 'link' | 'formula' | 'hardcode';
 
 const PROJECTION_TYPE_OPTIONS = [
@@ -444,11 +445,11 @@ const PROJECTION_TYPE_OPTIONS = [
 ];
 
 function isStandardMethod(method: string): method is StandardMethod {
-  return method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of';
+  return method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of' || method === 'roll-off';
 }
 
-function needsBasisLine(method: StandardMethod): method is 'percent-of' | 'days-of' {
-  return method === 'percent-of' || method === 'days-of';
+function needsBasisLine(method: StandardMethod): method is 'percent-of' | 'days-of' | 'roll-off' {
+  return method === 'percent-of' || method === 'days-of' || method === 'roll-off';
 }
 
 // 'properties' (the four table columns, mirrored) starts collapsed — it's the least-touched group.
@@ -487,7 +488,7 @@ export function LineSettingsPanelContent({
   const [aliasDraft, setAliasDraft] = useState('');
   // A choice that needs a basis line isn't committed to the line until one is picked — held here
   // meanwhile rather than writing a half-configured projection onto the line.
-  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
+  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
   const [pendingLink, setPendingLink] = useState(false);
   // The Link's Flip sign switch — held here so it can be set before a basis line is chosen.
   const [flipSign, setFlipSign] = useState(line.projection?.method === 'link' && line.projection.flipSign === true);
@@ -497,12 +498,9 @@ export function LineSettingsPanelContent({
   const sourced = role === 'required' || role === 'optional';
   const projection = line.projection;
   const rawMethod = projection?.method ?? 'flat';
-  // roll-off / actual are child-only, mapping-time methods this editor doesn't offer — a read-only
-  // note instead of a control, so switching it away can't skip the roll-off-contra cleanup
-  // setChildProjection does.
-  const unsupportedMethod = !isStandardMethod(rawMethod) && rawMethod !== 'link' && rawMethod !== 'formula' && rawMethod !== 'hardcode';
+  // Hardcode is the 'actual' method: a driver whose per-period values are the line's values.
   const committedType: ProjectionType =
-    rawMethod === 'link' || rawMethod === 'formula' || rawMethod === 'hardcode' ? rawMethod : 'standard';
+    rawMethod === 'link' ? 'link' : rawMethod === 'formula' ? 'formula' : rawMethod === 'actual' ? 'hardcode' : 'standard';
   const projectionType: ProjectionType = pendingLink ? 'link' : committedType;
   const currentMethod: StandardMethod = pendingMethod ?? (isStandardMethod(rawMethod) ? rawMethod : 'flat');
   const currentDriverId = projection && 'driverId' in projection ? projection.driverId : undefined;
@@ -521,7 +519,7 @@ export function LineSettingsPanelContent({
       return;
     }
     setPendingLink(false);
-    onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : { method: next });
+    onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : next === 'hardcode' ? { method: 'actual' } : { method: 'formula' });
   }
 
   function handleMethodChange(method: StandardMethod) {
@@ -588,11 +586,7 @@ export function LineSettingsPanelContent({
   );
 
   // A Required/Optional line's Projection body: the type selector, then whatever that type needs.
-  const projectionControls = unsupportedMethod ? (
-    <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-      Uses a mapping-time projection method ({rawMethod}) — change it from the mapping screen instead.
-    </p>
-  ) : (
+  const projectionControls = (
     <>
       <div style={fieldColumn}>
         <FieldLabel>Projection type</FieldLabel>
@@ -631,6 +625,11 @@ export function LineSettingsPanelContent({
             <FieldLabel>Formula</FieldLabel>
             {currentMethod === 'flat' ? (
               <span style={mutedNote}>Holds the last actual value.</span>
+            ) : currentMethod === 'roll-off' && !pendingMethod ? (
+              <>
+                <span style={{ ...mutedNote, fontFamily: 'var(--font-mono)' }}>{formatFormula(line.formula, nameIndex)}</span>
+                <span style={mutedNote}>The driver % of the last actual rolls off onto the basis line each projected period.</span>
+              </>
             ) : pendingMethod ? (
               <span style={mutedNote}>Choose a basis line to generate the formula.</span>
             ) : (

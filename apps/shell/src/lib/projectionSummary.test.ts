@@ -42,7 +42,7 @@ describe('summarizeProjection', () => {
     expect(summary(line('a', 'A', { projection: { method: 'link', basisLineId: 'rev' } }))?.label).toBe('Linked to Revenue');
     expect(summary(line('a', 'A', { projection: { method: 'link', basisLineId: 'rev', flipSign: true } }))?.label).toBe('Linked to −Revenue');
     expect(summary(line('a', 'A', { projection: { method: 'formula' } }))?.label).toBe('Custom formula');
-    expect(summary(line('a', 'A', { projection: { method: 'hardcode' } }))?.label).toBe('Hardcoded');
+    expect(summary(line('a', 'A', { projection: { method: 'actual', driverId: 'v' } }))?.label).toBe('Hardcoded');
   });
 
   it('qualifies a basis line only when another line shares its name', () => {

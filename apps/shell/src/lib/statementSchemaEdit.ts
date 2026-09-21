@@ -1,6 +1,6 @@
 import type { DriverDefinition, LineRole, ProjectionMethod, StatementLine, StatementSchema } from '../data';
-import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildLinkFormula, buildRatioFormula } from './engine/resolve';
-import { childrenOf } from './statementLineChildren';
+import { buildActualFormula, buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildLinkFormula, buildRatioFormula } from './engine/resolve';
+import { childrenOf, removeRollOffContra, setChildProjection } from './statementLineChildren';
 
 // Roll-off/Actual are child-line-only projection methods (see instances/projectionMethod.tsx) —
 // never selectable on a top-level line, so this map deliberately only covers the subset
@@ -19,15 +19,16 @@ const DRIVER_NAME_PHRASE: Record<'percent-of' | 'days-of', string> = {
 };
 
 /** What the projection controls commit — mirrors StatementLine.projection, and carries a
- *  basisLineId only for the methods that need one ('link' and the two ratio methods). 'formula'
- *  keeps whatever hand-written formula the line already has; 'hardcode' has none. */
+ *  basisLineId only for the methods that need one ('link', the two ratio methods and roll-off).
+ *  'formula' keeps whatever hand-written formula the line already has. 'actual' is Hardcode: a
+ *  driver whose per-period values ARE the line's projected values. */
 export type ProjectionSelection =
   | { method: 'flat' }
   | { method: 'growth' }
-  | { method: 'percent-of' | 'days-of'; basisLineId: string }
+  | { method: 'percent-of' | 'days-of' | 'roll-off'; basisLineId: string }
   | { method: 'link'; basisLineId: string; flipSign?: boolean }
   | { method: 'formula' }
-  | { method: 'hardcode' };
+  | { method: 'actual' };
 
 /** Pure, in-memory mutations of a schema's own structure (sections, lines, projections) — the
  *  template-builder counterpart to lib/statementLineChildren.ts's dynamic-child mutations. Every
@@ -125,13 +126,26 @@ export function updateLine(schema: StatementSchema, lineId: string, patch: Parti
  *  easy to get subtly wrong. Switching TO 'formula' keeps a hand-written formula that's already
  *  there but never a generated one (a flat/growth/link formula isn't the user's to inherit). */
 export function setLineProjection(schema: StatementSchema, lineId: string, selection: ProjectionSelection): StatementSchema {
-  const line = findLine(schema, lineId);
-  const existingDriverId = line?.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
-  const remainingDrivers = existingDriverId ? schema.drivers.filter((d) => d.id !== existingDriverId) : schema.drivers;
-  const base = { ...schema, drivers: remainingDrivers };
+  // Roll-off has its own mechanism (a contra on the basis line — see statementLineChildren.ts's
+  // applyRollOffContra), shared with sub-lines, which cleans up a previous roll-off itself.
+  if (selection.method === 'roll-off') return setChildProjection(schema, lineId, selection);
 
-  if (selection.method === 'hardcode') {
-    return updateLine(base, lineId, { formula: null, projection: { method: 'hardcode' } });
+  const line = findLine(schema, lineId);
+  // Leaving a roll-off: take its contra back out of the basis line first.
+  const existingDriverId = line?.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
+  const rollOffBasisId =
+    line?.projection?.method === 'roll-off' ? schema.drivers.find((d) => d.id === existingDriverId)?.basisLineId : undefined;
+  const uncontra = rollOffBasisId ? removeRollOffContra(schema, lineId, rollOffBasisId) : schema;
+  const remainingDrivers = existingDriverId ? uncontra.drivers.filter((d) => d.id !== existingDriverId) : uncontra.drivers;
+  const base = { ...uncontra, drivers: remainingDrivers };
+
+  if (selection.method === 'actual') {
+    const driverId = crypto.randomUUID();
+    const driver: DriverDefinition = { id: driverId, name: `${line?.name || 'Line'} Value`, unit: '', targetLineId: lineId, method: 'actual' };
+    return updateLine({ ...base, drivers: [...remainingDrivers, driver] }, lineId, {
+      formula: buildActualFormula(driverId),
+      projection: { method: 'actual', driverId },
+    });
   }
   if (selection.method === 'formula') {
     const keep = line?.projection?.method === 'formula' ? line.formula : null;
@@ -166,8 +180,8 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
   const basisName = findLine(schema, selection.basisLineId)?.name || 'basis';
   const driver: DriverDefinition = {
     id: driverId,
-    name: `${line?.name || 'Line'} ${DRIVER_NAME_PHRASE[selection.method]} ${basisName}`,
-    unit: PROJECTION_METHOD_UNIT[selection.method],
+    name: `${line?.name || 'Line'} ${DRIVER_NAME_PHRASE[selection.method as 'percent-of' | 'days-of']} ${basisName}`,
+    unit: PROJECTION_METHOD_UNIT[selection.method as 'percent-of' | 'days-of'],
     targetLineId: lineId,
     method: selection.method,
     basisLineId: selection.basisLineId,
@@ -216,8 +230,14 @@ export function setLineRole(schema: StatementSchema, lineId: string, role: LineR
 }
 
 /** Removes the line and its driver (if it had one) — the raw mutation only; call
- *  lib/lineDependents.ts first if you need to warn the user about what else references it. */
+ *  lib/lineDependents.ts first if you need to warn the user about what else references it. A
+ *  roll-off line's contra on its basis line is taken back out first, so nothing is left
+ *  subtracting a line that no longer exists. */
 export function removeLine(schema: StatementSchema, sectionId: string, lineId: string): StatementSchema {
+  const line = findLine(schema, lineId);
+  const driverId = line?.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
+  const rollOffBasisId = line?.projection?.method === 'roll-off' ? schema.drivers.find((d) => d.id === driverId)?.basisLineId : undefined;
+  if (rollOffBasisId) schema = removeRollOffContra(schema, lineId, rollOffBasisId);
   return {
     ...schema,
     sections: schema.sections.map((s) => (s.id === sectionId ? { ...s, lines: s.lines.filter((line) => line.id !== lineId) } : s)),

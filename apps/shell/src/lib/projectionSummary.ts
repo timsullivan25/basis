@@ -39,15 +39,15 @@ export function summarizeProjection(line: StatementLine, drivers: DriverDefiniti
       const basisLineId = drivers.find((d) => 'driverId' in projection && d.id === projection.driverId)?.basisLineId;
       return { label: `${projection.method === 'percent-of' ? '% of' : 'Days of'} ${nameOf(basisLineId)}`, tone: 'normal' };
     }
-    case 'roll-off':
-      return { label: 'Roll-off', tone: 'normal' };
+    case 'roll-off': {
+      const basisLineId = drivers.find((d) => 'driverId' in projection && d.id === projection.driverId)?.basisLineId;
+      return { label: `Rolls off to ${nameOf(basisLineId)}`, tone: 'normal' };
+    }
     case 'actual':
-      return { label: 'Actual', tone: 'normal' };
+      return { label: 'Hardcoded', tone: 'normal' };
     case 'link':
       return { label: `Linked to ${projection.flipSign ? '−' : ''}${nameOf(projection.basisLineId)}`, tone: 'normal' };
     case 'formula':
       return { label: 'Custom formula', tone: 'normal' };
-    case 'hardcode':
-      return { label: 'Hardcoded', tone: 'normal' };
   }
 }

@@ -145,16 +145,17 @@ describe('line mutations', () => {
 });
 
 describe('setLineProjection', () => {
-  it('"hardcode" clears the formula and any existing driver, and is stored as its own type', () => {
+  it('"actual" (Hardcode) replaces any prior driver with a value driver the line reads directly', () => {
     const schema = schemaWith(
       [{ id: 'a', name: 'A', lines: [line('l1', 'Revenue', { projection: { method: 'growth', driverId: 'd1' } })] }],
       [{ id: 'd1', name: 'Revenue Growth', unit: '%', targetLineId: 'l1', method: 'growth' }],
     );
-    const next = setLineProjection(schema, 'l1', { method: 'hardcode' });
+    const next = setLineProjection(schema, 'l1', { method: 'actual' });
     const l1 = next.sections[0].lines[0];
-    expect(l1.formula).toBeNull();
-    expect(l1.projection).toEqual({ method: 'hardcode' });
-    expect(next.drivers).toEqual([]);
+    expect(next.drivers).toHaveLength(1);
+    expect(next.drivers[0]).toMatchObject({ targetLineId: 'l1', method: 'actual' });
+    expect(l1.projection).toEqual({ method: 'actual', driverId: next.drivers[0].id });
+    expect(l1.formula).toEqual({ kind: 'driverRef', driverId: next.drivers[0].id });
   });
 
   it('"link" reads the basis line period for period and drops any prior driver', () => {
@@ -258,5 +259,31 @@ describe('setLineRole', () => {
   it('leaves a Debt Schedule line alone', () => {
     const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('g', 'Gen', { role: 'calculated', debtScheduleRole: { role: 'totalInterestExpense' } })] }]);
     expect(setLineRole(schema, 'g', 'required')).toBe(schema);
+  });
+});
+
+describe('roll-off as a projection on any line', () => {
+  const base = { kind: 'num', value: 5 } as const;
+  const twoLines = () =>
+    schemaWith([{ id: 'a', name: 'A', lines: [line('adj', 'Adjustment'), line('ebitda', 'EBITDA', { formula: base })] }]);
+  const ebitda = (schema: StatementSchema) => schema.sections[0].lines.find((l) => l.id === 'ebitda')!;
+
+  it('rolls a top-level line off onto its basis line via the shared contra mechanism', () => {
+    const next = setLineProjection(twoLines(), 'adj', { method: 'roll-off', basisLineId: 'ebitda' });
+    expect(next.sections[0].lines[0].projection).toMatchObject({ method: 'roll-off' });
+    expect(next.drivers).toHaveLength(1);
+    expect(ebitda(next).formula).toEqual({ kind: 'bin', op: '-', left: base, right: { kind: 'call', fn: 'sum', args: [{ kind: 'ref', lineId: 'adj' }] } });
+  });
+
+  it('switching away takes the contra back out, restoring the basis line\'s original formula', () => {
+    const rolled = setLineProjection(twoLines(), 'adj', { method: 'roll-off', basisLineId: 'ebitda' });
+    const back = setLineProjection(rolled, 'adj', { method: 'flat' });
+    expect(ebitda(back).formula).toEqual(base);
+    expect(back.drivers).toEqual([]);
+  });
+
+  it('deleting a roll-off line takes its contra out of the basis line too', () => {
+    const rolled = setLineProjection(twoLines(), 'adj', { method: 'roll-off', basisLineId: 'ebitda' });
+    expect(ebitda(removeLine(rolled, 'a', 'adj')).formula).toEqual(base);
   });
 });

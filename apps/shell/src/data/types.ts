@@ -63,16 +63,16 @@ export type LineRole = 'required' | 'optional' | 'calculated' | 'check';
 
 /** A SOURCED line's projection type — how its projected periods get a value. The first group
  *  ('flat' and the driver-backed methods) is "Standard" in the editor; 'link' reads one other
- *  line, 'formula' is a hand-written formula stored in StatementLine.formula, and 'hardcode' is
- *  no formula at all (values entered by hand in the model). See StatementLine.projection. */
+ *  line and 'formula' is a hand-written formula stored in StatementLine.formula. A hardcoded line
+ *  is the 'actual' method: its driver IS the value, entered per period by hand. See
+ *  StatementLine.projection. */
 export type LineProjection =
   | { method: 'flat' }
   | { method: ProjectionMethod; driverId: string }
   /** `flipSign` reads the basis line negated — a Link's one adjustment, so a plain pull-through
    *  of an opposite-signed line doesn't need a hand-written Formula. */
   | { method: 'link'; basisLineId: string; flipSign?: boolean }
-  | { method: 'formula' }
-  | { method: 'hardcode' };
+  | { method: 'formula' };
 
 /** What role a debt-schedule-generated line plays — see StatementLine.debtScheduleRole and
  *  lib/debtSchedule.ts. The first seven are schedule-level (one each, not tied to a tranche;
