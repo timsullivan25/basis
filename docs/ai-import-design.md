@@ -81,3 +81,21 @@ Code then flags any (group, label) pairs that *still* repeat in a section — a 
 next: use that flag to trigger one targeted LLM follow-up for just that section, then re-check.
 
 Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adapter and dev proxy.
+
+## AI-assisted mapping (after import)
+
+Both run from buttons on the mapping screen, so the deterministic pass stays instant. Both send line names,
+groups, sections and each line's **latest value** (not the full series) to the model; every id in an answer is
+validated against what was sent, and every result lands flagged for review (`method: 'ai'`, confidence below the
+0.8 review threshold) — code never lets the model settle a mapping on its own.
+
+- **Review with AI** (`aiImport/suggestMappings.ts`): unmapped lines and ties only, one request per statement
+  section. Sources already used by a settled match are marked and rejected. Empty answers are allowed and preferred
+  to guesses. Saving accepted matches back as aliases is deliberately not done yet.
+- **Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,
+  `StructureOp`) — a parent that allows sub-lines, a clean name, and the unassigned imported lines behind it. Ops
+  are applied only through `addChildLine`, so schema invariants hold, and are reviewed one by one in
+  `StructureProposalDialog` with code-computed evidence (sub-line total vs the parent's mapped total). Debt tranche
+  settings (coupon, maturity, ...) and new lines/sections are later ops on the same path; settings usually live outside
+  the historical window, so they need a second extraction window.
+

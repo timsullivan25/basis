@@ -39,6 +39,8 @@ import { ImportStepper } from '../ImportStepper';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
+import { applyStructureOp, proposeStructure, subLineParents, type StructureOp } from '../../../lib/aiImport/proposeStructure';
+import { StructureProposalDialog } from './StructureProposalDialog';
 import { getLlmProvider } from '../../../lib/aiImport/provider';
 import { suggestMappings } from '../../../lib/aiImport/suggestMappings';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
@@ -347,6 +349,32 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     } catch (error) {
       setAiState({ status: 'failed', message: error instanceof Error ? error.message : String(error) });
     }
+  }
+
+  const [structureOps, setStructureOps] = useState<StructureOp[] | null>(null);
+  const [structureRunning, setStructureRunning] = useState(false);
+  const canSuggestStructure = !!schema && subLineParents(schema).length > 0;
+
+  async function suggestSubLines() {
+    if (!workbook || !schema) return;
+    setStructureRunning(true);
+    try {
+      setStructureOps(await proposeStructure(getLlmProvider(), schema, workbook, mapping));
+    } catch (error) {
+      setAiState({ status: 'failed', message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setStructureRunning(false);
+    }
+  }
+
+  function applyStructure(ops: StructureOp[]) {
+    if (!schema) return;
+    let nextSchema = schema;
+    let nextMapping = mapping;
+    for (const op of ops) ({ schema: nextSchema, mapping: nextMapping } = applyStructureOp(nextSchema, nextMapping, op));
+    setDraftSchema(applyDebtSchedule(nextSchema));
+    setMapping(nextMapping);
+    setStructureOps(null);
   }
 
   function setSourceLines(target: StatementLine, sourceLineIds: string[]) {
@@ -952,6 +980,17 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 {aiState.status === 'running' ? 'Reviewing…' : `Review with AI · ${aiCandidateCount}`}
               </Button>
             ) : null}
+            {mode === 'mapping' && canSuggestStructure ? (
+              <Button
+                size="sm"
+                iconLeft="sparkles"
+                disabled={structureRunning}
+                onClick={suggestSubLines}
+                title="Ask AI which unmatched imported lines are sub-lines (segments, EBITDA adjustments, debt tranches). Sends line names and latest values to the model."
+              >
+                {structureRunning ? 'Looking…' : 'Suggest sub-lines'}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -1207,6 +1246,19 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
           </div>
         ) : null}
       </Dialog>
+
+      {structureOps && schema ? (
+        <StructureProposalDialog
+          key={structureOps.map((o) => o.name).join('|')}
+          open
+          ops={structureOps}
+          schema={schema}
+          workbook={workbook}
+          mapping={mapping}
+          onApply={applyStructure}
+          onClose={() => setStructureOps(null)}
+        />
+      ) : null}
 
       {aiState.status === 'done' || aiState.status === 'failed' ? (
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
