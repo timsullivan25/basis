@@ -16,7 +16,7 @@ function StatusCell({ line, mapping, hasChildren }: { line: StatementLine; mappi
   // A calculated / check line is never mapped — its formula is its value — so it reads
   // "Calculated" whatever an older save may still hold for it.
   if (isFormulaOnly(line)) {
-    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Calculated</span>;
+    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>{line.role === 'linked' ? 'Linked' : 'Calculated'}</span>;
   }
   if ((mapping?.sourceLineIds.length ?? 0) > 0) {
     return <Icon name="check" size={14} color="var(--text-positive)" />;

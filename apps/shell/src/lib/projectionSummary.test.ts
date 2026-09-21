@@ -65,6 +65,15 @@ describe('summarizeProjection', () => {
     expect(summarizeProjection(tranche, [], index, true)).toEqual({ label: 'Debt schedule', tone: 'derived' });
   });
 
+  it('summarizes a Linked line by the line it reads, and flags one that reads nothing yet', () => {
+    const b = line('b', 'B');
+    const index = buildNameIndex({ sections: [{ id: 's', name: 'S', lines: [b] }], drivers: [] });
+    const linked = (over: Partial<StatementLine>) => summarizeProjection(line('a', 'A', { role: 'linked', ...over }), [], index);
+    expect(linked({ projection: { method: 'link', basisLineId: 'b' } })?.label).toBe('Linked to B');
+    expect(linked({ projection: { method: 'link', basisLineId: 'b', flipSign: true } })?.label).toBe('Linked to −B');
+    expect(linked({ projection: null })).toEqual({ label: 'Not set', tone: 'missing' });
+  });
+
   it('flags a sourced line with no projection at all', () => {
     expect(summary(line('a', 'A'))).toEqual({ label: 'Not set', tone: 'missing' });
   });

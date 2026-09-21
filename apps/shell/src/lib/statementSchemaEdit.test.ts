@@ -82,8 +82,8 @@ describe('line mutations', () => {
     const schema = schemaWith([{ id: 'a', name: 'A', lines: [] }]);
     const next = addLine(schema, 'a');
     expect(next.sections[0].lines).toHaveLength(1);
-    // Required, and carried forward flat — a sourced line always has a projection.
-    expect(next.sections[0].lines[0]).toMatchObject({ name: '', role: 'required', projection: { method: 'flat' } });
+    // Optional (the default), and carried forward flat — a sourced line always has a projection.
+    expect(next.sections[0].lines[0]).toMatchObject({ name: '', role: 'optional', projection: { method: 'flat' } });
     expect(next.sections[0].lines[0].formula).not.toBeNull();
   });
 
@@ -158,22 +158,23 @@ describe('setLineProjection', () => {
     expect(l1.formula).toEqual({ kind: 'driverRef', driverId: next.drivers[0].id });
   });
 
-  it('"link" reads the basis line period for period and drops any prior driver', () => {
-    const schema = schemaWith(
-      [{ id: 'a', name: 'A', lines: [line('l1', 'D&A CF', { projection: { method: 'growth', driverId: 'd1' } }), line('l2', 'D&A IS')] }],
-      [{ id: 'd1', name: 'Growth', unit: '%', targetLineId: 'l1', method: 'growth' }],
-    );
+  it('"link" reads the basis line period for period (Linked lines only)', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'D&A CF', { role: 'linked', projection: null }), line('l2', 'D&A IS')] }]);
     const l1 = setLineProjection(schema, 'l1', { method: 'link', basisLineId: 'l2' });
     expect(l1.sections[0].lines[0].projection).toEqual({ method: 'link', basisLineId: 'l2' });
     expect(l1.sections[0].lines[0].formula).toEqual({ kind: 'ref', lineId: 'l2' });
-    expect(l1.drivers).toEqual([]);
   });
 
   it('"link" with flipSign reads the basis line negated', () => {
-    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'Capex CF'), line('l2', 'Capex')] }]);
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'Capex CF', { role: 'linked', projection: null }), line('l2', 'Capex')] }]);
     const next = setLineProjection(schema, 'l1', { method: 'link', basisLineId: 'l2', flipSign: true }).sections[0].lines[0];
     expect(next.projection).toEqual({ method: 'link', basisLineId: 'l2', flipSign: true });
     expect(next.formula).toEqual({ kind: 'neg', arg: { kind: 'ref', lineId: 'l2' } });
+  });
+
+  it('refuses to link a sourced line — a link is a role, not a projection', () => {
+    const schema = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X'), line('l2', 'Y')] }]);
+    expect(setLineProjection(schema, 'l1', { method: 'link', basisLineId: 'l2' })).toBe(schema);
   });
 
   it('"formula" keeps an existing hand-written formula but discards a generated one', () => {
@@ -202,6 +203,26 @@ describe('setLineProjection', () => {
     const next = setLineProjection(schema, 'l1', { method: 'percent-of', basisLineId: 'l2' });
     expect(next.drivers[0].name).toBe('COGS % of Revenue');
     expect(next.drivers[0].basisLineId).toBe('l2');
+  });
+});
+
+describe('setLineRole to and from Linked', () => {
+  const at = (schema: StatementSchema, id: string) => schema.sections[0].lines.find((l) => l.id === id)!;
+
+  it('to Linked drops the projection, its driver and any formula — nothing is read until one is chosen', () => {
+    const schema = schemaWith(
+      [{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'required', projection: { method: 'growth', driverId: 'd1' }, formula: { kind: 'num', value: 1 } })] }],
+      [{ id: 'd1', name: 'G', unit: '%', targetLineId: 'l1', method: 'growth' }],
+    );
+    const next = setLineRole(schema, 'l1', 'linked');
+    expect(at(next, 'l1')).toMatchObject({ role: 'linked', projection: null, formula: null });
+    expect(next.drivers).toEqual([]);
+  });
+
+  it('from Linked to Calculated keeps the generated formula; to Optional it becomes a hand-written projection', () => {
+    const linked = schemaWith([{ id: 'a', name: 'A', lines: [line('l1', 'X', { role: 'linked', projection: { method: 'link', basisLineId: 'l2' }, formula: { kind: 'ref', lineId: 'l2' } }), line('l2', 'Y')] }]);
+    expect(at(setLineRole(linked, 'l1', 'calculated'), 'l1')).toMatchObject({ role: 'calculated', projection: null, formula: { kind: 'ref', lineId: 'l2' } });
+    expect(at(setLineRole(linked, 'l1', 'optional'), 'l1')).toMatchObject({ role: 'optional', projection: { method: 'formula' } });
   });
 });
 

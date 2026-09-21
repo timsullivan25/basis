@@ -58,12 +58,16 @@ export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' 
  *  'required' / 'optional' are SOURCED: mapped from an uploaded model for the actual periods (a
  *  required one must be), with a projection (see StatementLine.projection) for the rest.
  *  'calculated' is never mapped — one formula produces its value in every period, actual and
- *  projected alike. 'check' is a calculated line that must tie out (see checkTolerance). */
-export type LineRole = 'required' | 'optional' | 'calculated' | 'check';
+ *  projected alike. 'check' is a calculated line that must tie out (see checkTolerance).
+ *  'linked' is never mapped either: it reads one other line (optionally sign-flipped) in every
+ *  period — so a value that appears in two places is mapped once, on the line it belongs to, and
+ *  flows to the rest by link instead of being mapped twice. */
+export type LineRole = 'required' | 'optional' | 'calculated' | 'linked' | 'check';
 
 /** A SOURCED line's projection type — how its projected periods get a value. The first group
- *  ('flat' and the driver-backed methods) is "Standard" in the editor; 'link' reads one other
- *  line and 'formula' is a hand-written formula stored in StatementLine.formula. 'hardcode' is one
+ *  ('flat' and the driver-backed methods) is "Standard" in the editor; 'formula' is a
+ *  hand-written formula stored in StatementLine.formula. 'link' is not a sourced line's
+ *  projection: it is what a LINKED line (role 'linked') stores — the line it reads. 'hardcode' is one
  *  of the driver-backed methods: its driver IS the value, entered per period by hand. See
  *  StatementLine.projection. */
 export type LineProjection =

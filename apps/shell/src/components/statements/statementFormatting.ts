@@ -27,6 +27,8 @@ export function getRequiredMeta(line: StatementLine): { label: string; tone: Bad
   switch (line.role) {
     case 'calculated':
       return { label: 'Calculated', tone: 'positive' };
+    case 'linked':
+      return { label: 'Linked', tone: 'info' };
     case 'check':
       return { label: 'Check', tone: 'info' };
     case 'required':

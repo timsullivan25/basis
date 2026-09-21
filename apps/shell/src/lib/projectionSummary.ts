@@ -15,7 +15,7 @@ export interface ProjectionSummary {
  *  there's no projection to summarize. A basis line is named the way formulas name it (qualified
  *  only when another line shares its name — see NameIndex.describe). */
 export function summarizeProjection(line: StatementLine, drivers: DriverDefinition[], nameIndex: NameIndex, isDebt = line.lineKind === 'debt'): ProjectionSummary | null {
-  if (isFormulaOnly(line)) return null;
+  if (isFormulaOnly(line) && line.role !== 'linked') return null;
 
   const nameOf = (lineId: string | undefined): string => {
     const described = lineId ? nameIndex.describe(lineId) : undefined;
@@ -23,6 +23,12 @@ export function summarizeProjection(line: StatementLine, drivers: DriverDefiniti
   };
 
   const projection = line.projection;
+  // A Linked line is complete once it names the line it reads.
+  if (line.role === 'linked') {
+    return projection?.method === 'link'
+      ? { label: `Linked to ${projection.flipSign ? '−' : ''}${nameOf(projection.basisLineId)}`, tone: 'normal' }
+      : { label: 'Not set', tone: 'missing' };
+  }
   // A debt line (incl. a sub-line inheriting it from its parent) is fed by the Debt Schedule, so
   // any projection it still carries is unused.
   if (isDebt && projection !== null && !line.allowsSubLines) return { label: 'Debt schedule', tone: 'derived' };

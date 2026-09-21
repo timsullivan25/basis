@@ -20,9 +20,10 @@ const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) =
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const SIGN_OPTIONS = Object.entries(SIGN_META).map(([value, meta]) => ({ value, label: meta.label }));
 const ROLE_OPTIONS = [
+  { value: 'optional', label: 'Optional (default)' },
   { value: 'required', label: 'Required' },
-  { value: 'optional', label: 'Optional' },
   { value: 'calculated', label: 'Calculated' },
+  { value: 'linked', label: 'Linked' },
   { value: 'check', label: 'Check' },
 ];
 
@@ -456,11 +457,10 @@ export interface LineSettingsPanelContentProps {
 }
 
 type StandardMethod = 'flat' | 'growth' | 'percent-of' | 'days-of' | 'roll-off';
-type ProjectionType = 'standard' | 'link' | 'formula' | 'hardcode';
+type ProjectionType = 'standard' | 'formula' | 'hardcode';
 
 const PROJECTION_TYPE_OPTIONS = [
   { value: 'standard', label: 'Standard' },
-  { value: 'link', label: 'Link' },
   { value: 'formula', label: 'Formula' },
   { value: 'hardcode', label: 'Hardcode' },
 ];
@@ -510,8 +510,7 @@ export function LineSettingsPanelContent({
   // A choice that needs a basis line isn't committed to the line until one is picked — held here
   // meanwhile rather than writing a half-configured projection onto the line.
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
-  const [pendingLink, setPendingLink] = useState(false);
-  // The Link's Flip sign switch — held here so it can be set before a basis line is chosen.
+  // A Linked line's Flip sign switch — held here so it can be set before a basis line is chosen.
   const [flipSign, setFlipSign] = useState(line.projection?.method === 'link' && line.projection.flipSign === true);
   const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
 
@@ -520,26 +519,18 @@ export function LineSettingsPanelContent({
   const projection = line.projection;
   const rawMethod = projection?.method ?? 'flat';
   // Hardcode: a driver whose per-period values are the line's values.
-  const committedType: ProjectionType =
-    rawMethod === 'link' ? 'link' : rawMethod === 'formula' ? 'formula' : rawMethod === 'hardcode' ? 'hardcode' : 'standard';
-  const projectionType: ProjectionType = pendingLink ? 'link' : committedType;
+  const projectionType: ProjectionType = rawMethod === 'formula' ? 'formula' : rawMethod === 'hardcode' ? 'hardcode' : 'standard';
   const currentMethod: StandardMethod = pendingMethod ?? (isStandardMethod(rawMethod) ? rawMethod : 'flat');
   const currentDriverId = projection && 'driverId' in projection ? projection.driverId : undefined;
   const currentDriver = drivers.find((d) => d.id === currentDriverId);
   // Blank while a new basis-needing method is pending (nothing chosen yet); otherwise reflects
   // the already-committed driver's basis line, so reopening a configured line shows it correctly.
   const ratioBasisLineId = pendingMethod ? '' : (currentDriver?.basisLineId ?? '');
-  const linkBasisLineId = projection?.method === 'link' && !pendingLink ? projection.basisLineId : '';
+  const linkBasisLineId = projection?.method === 'link' ? projection.basisLineId : '';
 
   function handleProjectionTypeChange(next: ProjectionType) {
     if (next === projectionType) return;
     setPendingMethod(null);
-    if (next === 'link') {
-      // Nothing to link to yet — wait for a basis line before touching the line itself.
-      setPendingLink(committedType !== 'link');
-      return;
-    }
-    setPendingLink(false);
     onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : next === 'hardcode' ? { method: 'hardcode' } : { method: 'formula' });
   }
 
@@ -561,7 +552,6 @@ export function LineSettingsPanelContent({
   function handleLinkBasisChange(nextBasisLineId: string) {
     if (!nextBasisLineId) return;
     onSetProjection(line.id, { method: 'link', basisLineId: nextBasisLineId, flipSign });
-    setPendingLink(false);
   }
 
   function handleFlipSignChange(next: boolean) {
@@ -658,28 +648,6 @@ export function LineSettingsPanelContent({
             )}
           </div>
         </>
-      ) : projectionType === 'link' ? (
-        <>
-          <div style={fieldColumn}>
-            <FieldLabel>Basis line</FieldLabel>
-            <Select
-              size="sm"
-              value={linkBasisLineId}
-              options={[{ value: '', label: 'Choose a line…' }]}
-              groups={basisGroups}
-              onChange={(e) => handleLinkBasisChange(e.target.value)}
-            />
-          </div>
-          <Switch size="sm" label="Flip sign" checked={flipSign} onChange={handleFlipSignChange} />
-          <div style={fieldColumn}>
-            <FieldLabel>Formula</FieldLabel>
-            {linkBasisLineId ? (
-              <span style={{ ...mutedNote, fontFamily: 'var(--font-mono)' }}>{formatFormula(line.formula, nameIndex)}</span>
-            ) : (
-              <span style={mutedNote}>Choose a line to generate the formula.</span>
-            )}
-          </div>
-        </>
       ) : projectionType === 'formula' ? (
         formulaField
       ) : (
@@ -689,6 +657,23 @@ export function LineSettingsPanelContent({
         </div>
       )}
     </>
+  );
+
+  // A Linked line reads exactly one other line, optionally sign-flipped — nothing else to set.
+  const linkContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={fieldColumn}>
+        <FieldLabel>Linked line</FieldLabel>
+        <Select
+          size="sm"
+          value={linkBasisLineId}
+          options={[{ value: '', label: 'Choose a line…' }]}
+          groups={basisGroups}
+          onChange={(e) => handleLinkBasisChange(e.target.value)}
+        />
+      </div>
+      <Switch size="sm" label="Flip sign" checked={flipSign} onChange={handleFlipSignChange} />
+    </div>
   );
 
   const nameControls = (
@@ -852,6 +837,8 @@ export function LineSettingsPanelContent({
 
   if (!isChild && role === 'calculated') {
     sections.push({ key: 'calculation', label: 'Calculation', content: formulaField });
+  } else if (!isChild && role === 'linked') {
+    sections.push({ key: 'calculation', label: 'Link', content: linkContent });
   } else if (!isChild && role === 'check') {
     sections.push({
       key: 'calculation',

@@ -55,14 +55,14 @@ function moveWithinArray<T>(items: T[], index: number, direction: 'up' | 'down')
   return next;
 }
 
-/** A new line is Required and carries forward flat — a sourced line always has a projection, so
+/** A new line is Optional and carries forward flat — a sourced line always has a projection, so
  *  one can't be forgotten. */
 function emptyLine(): StatementLine {
   const id = crypto.randomUUID();
   return {
     id,
     name: '',
-    role: 'required',
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -151,6 +151,8 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
     return updateLine(base, lineId, { formula: keep, projection: { method: 'formula' } });
   }
   if (selection.method === 'link') {
+    // A link belongs to a Linked line (role 'linked'), never to a sourced line's projection.
+    if (line?.role !== 'linked') return schema;
     const flipSign = selection.flipSign === true;
     return updateLine(base, lineId, {
       formula: buildLinkFormula(selection.basisLineId, flipSign),
@@ -191,7 +193,7 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
 }
 
 /** Changes a line's role (the "Role" column). Required <-> Optional is just the flag. Moving
- *  to Calculated/Check drops the projection (and its driver) and any generated formula — one
+ *  to Calculated/Linked/Check drops the projection (and its driver) and any generated formula — one
  *  hand-written formula is all such a line has, and a hand-written one is kept — plus anything
  *  that only a sourced line can have (debt kind, sub-lines). Moving to Required/Optional gives
  *  the line a projection: its existing hand-written formula becomes a 'formula' projection, and
@@ -205,6 +207,8 @@ export function setLineRole(schema: StatementSchema, lineId: string, role: LineR
   const nowSourced = current === 'required' || current === 'optional';
   const nextSourced = role === 'required' || role === 'optional';
   if (nowSourced && nextSourced) return updateLine(schema, lineId, { role });
+  // Calculated <-> Check keeps the formula as it is.
+  if (!nowSourced && current !== 'linked' && (role === 'calculated' || role === 'check')) return updateLine(schema, lineId, { role });
 
   const existingDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
   const base = existingDriverId ? { ...schema, drivers: schema.drivers.filter((d) => d.id !== existingDriverId) } : schema;
@@ -217,7 +221,9 @@ export function setLineRole(schema: StatementSchema, lineId: string, role: LineR
   }
 
   if (childrenOf(schema, lineId).length > 0) return schema;
-  const keepFormula = line.projection === null || line.projection.method === 'formula';
+  // Linked starts unset (nothing to read yet); leaving Link keeps its generated formula (e.g.
+  // "Revenue") as a starting point for a hand-written one.
+  const keepFormula = role !== 'linked' && (line.projection === null || line.projection.method === 'formula' || line.projection.method === 'link');
   return updateLine(base, lineId, {
     role,
     projection: null,

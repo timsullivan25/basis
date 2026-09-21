@@ -68,6 +68,7 @@ import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
+import { effectiveLineKind } from '../lib/statementLineChildren';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -996,6 +997,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const sectionStartIndex = driverRows.length;
     for (const line of section.lines) {
       if (line.parentLineId !== undefined) continue; // rendered as a child below its parent, not its own top-level row
+      // Debt is handled by the Debt Schedule, not projected with drivers — nothing to show here.
+      if (effectiveLineKind(schema, line) === 'debt') continue;
       const ownDriver = schemaDriverByLineId.get(line.id);
       const children = line.allowsSubLines ? (childLinesByParentId.get(line.id) ?? []) : [];
       if (!ownDriver && children.length === 0) continue;

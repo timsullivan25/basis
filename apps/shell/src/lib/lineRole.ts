@@ -5,7 +5,7 @@ export function isSourced(line: Pick<StatementLine, 'role'>): boolean {
   return line.role === 'required' || line.role === 'optional';
 }
 
-/** Calculated / Check: one formula produces every period, and nothing is ever mapped to it. */
+/** Calculated / Linked / Check: one formula produces every period, and nothing is ever mapped to it. */
 export function isFormulaOnly(line: Pick<StatementLine, 'role'>): boolean {
   return !isSourced(line);
 }

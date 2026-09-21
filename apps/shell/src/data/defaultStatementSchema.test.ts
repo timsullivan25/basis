@@ -274,7 +274,8 @@ describe('createDefaultStatementSchema — roles and projections', () => {
     for (const [sectionName, lineName, scheduleLineName] of cases) {
       const target = find(sectionName, lineName);
       const scheduleLine = find('Debt Schedule', scheduleLineName);
-      expect(target.projection).toEqual({ method: 'link', basisLineId: scheduleLine.id });
+      // Still sourced (mapped for actuals): the projected periods read the schedule via a formula.
+      expect(target.projection).toEqual({ method: 'formula' });
       expect(target.formula).toEqual({ kind: 'ref', lineId: scheduleLine.id });
     }
   });

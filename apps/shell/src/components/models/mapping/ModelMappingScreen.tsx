@@ -722,11 +722,11 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
             </span>
           );
         }
-        // A calculated / check line is never mapped — its formula is its value in every period.
+        // A calculated / linked / check line is never mapped — its formula is its value in every period.
         if (isFormulaOnly(row.line)) {
           return (
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
-              Calculated — not mapped
+              {row.line.role === 'linked' ? 'Linked — not mapped' : 'Calculated — not mapped'}
             </span>
           );
         }
