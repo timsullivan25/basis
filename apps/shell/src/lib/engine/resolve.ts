@@ -7,6 +7,9 @@ interface Candidate {
   text: string;
   lineId: string;
   qualified: boolean;
+  /** Only for a qualified candidate: the length of its leading "Section." — see
+   *  NameIndex.qualifierLength. */
+  qualifierLength: number;
 }
 
 /** The only shape buildNameIndex actually needs — deliberately looser than StatementSchema so
@@ -46,6 +49,10 @@ export interface NameIndex {
    *  once each, in schema order (the caller filters and ranks by what's typed). Never the line
    *  itself — a bare self-reference wouldn't resolve, and it would self-cycle anyway. */
   suggestions(fromLineId: string): NameSuggestion[];
+  /** How many leading characters of `matchedText` are a "Section." qualifier (0 when it isn't a
+   *  qualified reference) — lets the formula editor show the qualifier less prominently than the
+   *  line name that follows it. */
+  qualifierLength(matchedText: string): number;
   /** Current display name for a driver — used by formatFormula to render a driverRef node. No
    *  ambiguity/qualification concept (unlike describe()), since a driver is never resolved from
    *  typed text — this is display-only. */
@@ -71,8 +78,8 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
   const candidateList: Candidate[] = [];
   for (const { line, section } of entries) {
     if (!line.name.trim()) continue;
-    candidateList.push({ text: line.name, lineId: line.id, qualified: false });
-    candidateList.push({ text: `${section.name}.${line.name}`, lineId: line.id, qualified: true });
+    candidateList.push({ text: line.name, lineId: line.id, qualified: false, qualifierLength: 0 });
+    candidateList.push({ text: `${section.name}.${line.name}`, lineId: line.id, qualified: true, qualifierLength: section.name.length + 1 });
   }
 
   return {
@@ -116,6 +123,11 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
         });
       }
       return result;
+    },
+
+    qualifierLength(matchedText) {
+      const lower = matchedText.toLowerCase();
+      return candidateList.find((c) => c.qualified && c.text.toLowerCase() === lower)?.qualifierLength ?? 0;
     },
 
     describeDriver(driverId) {

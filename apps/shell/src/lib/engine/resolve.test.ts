@@ -255,6 +255,20 @@ describe('buildNameIndex — suggestions', () => {
   });
 });
 
+describe('buildNameIndex — qualifierLength', () => {
+  it('is the length of the leading "Section." for a qualified reference, case-insensitively', () => {
+    const index = buildNameIndex(fixtureSchema());
+    expect(index.qualifierLength('Income Statement.Depreciation & Amortization')).toBe('Income Statement.'.length);
+    expect(index.qualifierLength('income statement.depreciation & amortization')).toBe('Income Statement.'.length);
+  });
+
+  it('is 0 for a bare name and for text that is not a reference', () => {
+    const index = buildNameIndex(fixtureSchema());
+    expect(index.qualifierLength('Revenue')).toBe(0);
+    expect(index.qualifierLength('Nothing.Here')).toBe(0);
+  });
+});
+
 describe('isCalculated', () => {
   it('is false for a null formula', () => {
     expect(isCalculated({ formula: null })).toBe(false);

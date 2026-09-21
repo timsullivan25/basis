@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { FORMULA_FUNCTION_NAMES, getFormulaSegment } from './formulaUtils';
+import { FORMULA_TEXT_STYLE, FormulaHighlight } from './FormulaHighlight';
 import { compileFormula, formatFormula, type NameIndex, type ResolvedFormula } from '../../lib/engine/resolve';
 
 /** One autocomplete row — a function (inserted with "()" and the cursor left between them) or a
@@ -48,14 +49,6 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
     setText(formatFormula(value, nameIndex));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownLineId]);
-
-  // Grows with its content instead of scrolling sideways — a long formula stays fully visible.
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [text]);
 
   const compileResult = useMemo(() => compileFormula(text, nameIndex, ownLineId), [text, nameIndex, ownLineId]);
   const errors = compileResult.ok ? [] : compileResult.errors;
@@ -158,8 +151,8 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
 
   return (
     <div ref={wrapperRef} style={{ position: 'relative' }}>
-      {/* The design system has no multi-line field, so this mirrors Input (size sm, mono) around a
-          textarea: same border/focus treatment, but the box grows with wrapped text. */}
+      {/* The design system has no multi-line field, so this mirrors Input (size sm, mono): same
+          border/focus treatment, but the box grows with wrapped text. */}
       <div
         style={{
           display: 'flex', width: '100%', boxSizing: 'border-box', minWidth: 0,
@@ -170,6 +163,13 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
           transition: 'var(--transition-control)',
         }}
       >
+        {/* A colored copy of the text sits in normal flow — it sizes the field — and the textarea is
+            laid transparently over it, so you type into the colored text. Both share
+            FORMULA_TEXT_STYLE so they wrap identically. */}
+        <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0 }}>
+        <div aria-hidden style={{ ...FORMULA_TEXT_STYLE, pointerEvents: 'none', minHeight: '1.5em' }}>
+          <FormulaHighlight text={text} nameIndex={nameIndex} />
+        </div>
         <textarea
           ref={inputRef}
           rows={1}
@@ -206,12 +206,14 @@ export function FormulaInput({ value, onChange, nameIndex, ownLineId }: FormulaI
             }
           }}
           style={{
-            flex: '1 1 auto', minWidth: 0, width: '100%', padding: 0, margin: 0, border: 'none', outline: 'none',
+            ...FORMULA_TEXT_STYLE,
+            position: 'absolute', inset: 0, width: '100%', height: '100%', padding: 0, margin: 0, border: 'none', outline: 'none',
             background: 'transparent', resize: 'none', overflow: 'hidden', display: 'block',
-            fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', fontVariantNumeric: 'var(--numeric-tabular)',
-            lineHeight: 1.5, color: 'var(--text-primary)', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap',
+            // The colored copy underneath supplies the visible text; only the caret is drawn here.
+            color: 'transparent', caretColor: 'var(--text-primary)',
           }}
         />
+        </div>
       </div>
       {showSuggestions && suggestions.length > 0 ? createPortal(
         <div
