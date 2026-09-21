@@ -248,6 +248,7 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
         {status.kind === 'running' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', alignItems: 'center', padding: 'var(--space-13) 0' }}>
             <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{RUNNING_LABELS[status.step]}</span>
+            <ElapsedTime key={status.step} />
             <span style={mutedText}>Nothing is saved until you continue to mapping.</span>
           </div>
         ) : status.kind === 'error' ? (
@@ -324,4 +325,16 @@ export function AiImportScreen({ file, companyName, sections, onCancel, onDone }
       </footer>
     </div>
   );
+}
+
+/** Seconds since this step started — a slow model call should look slow, not frozen. Remounted (keyed) per step so it restarts. */
+function ElapsedTime() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const id = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const text = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+  return <span style={{ ...mutedText, fontVariantNumeric: 'tabular-nums' }}>{text} elapsed{seconds >= 90 ? ' — large workbooks can take a few minutes' : ''}</span>;
 }

@@ -79,3 +79,31 @@ describe('OpenAiCompatibleProvider', () => {
     await expect(b.provider.generateStructured(request)).rejects.toThrow(/after 3 attempts/);
   });
 });
+
+describe('OpenAiCompatibleProvider timeout and token cap', () => {
+  it('sends a max_tokens cap, overridable through extraBody', async () => {
+    const fetchImpl = vi.fn(async () => reply('{"ok":true}'));
+    const provider = new OpenAiCompatibleProvider({ endpoint: '/x', model: 'm', fetchImpl: fetchImpl as unknown as typeof fetch });
+    await provider.generateStructured(request);
+    expect(JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body).max_tokens).toBe(24_000);
+  });
+
+  it('aborts a stalled request and retries it', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn((_url: string, init: { signal: AbortSignal }) => {
+      calls++;
+      if (calls > 1) return Promise.resolve(reply('{"ok":true}'));
+      return new Promise<Response>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    });
+    const provider = new OpenAiCompatibleProvider({ endpoint: '/x', model: 'm', timeoutMs: 20, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => {} });
+    await expect(provider.generateStructured(request)).resolves.toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
+  it('reports a timeout once retries run out', async () => {
+    const fetchImpl = vi.fn((_url: string, init: { signal: AbortSignal }) =>
+      new Promise<Response>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))));
+    const provider = new OpenAiCompatibleProvider({ endpoint: '/x', model: 'm', timeoutMs: 10, maxRetries: 1, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => {} });
+    await expect(provider.generateStructured(request)).rejects.toThrow(/no reply within/);
+  });
+});

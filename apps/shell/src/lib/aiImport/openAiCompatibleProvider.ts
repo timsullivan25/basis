@@ -8,6 +8,10 @@ export interface OpenAiCompatibleOptions {
   extraBody?: Record<string, unknown>;
   /** Extra attempts after the first when the call is rate-limited, fails upstream, or returns unparseable JSON. */
   maxRetries?: number;
+  /** Give up on one request after this long (default 4 minutes) and treat it like a failed attempt, so a stalled or runaway generation retries instead of hanging the import. */
+  timeoutMs?: number;
+  /** Cap on generated tokens per request (default 24,000 — the largest legitimate plan seen is ~13k). A model that loops forever stops here instead of at the provider's own, far larger, limit. Override via extraBody. */
+  maxTokens?: number;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
   /** Injectable so tests don't wait on backoff. */
@@ -22,10 +26,10 @@ export interface OpenAiCompatibleOptions {
 export class OpenAiCompatibleProvider implements LlmProvider {
   readonly name: string;
 
-  private readonly options: Required<Pick<OpenAiCompatibleOptions, 'maxRetries'>> & OpenAiCompatibleOptions;
+  private readonly options: Required<Pick<OpenAiCompatibleOptions, 'maxRetries' | 'timeoutMs' | 'maxTokens'>> & OpenAiCompatibleOptions;
 
   constructor(options: OpenAiCompatibleOptions) {
-    this.options = { maxRetries: 2, ...options };
+    this.options = { maxRetries: 2, timeoutMs: 240_000, maxTokens: 24_000, ...options };
     this.name = `openai-compatible:${options.model}`;
   }
 
@@ -41,25 +45,38 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
       if (attempt > 0) await sleep(1000 * 2 ** (attempt - 1));
 
-      const response = await fetchImpl(this.options.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          // A null in extraBody removes that default field (e.g. `"response_format": null` turns JSON mode off).
-          Object.fromEntries(
-            Object.entries({
-              model: this.options.model,
-              messages,
-              response_format: { type: 'json_object' },
-              temperature: 0,
-              ...(request.effort ? { reasoning: { effort: request.effort } } : {}),
-              ...this.options.extraBody,
-            }).filter(
-              ([, value]) => value !== null,
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+      let response: Response;
+      try {
+        response = await fetchImpl(this.options.endpoint, {
+          signal: controller.signal,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            // A null in extraBody removes that default field (e.g. `"response_format": null` turns JSON mode off).
+            Object.fromEntries(
+              Object.entries({
+                model: this.options.model,
+                messages,
+                response_format: { type: 'json_object' },
+                temperature: 0,
+                max_tokens: this.options.maxTokens,
+                ...(request.effort ? { reasoning: { effort: request.effort } } : {}),
+                ...this.options.extraBody,
+              }).filter(
+                ([, value]) => value !== null,
+              ),
             ),
           ),
-        ),
-      });
+        });
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+        lastError = `no reply within ${Math.round(this.options.timeoutMs / 1000)}s`;
+        continue;
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (response.status === 429 || response.status >= 500) {
         lastError = `HTTP ${response.status}: ${await errorText(response)}`;
