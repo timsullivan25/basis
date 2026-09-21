@@ -73,9 +73,14 @@ export function subLineParents(schema: StatementSchema): ParentTarget[] {
   return schema.sections.flatMap((section) => section.lines.filter((line) => line.allowsSubLines && !line.debtScheduleRole).map((line) => ({ line, section })));
 }
 
-/** Imported lines not mapped onto any target yet — the raw material for sub-lines. */
-export function unassignedSourceLines(workbook: ParsedWorkbook, mapping: Record<string, LineMapping>): ParsedSourceLine[] {
-  const used = new Set(Object.values(mapping).flatMap((m) => m.sourceLineIds));
+/** Imported lines not mapped onto any target yet — the raw material for sub-lines. A parent's own still-unreviewed AI mapping doesn't hold its lines back: the parent is about to be broken down, so a guess at its total (or at a sum of its tranches) must not hide what its sub-lines would be made from. */
+export function unassignedSourceLines(schema: StatementSchema, workbook: ParsedWorkbook, mapping: Record<string, LineMapping>): ParsedSourceLine[] {
+  const parentIds = new Set(subLineParents(schema).map((p) => p.line.id));
+  const used = new Set(
+    Object.values(mapping)
+      .filter((m) => !(m.method === 'ai' && !m.approved && parentIds.has(m.targetLineId)))
+      .flatMap((m) => m.sourceLineIds),
+  );
   return workbook.lines.filter((l) => !used.has(l.id));
 }
 
@@ -87,7 +92,7 @@ export async function proposeStructure(
   mapping: Record<string, LineMapping>,
 ): Promise<StructureOp[]> {
   const parents = subLineParents(schema);
-  const leftover = unassignedSourceLines(workbook, mapping);
+  const leftover = unassignedSourceLines(schema, workbook, mapping);
   if (parents.length === 0 || leftover.length === 0) return [];
 
   const lastIndex = workbook.periods.length - 1;
@@ -123,7 +128,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function parseStructureOps(raw: unknown, schema: StatementSchema, workbook: ParsedWorkbook, mapping: Record<string, LineMapping>): StructureOp[] {
   if (!isObject(raw) || !Array.isArray(raw.subLines)) return [];
   const parents = new Set(subLineParents(schema).map((p) => p.line.id));
-  const available = new Set(unassignedSourceLines(workbook, mapping).map((l) => l.id));
+  const available = new Set(unassignedSourceLines(schema, workbook, mapping).map((l) => l.id));
   const takenNames = new Map<string, Set<string>>();
   const ops: StructureOp[] = [];
   for (const entry of raw.subLines) {

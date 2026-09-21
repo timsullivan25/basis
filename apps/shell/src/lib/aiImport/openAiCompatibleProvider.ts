@@ -98,7 +98,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       try {
         const parsed = parseJsonLoosely(content);
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('expected a JSON object');
-        return parsed;
+        return unwrapSchemaName(parsed as Record<string, unknown>, request.schemaName);
       } catch (error) {
         lastError = `reply was not a valid JSON object (${error instanceof Error ? error.message : String(error)})`;
         // Show the model its own bad output so the retry can correct it.
@@ -130,6 +130,13 @@ async function errorText(response: Response): Promise<string> {
 function extractContent(body: unknown): string | undefined {
   const content = (body as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
   return typeof content === 'string' && content.trim() ? content : undefined;
+}
+
+/** Models told the schema is "named X" sometimes answer `{ "X": { ...the object... } }`. That wrapper is never part of the schema, so it is removed. */
+export function unwrapSchemaName(parsed: Record<string, unknown>, schemaName: string): Record<string, unknown> {
+  const keys = Object.keys(parsed);
+  const inner = parsed[schemaName];
+  return keys.length === 1 && keys[0] === schemaName && typeof inner === 'object' && inner !== null && !Array.isArray(inner) ? (inner as Record<string, unknown>) : parsed;
 }
 
 /** Parses JSON from a model reply, tolerating the wrappers models commonly add: <think> blocks, code fences, prose — including a visible "thinking process" before the answer, in which case the last JSON object is the answer. */

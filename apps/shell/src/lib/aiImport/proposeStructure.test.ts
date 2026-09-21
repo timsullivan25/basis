@@ -54,4 +54,12 @@ describe('proposeStructure', () => {
     expect(applied.mapping[child.id]).toMatchObject({ sourceLineIds: ['a', 'b'], method: 'ai', approved: false });
     expect(applied.mapping[child.id].confidence).toBeLessThan(0.8);
   });
+
+  it("doesn't let a parent's unreviewed AI guess hide the lines its sub-lines would come from", async () => {
+    const provider = new FakeLlmProvider({ subLines: [{ parent: 'rev', name: 'Academia', sources: ['a'], confidence: 'high', reason: '' }] });
+    const guess = { rev: { ...mapped('rev', ['a']), method: 'ai' as const } };
+    expect((await proposeStructure(provider, schema, workbook, guess)).map((o) => o.name)).toEqual(['Academia']);
+    const approved = { rev: { ...guess.rev, approved: true } };
+    expect(await proposeStructure(new FakeLlmProvider({ subLines: [{ parent: 'rev', name: 'Academia', sources: ['a'], confidence: 'high', reason: '' }] }), schema, workbook, approved)).toEqual([]);
+  });
 });

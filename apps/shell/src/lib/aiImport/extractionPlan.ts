@@ -128,6 +128,7 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
   }
 
   const sections: SectionRange[] = [];
+  const droppedGroups: string[] = [];
   if (!Array.isArray(raw.sections) || raw.sections.length === 0) {
     issues.push('sections must be a non-empty array');
   } else {
@@ -145,20 +146,19 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
       }
       const groups: SectionGroup[] = [];
       for (const g of Array.isArray(entry.groups) ? entry.groups : []) {
-        if (
-          !isObject(g) ||
-          typeof g.title !== 'string' ||
-          g.title.trim() === '' ||
-          !isRow(g.headerRow) ||
-          !isRow(g.firstRow) ||
-          !isRow(g.lastRow) ||
-          g.headerRow >= g.firstRow ||
-          g.firstRow > g.lastRow
-        ) {
-          issues.push(`invalid group in section "${entry.name}": ${JSON.stringify(g)}`);
+        // Groups only add context to a line's name, so a malformed one is dropped (and noted for the
+        // reviewer) rather than failing the whole plan. The one common slip — the range starting on the
+        // header row itself — is repaired.
+        if (!isObject(g) || typeof g.title !== 'string' || g.title.trim() === '' || !isRow(g.headerRow) || !isRow(g.firstRow) || !isRow(g.lastRow)) {
+          droppedGroups.push(`Ignored a malformed group in section "${entry.name}": ${JSON.stringify(g)}`);
           continue;
         }
-        groups.push({ title: g.title.trim(), headerRow: g.headerRow, firstRow: g.firstRow, lastRow: g.lastRow });
+        const firstRow = g.firstRow <= g.headerRow ? g.headerRow + 1 : g.firstRow;
+        if (firstRow > g.lastRow) {
+          droppedGroups.push(`Ignored group "${g.title.trim()}" in section "${entry.name}": no rows below its header.`);
+          continue;
+        }
+        groups.push({ title: g.title.trim(), headerRow: g.headerRow, firstRow, lastRow: g.lastRow });
       }
       sections.push({ name: entry.name.trim(), firstRow: entry.firstRow, lastRow: entry.lastRow, groups });
     }
@@ -174,7 +174,7 @@ export function parseSheetPlan(raw: unknown, expectedSheet: string, grids: Sheet
     plan: { sheet, labelColumn, dateRow, nameRow, periodColumns, sections },
     confidence: confidence as SheetPlanResult['confidence'],
     reasoning: typeof raw.reasoning === 'string' ? raw.reasoning : '',
-    openQuestions: Array.isArray(raw.openQuestions) ? raw.openQuestions.filter((q): q is string => typeof q === 'string') : [],
+    openQuestions: [...(Array.isArray(raw.openQuestions) ? raw.openQuestions.filter((q): q is string => typeof q === 'string') : []), ...droppedGroups],
   };
 }
 
