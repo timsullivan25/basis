@@ -39,6 +39,8 @@ import { ImportStepper } from '../ImportStepper';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
+import { getLlmProvider } from '../../../lib/aiImport/provider';
+import { suggestMappings } from '../../../lib/aiImport/suggestMappings';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
@@ -127,6 +129,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
+  const [aiState, setAiState] = useState<{ status: 'idle' | 'running' } | { status: 'done'; suggested: number; asked: number } | { status: 'failed'; message: string }>({ status: 'idle' });
   // "Edit mapping" (the historical default) vs "Edit schema" — same rows either way (see
   // buildSectionRows), only the columns and the side panel differ. See changeSchema's own
   // comment for how a schema-mode edit gets persisted.
@@ -328,6 +331,22 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
 
   function updateMapping(targetLineId: string, patch: Partial<LineMapping>) {
     setMapping((prev) => ({ ...prev, [targetLineId]: { ...prev[targetLineId], ...patch } }));
+  }
+
+  /** Unmapped and tied lines only — anything already matched (however weakly) is left for the reviewer. */
+  const isAiSettled = (m: LineMapping | undefined) => (m?.sourceLineIds.length ?? 0) > 0 && !isAmbiguous(m);
+  const aiCandidateCount = mappableLines.filter(({ line }) => !isAiSettled(mapping[line.id])).length;
+
+  async function reviewWithAi() {
+    if (!workbook) return;
+    setAiState({ status: 'running' });
+    try {
+      const suggestions = await suggestMappings(getLlmProvider(), mappableLines, workbook, mapping, isAiSettled);
+      setMapping((prev) => ({ ...prev, ...suggestions }));
+      setAiState({ status: 'done', suggested: Object.keys(suggestions).length, asked: aiCandidateCount });
+    } catch (error) {
+      setAiState({ status: 'failed', message: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   function setSourceLines(target: StatementLine, sourceLineIds: string[]) {
@@ -922,6 +941,17 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 Needs review · {reviewLines.length}
               </Button>
             ) : null}
+            {mode === 'mapping' ? (
+              <Button
+                size="sm"
+                iconLeft="sparkles"
+                disabled={aiState.status === 'running' || aiCandidateCount === 0}
+                onClick={reviewWithAi}
+                title={aiCandidateCount === 0 ? 'Every mappable line already has a match' : 'Ask AI to place the unmapped and tied lines. Sends line names and latest values to the model.'}
+              >
+                {aiState.status === 'running' ? 'Reviewing…' : `Review with AI · ${aiCandidateCount}`}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -1177,6 +1207,22 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
           </div>
         ) : null}
       </Dialog>
+
+      {aiState.status === 'done' || aiState.status === 'failed' ? (
+        <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
+          <Toast
+            tone={aiState.status === 'failed' ? 'negative' : aiState.suggested > 0 ? 'positive' : 'info'}
+            title={aiState.status === 'failed' ? 'AI review failed' : 'AI review finished'}
+            onDismiss={() => setAiState({ status: 'idle' })}
+          >
+            {aiState.status === 'failed'
+              ? aiState.message
+              : aiState.suggested > 0
+                ? `Suggested a match for ${aiState.suggested} of ${aiState.asked} lines. They're flagged for review — check each one.`
+                : `No confident suggestions for the ${aiState.asked} remaining lines.`}
+          </Toast>
+        </div>
+      ) : null}
 
       {savedToast ? (
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
