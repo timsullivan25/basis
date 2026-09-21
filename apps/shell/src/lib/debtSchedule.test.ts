@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { periodsPerYearFor, regenerateDebtSchedule, TOTAL_BORROWINGS_ID, TOTAL_INTEREST_ID, TOTAL_REPAYMENTS_ID } from './debtSchedule';
+import { periodsPerYearFor, regenerateDebtSchedule, regenerateTemplateDebtSchedule, TOTAL_BORROWINGS_ID, TOTAL_INTEREST_ID, TOTAL_REPAYMENTS_ID } from './debtSchedule';
 import { evaluateModel } from './engine/evaluate';
 import type { DebtScheduleRole, DebtTrancheProperties, StatementLine, StatementSchema, Timeline } from '../data';
 
@@ -7,7 +7,7 @@ function line(id: string, name: string, opts: Partial<StatementLine> = {}): Stat
   return {
     id,
     name,
-    required: false,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -278,5 +278,31 @@ describe('regenerateDebtSchedule — end to end via evaluateModel', () => {
     const breach = findByRole(regenerated, 'revolverBreach')!;
     expect(evaluation.getValue(borrow.id, 1)).toBe(35);
     expect(evaluation.getValue(breach.id, 1)).toBe(55);
+  });
+});
+
+describe('regenerateTemplateDebtSchedule', () => {
+  const term = (id: string, name: string) => line(id, name, { lineKind: 'debt', debtProperties: { debtType: 'term', couponRate: 0.06 } });
+
+  it('gives a template with no schedule the section and its three totals, with no tranche configured', () => {
+    const next = regenerateTemplateDebtSchedule(schemaWith([line('a', 'Anything')]));
+    const ids = next.sections.find((s) => s.name === 'Debt Schedule')!.lines.map((l) => l.id).sort();
+    expect(ids).toEqual([TOTAL_BORROWINGS_ID, TOTAL_INTEREST_ID, TOTAL_REPAYMENTS_ID].sort());
+  });
+
+  it('is idempotent — regenerating an already-regenerated schema changes nothing', () => {
+    const once = regenerateTemplateDebtSchedule(schemaWith([line('cash', 'Cash & Equivalents'), line('fcf', 'Free Cash Flow'), term('termA', 'Term A')]));
+    expect(regenerateTemplateDebtSchedule(once)).toEqual(once);
+  });
+
+  it('keeps every existing generated line id when another tranche is added, so references to them stay valid', () => {
+    const one = regenerateTemplateDebtSchedule(schemaWith([term('termA', 'Term A')]));
+    const two = regenerateTemplateDebtSchedule({
+      ...one,
+      sections: one.sections.map((s) => (s.name === 'Balance Sheet' ? { ...s, lines: [...s.lines, term('termB', 'Term B')] } : s)),
+    });
+    const idsOf = (schema: StatementSchema) => schema.sections.find((s) => s.name === 'Debt Schedule')!.lines.map((l) => l.id);
+    for (const id of idsOf(one)) expect(idsOf(two)).toContain(id);
+    expect(idsOf(two).length).toBeGreaterThan(idsOf(one).length);
   });
 });

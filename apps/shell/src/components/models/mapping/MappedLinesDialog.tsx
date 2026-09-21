@@ -1,6 +1,6 @@
 import { Dialog, Icon } from '@basis/design-system';
 import type { LineMapping, StatementLine, StatementSchema } from '../../../data';
-import { isCalculated } from '../../../lib/engine/resolve';
+import { isFormulaOnly } from '../../../lib/lineRole';
 import { isMissingRequired } from './mappingFormatting';
 
 const cellStyle = { padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--border-subtle)' } as const;
@@ -12,17 +12,17 @@ const headStyle = {
   borderBottom: '1px solid var(--border-default)',
 };
 
-function StatusCell({ line, mapping }: { line: StatementLine; mapping: LineMapping | undefined }) {
-  // A real mapping (even on a calculated line — an issuer-reported subtotal) always wins the
-  // check first; "Calculated" is only the fallback label for a structural formula with none.
+function StatusCell({ line, mapping, hasChildren }: { line: StatementLine; mapping: LineMapping | undefined; hasChildren: boolean }) {
+  // A calculated / check line is never mapped — its formula is its value — so it reads
+  // "Calculated" whatever an older save may still hold for it.
+  if (isFormulaOnly(line)) {
+    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>{line.role === 'linked' ? 'Linked' : 'Calculated'}</span>;
+  }
   if ((mapping?.sourceLineIds.length ?? 0) > 0) {
     return <Icon name="check" size={14} color="var(--text-positive)" />;
   }
-  if (isMissingRequired(line, mapping)) {
+  if (isMissingRequired(line, mapping, hasChildren)) {
     return <Icon name="x" size={14} color="var(--text-negative)" />;
-  }
-  if (isCalculated(line) && !line.projection) {
-    return <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Calculated</span>;
   }
   return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
 }
@@ -36,6 +36,7 @@ interface MappedLinesDialogProps {
 
 export function MappedLinesDialog({ open, statementSchema, mapping, onClose }: MappedLinesDialogProps) {
   const rows = statementSchema.sections.flatMap((section) => section.lines.map((line) => ({ section, line })));
+  const parentIds = new Set(rows.map((r) => r.line.parentLineId).filter(Boolean));
 
   return (
     <Dialog open={open} onClose={onClose} title="Mapped lines" subtitle={`${rows.length} target lines`} width={560}>
@@ -54,7 +55,7 @@ export function MappedLinesDialog({ open, statementSchema, mapping, onClose }: M
                 <td style={{ ...cellStyle, color: 'var(--text-secondary)' }}>{section.name}</td>
                 <td style={{ ...cellStyle, color: 'var(--text-primary)' }}>{line.name}</td>
                 <td style={{ ...cellStyle, textAlign: 'center' }}>
-                  <StatusCell line={line} mapping={mapping[line.id]} />
+                  <StatusCell line={line} mapping={mapping[line.id]} hasChildren={parentIds.has(line.id)} />
                 </td>
               </tr>
             ))}

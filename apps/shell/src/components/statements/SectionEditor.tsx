@@ -1,10 +1,16 @@
-import { useState, type CSSProperties } from 'react';
-import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedControl, Switch, Tag } from '@basis/design-system';
-import type { DriverDefinition, LineNumberFormat, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedControl, Switch, Tag, Tooltip } from '@basis/design-system';
+import type { DriverDefinition, LineNumberFormat, LineRole, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
+import { isFormulaOnly } from '../../lib/lineRole';
+import { summarizeProjection } from '../../lib/projectionSummary';
+import { isDebtScheduleSection } from '../../lib/debtSchedule';
+import { effectiveLineKind } from '../../lib/statementLineChildren';
+import type { ProjectionSelection } from '../../lib/statementSchemaEdit';
 import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
+import { FormulaHelp } from './FormulaHelp';
 import { DEFAULT_CHECK_TOLERANCE, NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META, getLineRowStyle, getRequiredMeta } from './statementFormatting';
 import { LineSettingsPanel, type LineSettingsSection } from '../common/LineSettingsPanel';
 import { DebtTranchePropertiesEditor, NumberInput, PercentInput } from '../models/instances/DebtTranchePropertiesEditor';
@@ -13,22 +19,15 @@ import type { DebtTrancheProperties } from '../../data';
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const SIGN_OPTIONS = Object.entries(SIGN_META).map(([value, meta]) => ({ value, label: meta.label }));
-const REQUIRED_OPTIONS = [
+const ROLE_OPTIONS = [
+  { value: 'optional', label: 'Optional (default)' },
   { value: 'required', label: 'Required' },
-  { value: 'optional', label: 'Optional' },
+  { value: 'calculated', label: 'Calculated' },
+  { value: 'linked', label: 'Linked' },
+  { value: 'check', label: 'Check' },
 ];
 
-/** What the "Projection method" control in LineSettingsPanelContent commits — mirrors
- *  StatementLine.projection plus the 'none' case, and carries a basisLineId only for the two
- *  methods that need one. Deliberately the same simplified set for a top-level line and a child
- *  line here — 'roll-off'/'actual' (child-only, mapping-time concepts that reference reported
- *  values) aren't offered by this editor; a child already on one of those shows a read-only note
- *  instead (see LineSettingsPanelContent). */
-export type ProjectionSelection =
-  | { method: 'none' }
-  | { method: 'flat' }
-  | { method: 'growth' }
-  | { method: 'percent-of' | 'days-of'; basisLineId: string };
+export type { ProjectionSelection };
 
 /** A statement section's lines, for populating a basis-line picker grouped the same way the
  *  statement itself is organized — the same reason a long <Select> benefits from <optgroup>. */
@@ -37,12 +36,12 @@ export interface LineGroup {
   lines: { id: string; name: string }[];
 }
 
-const PROJECTION_METHOD_OPTIONS: { value: 'none' | 'flat' | ProjectionMethod; label: string }[] = [
-  { value: 'none', label: 'None' },
+const PROJECTION_METHOD_OPTIONS: { value: 'flat' | ProjectionMethod; label: string }[] = [
   { value: 'flat', label: 'Flat (holds last actual)' },
   { value: 'growth', label: 'Growth Rate' },
   { value: 'percent-of', label: 'Percent of…' },
   { value: 'days-of', label: 'Days of…' },
+  { value: 'roll-off', label: 'Roll-off…' },
 ];
 
 interface SectionEditorProps {
@@ -68,6 +67,10 @@ interface SectionEditorProps {
   onDelete: () => void;
   onAddLine: () => void;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
+  /** The "Role" column's editor — a role change can also reshape the line's formula,
+   *  projection and structure (see lib/statementSchemaEdit.ts's setLineRole), so it isn't just an
+   *  onUpdateLine patch. */
+  onSetRole: (lineId: string, role: LineRole) => void;
   onDeleteLine: (lineId: string) => void;
   /** Drag-and-drop's one move primitive (see lib/statementSchemaEdit.ts's reorderLine) —
    *  `beforeLineId: null` means "at the end of THIS section". Subsumes the old up/down arrows
@@ -82,11 +85,14 @@ export function SectionEditor({
   schema, section, isFirst, isLast, nameIndex,
   selectedLineId, onSelectLine, onAddSubLine,
   onRename, onSetAllowsFreeformLines, onMoveUp, onMoveDown, onDelete,
-  onAddLine, onUpdateLine, onDeleteLine, onReorderLine,
+  onAddLine, onUpdateLine, onSetRole, onDeleteLine, onReorderLine,
 }: SectionEditorProps) {
   const rows = buildSectionRows(schema, section);
+  // The Debt Schedule is regenerated from the capital structure, so nothing in it is editable —
+  // only the section itself can be moved.
+  const generated = isDebtScheduleSection(section);
 
-  const columns = [
+  const editableColumns = [
     {
       key: 'name',
       label: 'Line name',
@@ -124,7 +130,7 @@ export function SectionEditor({
         // Checked regardless of projection — a broken reference matters whether the formula was
         // hand-written or generated, but the informational sigma icon below is deliberately not:
         // it's only for a genuine structural formula, since a projection-carrying line already
-        // shows its (non-"Calculated") status in the Required column and its formula in the
+        // shows its (non-"Calculated") status in the Role column and its formula in the
         // expanded row detail — showing the icon on every projected line too would just be noise.
         const dangling = hasFormula ? collectRefIds(row.line.formula!).filter((id) => !nameIndex.describe(id)) : [];
         return (
@@ -134,7 +140,7 @@ export function SectionEditor({
               <span title="References a line that no longer exists">
                 <Icon name="alert-triangle" size={12} color="var(--text-negative)" />
               </span>
-            ) : hasFormula && !row.line.projection ? (
+            ) : isFormulaOnly(row.line) && hasFormula ? (
               <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="sigma" size={12} color="var(--text-tertiary)" />
               </span>
@@ -166,13 +172,13 @@ export function SectionEditor({
         ) : null,
     },
     {
-      key: 'required',
-      label: 'Required',
+      key: 'role',
+      label: 'Role',
       width: 120,
-      // A line with a projection method still needs a real mapped value for actual periods —
-      // only a genuine structural formula (no projection attached) locks this. Only a top-level
-      // line shows this at all — a child/KPI's status lives in the mapping screen instead.
-      canEdit: (row: SectionRow) => Boolean(row.line) && (!isCalculated(row.line!) || Boolean(row.line!.projection)),
+      // The line's role — Required / Optional / Calculated / Check. A Debt Schedule line is
+      // generated, so its role is fixed. Only a top-level line shows this at all — a child/KPI's
+      // status lives in the mapping screen instead.
+      canEdit: (row: SectionRow) => Boolean(row.line) && !row.line!.debtScheduleRole,
       render: (_: unknown, row: SectionRow) => {
         if (!row.line) return null;
         const meta = getRequiredMeta(row.line);
@@ -187,11 +193,39 @@ export function SectionEditor({
           <Select
             size="sm"
             autoFocus
-            options={REQUIRED_OPTIONS}
-            value={row.line.required ? 'required' : 'optional'}
-            onChange={(e) => onUpdateLine(row.line!.id, { required: e.target.value === 'required' })}
+            options={ROLE_OPTIONS}
+            value={row.line.role}
+            onChange={(e) => onSetRole(row.line!.id, e.target.value as LineRole)}
           />
         ) : null,
+    },
+    {
+      key: 'projection',
+      label: 'Projection',
+      width: 150,
+      // Read-only on purpose — a projection is only ever edited in the line's settings panel.
+      // An em-dash for a Calculated / Check line (nothing to project); a sourced line with none
+      // reads "Not set" in red, which is the thing this column is here to make easy to spot.
+      render: (_: unknown, row: SectionRow) => {
+        const target = row.line ?? row.childLine;
+        if (!target) return null;
+        const summary = summarizeProjection(target, schema.drivers, nameIndex, effectiveLineKind(schema, target) === 'debt');
+        // An em-dash, not blank: "nothing to project here" reads differently from "missing".
+        if (!summary) return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>—</span>;
+        return (
+          <span
+            title={summary.label}
+            style={{
+              display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              fontSize: 'var(--text-xs)',
+              color: summary.tone === 'missing' ? 'var(--text-negative)' : summary.tone === 'derived' ? 'var(--text-tertiary)' : 'var(--text-body)',
+              fontStyle: summary.tone === 'derived' ? 'italic' : undefined,
+            }}
+          >
+            {summary.label}
+          </span>
+        );
+      },
     },
     {
       key: 'rowFormat',
@@ -279,21 +313,33 @@ export function SectionEditor({
         ) : null,
     },
   ];
+  const columns = generated ? editableColumns.filter((c) => c.key !== 'actions').map((c) => ({ ...c, canEdit: () => false })) : editableColumns;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', minHeight: 40, padding: '0 var(--space-8)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <SectionName name={section.name} onRename={onRename} />
+        {generated ? (
+          <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-heading)', color: 'var(--text-primary)' }}>{section.name}</span>
+        ) : (
+          <SectionName name={section.name} onRename={onRename} />
+        )}
+        {generated ? (
+          <Badge tone="violet" size="sm" icon="sparkles">Auto-generated</Badge>
+        ) : null}
         <div style={{ flex: '1 1 auto' }} />
-        <Switch
-          size="sm"
-          label="Freeform lines"
-          checked={section.allowsFreeformLines ?? false}
-          onChange={onSetAllowsFreeformLines}
-        />
+        {generated ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Built from the debt lines in your capital structure — read only.</span>
+        ) : (
+          <Switch
+            size="sm"
+            label="Freeform lines"
+            checked={section.allowsFreeformLines ?? false}
+            onChange={onSetAllowsFreeformLines}
+          />
+        )}
         <IconButton icon="arrow-up" label="Move section up" size="sm" variant="ghost" onClick={onMoveUp} disabled={isFirst} />
         <IconButton icon="arrow-down" label="Move section down" size="sm" variant="ghost" onClick={onMoveDown} disabled={isLast} />
-        <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />
+        {generated ? null : <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />}
       </div>
 
       {rows.length > 0 ? (
@@ -311,10 +357,12 @@ export function SectionEditor({
             }
             if (row.line || row.childLine) onSelectLine(row.id);
           }}
-          draggableRows
+          draggableRows={!generated}
           dragHandleMode="hover"
-          canDragRow={(row: SectionRow) => Boolean(row.line)}
-          onReorder={(draggedKey, beforeKey) => onReorderLine(draggedKey, beforeKey)}
+          canDragRow={(row: SectionRow) => !generated && Boolean(row.line)}
+          onReorder={(draggedKey, beforeKey) => {
+            if (!generated) onReorderLine(draggedKey, beforeKey);
+          }}
         />
       ) : (
         // Still a valid drop target for a line dragged in from another section — otherwise an
@@ -332,11 +380,13 @@ export function SectionEditor({
         </div>
       )}
 
-      <div style={{ padding: 'var(--space-5) var(--space-8)', borderTop: '1px solid var(--border-subtle)' }}>
-        <Button size="sm" variant="ghost" iconLeft="plus" onClick={onAddLine}>
-          Add line
-        </Button>
-      </div>
+      {generated ? null : (
+        <div style={{ padding: 'var(--space-5) var(--space-8)', borderTop: '1px solid var(--border-subtle)' }}>
+          <Button size="sm" variant="ghost" iconLeft="plus" onClick={onAddLine}>
+            Add line
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -400,73 +450,113 @@ export interface LineSettingsPanelContentProps {
   nameIndex: NameIndex;
   onUpdateLine: (lineId: string, patch: Partial<StatementLine>) => void;
   onSetProjection: (lineId: string, selection: ProjectionSelection) => void;
+  onSetRole: (lineId: string, role: LineRole) => void;
   onDeleteChildLine?: (lineId: string) => void;
   onClose: () => void;
   style?: CSSProperties;
 }
 
-function methodOf(line: StatementLine): 'none' | 'flat' | ProjectionMethod {
-  return line.projection?.method ?? 'none';
+type StandardMethod = 'flat' | 'growth' | 'percent-of' | 'days-of' | 'roll-off';
+type ProjectionType = 'standard' | 'formula' | 'hardcode';
+
+const PROJECTION_TYPE_OPTIONS = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'formula', label: 'Formula' },
+  { value: 'hardcode', label: 'Hardcode' },
+];
+
+function isStandardMethod(method: string): method is StandardMethod {
+  return method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of' || method === 'roll-off';
 }
 
-function needsBasisLine(method: 'none' | 'flat' | ProjectionMethod): method is 'percent-of' | 'days-of' {
-  return method === 'percent-of' || method === 'days-of';
+function needsBasisLine(method: StandardMethod): method is 'percent-of' | 'days-of' | 'roll-off' {
+  return method === 'percent-of' || method === 'days-of' || method === 'roll-off';
 }
 
-/** A method this simplified editor doesn't offer at all — reachable only via the mapping screen's
- *  own ProjectionMethodEditor (roll-off/actual read reported values that don't exist yet at
- *  schema-definition time). Shown as a read-only note instead of a Select with an out-of-range
- *  value, so switching it away can't silently skip the roll-off-contra cleanup setChildProjection
- *  would otherwise do. */
-function isSchemaEditorMethod(method: string): method is 'none' | 'flat' | ProjectionMethod {
-  return method === 'none' || method === 'flat' || method === 'growth' || method === 'percent-of' || method === 'days-of';
+// 'properties' (the four table columns, mirrored) starts collapsed — it's the least-touched group.
+const DEFAULT_OPEN_SECTIONS = ['name', 'structure', 'calculation'];
+
+function FieldLabel({ children }: { children: string }) {
+  return (
+    <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+      {children}
+    </span>
+  );
 }
 
-const DEFAULT_OPEN_SECTIONS = ['projection', 'structure', 'debt', 'formula', 'check', 'aliases'];
+const SIGN_TOOLTIP =
+  'Natural keeps values as reported. Absolute treats them as positive amounts — e.g. costs listed without a minus sign.';
 
 const LINE_TYPE_OPTIONS = [
   { value: 'normal', label: 'Normal' },
   { value: 'debt', label: 'Debt' },
-  { value: 'check', label: 'Check' },
 ];
+
+const fieldColumn = { display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' } as const;
+const mutedNote = { fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' } as const;
 
 /** The side panel shown for whichever line (or sub-line/KPI) is selected in any of a schema's
  *  sections — rendered once by the parent screen (StatementDefinitionsScreen, or the model
  *  workspace's own schema-edit mode), not per-SectionEditor, since only one line can be selected
- *  across the whole schema at a time. Groups the same controls SectionEditor used to show inline
- *  into collapsible sections so a line with a lot going on (e.g. a debt-kind line's projection +
- *  structure + tranche properties) doesn't require scrolling a giant expanded row. */
+ *  across the whole schema at a time. What it shows follows the line's role (see LineRole): a
+ *  Calculated line has just a formula; a Check adds its tolerance; a Required/Optional line has
+ *  structure (line type, sub-lines) and a Projection with an explicit type, so a projection can't
+ *  be forgotten. Callers key it by line id, which is what resets its local state on selection. */
 export function LineSettingsPanelContent({
   line, isChild, isKpi, isDebtLine, debtProperties, onChangeDebtProperties,
-  lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onDeleteChildLine, onClose, style,
+  lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onSetRole, onDeleteChildLine, onClose, style,
 }: LineSettingsPanelContentProps) {
   const [aliasDraft, setAliasDraft] = useState('');
-  // A method that needs a basis line isn't committed to the line until one is picked — held here
-  // locally in the meantime rather than writing a half-configured projection onto the line.
-  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | null>(null);
+  // A choice that needs a basis line isn't committed to the line until one is picked — held here
+  // meanwhile rather than writing a half-configured projection onto the line.
+  const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
+  // A Linked line's Flip sign switch — held here so it can be set before a basis line is chosen.
+  const [flipSign, setFlipSign] = useState(line.projection?.method === 'link' && line.projection.flipSign === true);
   const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
 
-  const rawMethod = methodOf(line);
-  const currentMethod = pendingMethod ?? (isSchemaEditorMethod(rawMethod) ? rawMethod : 'none');
-  const currentDriverId = line.projection && 'driverId' in line.projection ? line.projection.driverId : undefined;
+  const role = line.role;
+  const sourced = role === 'required' || role === 'optional';
+  const projection = line.projection;
+  const rawMethod = projection?.method ?? 'flat';
+  // Hardcode: a driver whose per-period values are the line's values.
+  const projectionType: ProjectionType = rawMethod === 'formula' ? 'formula' : rawMethod === 'hardcode' ? 'hardcode' : 'standard';
+  const currentMethod: StandardMethod = pendingMethod ?? (isStandardMethod(rawMethod) ? rawMethod : 'flat');
+  const currentDriverId = projection && 'driverId' in projection ? projection.driverId : undefined;
   const currentDriver = drivers.find((d) => d.id === currentDriverId);
   // Blank while a new basis-needing method is pending (nothing chosen yet); otherwise reflects
   // the already-committed driver's basis line, so reopening a configured line shows it correctly.
-  const basisLineId = pendingMethod ? '' : (currentDriver?.basisLineId ?? '');
+  const ratioBasisLineId = pendingMethod ? '' : (currentDriver?.basisLineId ?? '');
+  const linkBasisLineId = projection?.method === 'link' ? projection.basisLineId : '';
 
-  function handleMethodChange(method: 'none' | 'flat' | ProjectionMethod) {
+  function handleProjectionTypeChange(next: ProjectionType) {
+    if (next === projectionType) return;
+    setPendingMethod(null);
+    onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : next === 'hardcode' ? { method: 'hardcode' } : { method: 'formula' });
+  }
+
+  function handleMethodChange(method: StandardMethod) {
     if (needsBasisLine(method)) {
       setPendingMethod(method);
       return;
     }
     setPendingMethod(null);
-    onSetProjection(line.id, method === 'none' ? { method: 'none' } : method === 'flat' ? { method: 'flat' } : { method: 'growth' });
+    onSetProjection(line.id, method === 'flat' ? { method: 'flat' } : { method: 'growth' });
   }
 
-  function handleBasisLineChange(nextBasisLineId: string) {
+  function handleRatioBasisChange(nextBasisLineId: string) {
     if (!needsBasisLine(currentMethod) || !nextBasisLineId) return;
     onSetProjection(line.id, { method: currentMethod, basisLineId: nextBasisLineId });
     setPendingMethod(null);
+  }
+
+  function handleLinkBasisChange(nextBasisLineId: string) {
+    if (!nextBasisLineId) return;
+    onSetProjection(line.id, { method: 'link', basisLineId: nextBasisLineId, flipSign });
+  }
+
+  function handleFlipSignChange(next: boolean) {
+    setFlipSign(next);
+    if (linkBasisLineId) onSetProjection(line.id, { method: 'link', basisLineId: linkBasisLineId, flipSign: next });
   }
 
   function addAlias() {
@@ -484,223 +574,288 @@ export function LineSettingsPanelContent({
     setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
   }
 
-  // A top-level line picks ONE of three types up front — what follows is just which sections
-  // that implies, not a pile of independent toggles (isDebtLine/isChild aside) to reconcile in
-  // your head. A child never picks its own (kind is always inherited from its parent — see
-  // effectiveLineKind's own doc comment), and 'check' never applies to one at all: a check line
-  // never offers "Allow sub-lines", so it can never have children to inherit into.
-  const lineType: 'normal' | 'debt' | 'check' = isChild
-    ? (isDebtLine ? 'debt' : 'normal')
-    : line.lineKind === 'debt'
-      ? 'debt'
-      : line.lineKind === 'check'
-        ? 'check'
-        : 'normal';
+  // A top-level sourced line is Normal or Debt. A child never picks its own (kind is always
+  // inherited from its parent — see effectiveLineKind's own doc comment). A Check is a role now,
+  // not a line type.
+  const lineType: 'normal' | 'debt' = isChild ? (isDebtLine ? 'debt' : 'normal') : line.lineKind === 'debt' ? 'debt' : 'normal';
 
-  function handleLineTypeChange(next: 'normal' | 'debt' | 'check') {
-    onUpdateLine(line.id, { lineKind: next === 'normal' ? undefined : next });
-  }
+  const basisGroups = lineGroups
+    .map((g) => ({
+      label: g.sectionName,
+      options: g.lines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
+    }))
+    .filter((g) => g.options.length > 0);
 
-  // Shared between a child's own Projection section (which also carries its name field, the one
-  // place a freshly-created sub-line/KPI gets named) and a top-level Normal line's — Debt and
-  // Check skip Projection entirely below (a debt-kind line's value comes from the Debt Schedule,
-  // never a projection method picked here; a check is always a hand-written formula).
-  const projectionControls = !isSchemaEditorMethod(rawMethod) ? (
-    <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-      Uses a mapping-time projection method ({rawMethod}) — change it from the mapping screen instead.
-    </p>
-  ) : (
+  const formulaField = (
+    <div style={fieldColumn}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <FieldLabel>Formula</FieldLabel>
+        <FormulaHelp />
+      </div>
+      <FormulaInput value={line.formula} onChange={(formula) => onUpdateLine(line.id, { formula })} nameIndex={nameIndex} ownLineId={line.id} />
+    </div>
+  );
+
+  // A Required/Optional line's Projection body: the type selector, then whatever that type needs.
+  const projectionControls = (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-          Projection method
-        </span>
-        <Select
+      <div style={fieldColumn}>
+        <FieldLabel>Projection type</FieldLabel>
+        <SegmentedControl
           size="sm"
-          options={PROJECTION_METHOD_OPTIONS}
-          value={currentMethod}
-          onChange={(e) => handleMethodChange(e.target.value as 'none' | 'flat' | ProjectionMethod)}
+          value={projectionType}
+          options={PROJECTION_TYPE_OPTIONS}
+          onChange={(value) => handleProjectionTypeChange(value as ProjectionType)}
         />
       </div>
 
-      {needsBasisLine(currentMethod) ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-            Basis line
-          </span>
-          <Select
-            size="sm"
-            value={basisLineId}
-            options={[{ value: '', label: 'None / N/A' }]}
-            groups={lineGroups
-              .map((g) => ({
-                label: g.sectionName,
-                options: g.lines.filter((l) => l.id !== line.id).map((l) => ({ value: l.id, label: l.name })),
-              }))
-              .filter((g) => g.options.length > 0)}
-            onChange={(e) => handleBasisLineChange(e.target.value)}
-          />
+      {projectionType === 'standard' ? (
+        <>
+          <div style={fieldColumn}>
+            <FieldLabel>Projection method</FieldLabel>
+            <Select
+              size="sm"
+              options={PROJECTION_METHOD_OPTIONS}
+              value={currentMethod}
+              onChange={(e) => handleMethodChange(e.target.value as StandardMethod)}
+            />
+          </div>
+          {needsBasisLine(currentMethod) ? (
+            <div style={fieldColumn}>
+              <FieldLabel>Basis line</FieldLabel>
+              <Select
+                size="sm"
+                value={ratioBasisLineId}
+                options={[{ value: '', label: 'None / N/A' }]}
+                groups={basisGroups}
+                onChange={(e) => handleRatioBasisChange(e.target.value)}
+              />
+            </div>
+          ) : null}
+          <div style={fieldColumn}>
+            <FieldLabel>Formula</FieldLabel>
+            {currentMethod === 'flat' ? (
+              <span style={mutedNote}>Holds the last actual value.</span>
+            ) : currentMethod === 'roll-off' && !pendingMethod ? (
+              <>
+                <span style={{ ...mutedNote, fontFamily: 'var(--font-mono)' }}>{formatFormula(line.formula, nameIndex)}</span>
+                <span style={mutedNote}>The driver % of the last actual rolls off onto the basis line each projected period.</span>
+              </>
+            ) : pendingMethod ? (
+              <span style={mutedNote}>Choose a basis line to generate the formula.</span>
+            ) : (
+              <span style={{ ...mutedNote, fontFamily: 'var(--font-mono)' }}>{formatFormula(line.formula, nameIndex)}</span>
+            )}
+          </div>
+        </>
+      ) : projectionType === 'formula' ? (
+        formulaField
+      ) : (
+        <div style={fieldColumn}>
+          <FieldLabel>Formula</FieldLabel>
+          <span style={mutedNote}>Values to be input manually.</span>
         </div>
-      ) : null}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-          Formula
-        </span>
-        {currentMethod === 'none' ? (
-          <FormulaInput
-            value={line.formula}
-            onChange={(formula) => onUpdateLine(line.id, { formula })}
-            nameIndex={nameIndex}
-            ownLineId={line.id}
-          />
-        ) : currentMethod === 'flat' ? (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Holds the last actual value.</span>
-        ) : pendingMethod ? (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>Choose a basis line to generate the formula.</span>
-        ) : (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-            {formatFormula(line.formula, nameIndex)}
-          </span>
-        )}
-      </div>
+      )}
     </>
   );
 
-  // "Move to section" is gone — drag the row's own handle into another section's table instead
-  // (see SectionEditor's onReorderLine/DataTable's onReorder).
-  const structureContent = (
-    <Switch
-      size="sm"
-      label="Allow sub-lines"
-      checked={line.allowsSubLines ?? false}
-      onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
-    />
+  // A Linked line reads exactly one other line, optionally sign-flipped — nothing else to set.
+  const linkContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={fieldColumn}>
+        <FieldLabel>Linked line</FieldLabel>
+        <Select
+          size="sm"
+          value={linkBasisLineId}
+          options={[{ value: '', label: 'Choose a line…' }]}
+          groups={basisGroups}
+          onChange={(e) => handleLinkBasisChange(e.target.value)}
+        />
+      </div>
+      <Switch size="sm" label="Flip sign" checked={flipSign} onChange={handleFlipSignChange} />
+    </div>
   );
 
-  const sections: LineSettingsSection[] = [];
-
-  if (isChild) {
-    // Unchanged by the Normal/Debt/Check redesign below — a child never shows the type selector,
-    // so it keeps its own name field plus whichever projection controls apply, and a read-only
-    // note + tranche properties when its parent is debt-kind.
-    sections.push({
-      key: 'projection',
-      label: 'Projection',
-      content: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-              {isKpi ? 'KPI' : 'Sub-line'} name
-            </span>
+  const nameControls = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={fieldColumn}>
+        <FieldLabel>{isChild ? (isKpi ? 'KPI name' : 'Sub-line name') : 'Line name'}</FieldLabel>
+        <Input
+          size="sm"
+          autoFocus={!line.name}
+          value={line.name}
+          onChange={(e) => onUpdateLine(line.id, { name: e.target.value })}
+          placeholder={isChild ? (isKpi ? 'e.g. Monthly Active Users' : 'e.g. Segment A') : 'e.g. Revenue'}
+        />
+      </div>
+      {/* Aliases only matter for a line that's matched against an uploaded statement — a sourced,
+          top-level one. A Calculated / Check line is never mapped, so nothing would alias to it. */}
+      {isChild || !sourced ? null : (
+        <div style={fieldColumn}>
+          <FieldLabel>Aliases</FieldLabel>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+            {line.aliases.map((alias) => (
+              <Tag key={alias} onRemove={() => removeAlias(alias)}>
+                {alias}
+              </Tag>
+            ))}
             <Input
               size="sm"
-              autoFocus={!line.name}
-              value={line.name}
-              onChange={(e) => onUpdateLine(line.id, { name: e.target.value })}
-              placeholder={isKpi ? 'e.g. Monthly Active Users' : 'e.g. Segment A'}
+              value={aliasDraft}
+              onChange={(e) => setAliasDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addAlias();
+                }
+              }}
+              placeholder="Add alias"
+              fullWidth={false}
+              style={{ width: 160 }}
             />
+            <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
           </div>
-          {projectionControls}
+        </div>
+      )}
+    </div>
+  );
+
+  // The same four fields as the table's own columns, edited through the same callbacks — just
+  // another way in. Top-level lines only, matching the table (a child/KPI shows none of these).
+  // A Debt Schedule line is generated, so its role is fixed.
+  const propertiesContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={fieldColumn}>
+        <FieldLabel>Role</FieldLabel>
+        <Select
+          size="sm"
+          disabled={Boolean(line.debtScheduleRole)}
+          options={ROLE_OPTIONS}
+          value={role}
+          onChange={(e) => onSetRole(line.id, e.target.value as LineRole)}
+        />
+      </div>
+      <div style={fieldColumn}>
+        <FieldLabel>Row format</FieldLabel>
+        <Select
+          size="sm"
+          options={ROW_FORMAT_OPTIONS}
+          value={line.rowFormat}
+          onChange={(e) => onUpdateLine(line.id, { rowFormat: e.target.value as LineRowFormat })}
+        />
+      </div>
+      <div style={fieldColumn}>
+        <FieldLabel>Number format</FieldLabel>
+        <Select
+          size="sm"
+          options={NUMBER_FORMAT_OPTIONS}
+          value={line.numberFormat}
+          onChange={(e) => onUpdateLine(line.id, { numberFormat: e.target.value as LineNumberFormat })}
+        />
+      </div>
+      <div style={fieldColumn}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <FieldLabel>Sign</FieldLabel>
+          <Tooltip content={SIGN_TOOLTIP} placement="right" maxWidth={260}>
+            <IconButton icon="info" label="About sign" size="sm" variant="ghost" />
+          </Tooltip>
+        </div>
+        <Select
+          size="sm"
+          options={SIGN_OPTIONS}
+          value={line.sign}
+          onChange={(e) => onUpdateLine(line.id, { sign: e.target.value as LineSign })}
+        />
+      </div>
+    </div>
+  );
+
+  // Line type, then sub-lines, then the debt tranche properties for a debt line. "Move to section"
+  // is gone — drag the row's own handle into another section's table instead.
+  const structureContent = isChild ? (
+    isDebtLine ? (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Debt (inherited from its parent line).</p>
+        <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties} />
+      </div>
+    ) : (
+      <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Normal (inherited from its parent line).</p>
+    )
+  ) : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+      <div style={fieldColumn}>
+        <FieldLabel>Line type</FieldLabel>
+        <SegmentedControl
+          size="sm"
+          value={lineType}
+          options={LINE_TYPE_OPTIONS}
+          onChange={(value) => onUpdateLine(line.id, { lineKind: value === 'debt' ? 'debt' : undefined })}
+        />
+      </div>
+      <Switch
+        size="sm"
+        label="Allow sub-lines"
+        checked={line.allowsSubLines ?? false}
+        onChange={(next) => onUpdateLine(line.id, { allowsSubLines: next })}
+      />
+      {lineType === 'debt' ? <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties} /> : null}
+    </div>
+  );
+
+  const isPercentCheck = line.numberFormat === 'percentage';
+  const toleranceField = (
+    <div style={fieldColumn}>
+      <FieldLabel>Tolerance</FieldLabel>
+      {isPercentCheck ? (
+        <PercentInput
+          value={line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE}
+          onCommit={(next) => onUpdateLine(line.id, { checkTolerance: next ?? DEFAULT_CHECK_TOLERANCE })}
+        />
+      ) : (
+        <NumberInput
+          value={line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE}
+          onCommit={(next) => onUpdateLine(line.id, { checkTolerance: next ?? DEFAULT_CHECK_TOLERANCE })}
+        />
+      )}
+      <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+        Flagged red in the model workspace when the computed value's magnitude exceeds this{isPercentCheck ? ' (as a % of its own denominator)' : ''}.
+      </p>
+    </div>
+  );
+
+  const sections: LineSettingsSection[] = [
+    {
+      key: 'name',
+      label: 'Line name',
+      summary: !isChild && sourced && line.aliases.length ? `${line.aliases.length} alias${line.aliases.length === 1 ? '' : 'es'}` : undefined,
+      content: nameControls,
+    },
+  ];
+  if (!isChild) sections.push({ key: 'properties', label: 'Line properties', content: propertiesContent });
+  // Calculated and Check lines have no structure (no line type, sub-lines or tranche properties).
+  if (isChild || sourced) sections.push({ key: 'structure', label: 'Structure', content: structureContent });
+
+  if (!isChild && role === 'calculated') {
+    sections.push({ key: 'calculation', label: 'Calculation', content: formulaField });
+  } else if (!isChild && role === 'linked') {
+    sections.push({ key: 'calculation', label: 'Link', content: linkContent });
+  } else if (!isChild && role === 'check') {
+    sections.push({
+      key: 'calculation',
+      label: 'Calculation',
+      content: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+          {formulaField}
+          {toleranceField}
         </div>
       ),
     });
-    if (isDebtLine) {
-      sections.push({
-        key: 'structure',
-        label: 'Structure',
-        content: (
-          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-            Debt (inherited from its parent line).
-          </p>
-        ),
-      });
-      sections.push({
-        key: 'debt',
-        label: 'Debt tranche',
-        content: <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties} />,
-      });
-    }
-  } else if (lineType === 'check') {
-    // A check is nothing but a formula expected to read ~0 and a tolerance for how close counts
-    // as tied out — no projection (always hand-written), no sub-lines (always a leaf), no
-    // aliases (never matched against an uploaded statement, so nothing would ever alias to it).
+  } else if (!(isChild ? isDebtLine : lineType === 'debt')) {
+    // A debt line's value (top-level, or a sub-line inheriting it) comes from the Debt Schedule, so it has no projection here.
     sections.push({
-      key: 'formula',
-      label: 'Formula',
-      content: (
-        <FormulaInput value={line.formula} onChange={(formula) => onUpdateLine(line.id, { formula })} nameIndex={nameIndex} ownLineId={line.id} />
-      ),
-    });
-    const isPercent = line.numberFormat === 'percentage';
-    sections.push({
-      key: 'check',
-      label: 'Tolerance',
-      content: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          {isPercent ? (
-            <PercentInput
-              value={line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE}
-              onCommit={(next) => onUpdateLine(line.id, { checkTolerance: next ?? DEFAULT_CHECK_TOLERANCE })}
-            />
-          ) : (
-            <NumberInput
-              value={line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE}
-              onCommit={(next) => onUpdateLine(line.id, { checkTolerance: next ?? DEFAULT_CHECK_TOLERANCE })}
-            />
-          )}
-          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-            Flagged red in the model workspace when the computed value's magnitude exceeds this{isPercent ? ' (as a % of its own denominator)' : ''}.
-          </p>
-        </div>
-      ),
-    });
-  } else {
-    // Normal and Debt both get Structure (sub-lines + move-to-section); Normal additionally gets
-    // Projection, Debt additionally gets its tranche properties.
-    if (lineType === 'normal') {
-      sections.push({
-        key: 'projection',
-        label: 'Projection',
-        content: <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>{projectionControls}</div>,
-      });
-    }
-    sections.push({ key: 'structure', label: 'Structure', content: structureContent });
-    if (lineType === 'debt') {
-      sections.push({
-        key: 'debt',
-        label: 'Debt tranche',
-        content: <DebtTranchePropertiesEditor instance={debtProperties ?? {}} onChange={onChangeDebtProperties} />,
-      });
-    }
-    sections.push({
-      key: 'aliases',
-      label: 'Aliases',
-      summary: line.aliases.length ? String(line.aliases.length) : undefined,
-      content: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-          {line.aliases.map((alias) => (
-            <Tag key={alias} onRemove={() => removeAlias(alias)}>
-              {alias}
-            </Tag>
-          ))}
-          <Input
-            size="sm"
-            value={aliasDraft}
-            onChange={(e) => setAliasDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addAlias();
-              }
-            }}
-            placeholder="Add alias"
-            fullWidth={false}
-            style={{ width: 160 }}
-          />
-          <IconButton icon="plus" label="Add alias" size="sm" variant="ghost" onClick={addAlias} />
-        </div>
-      ),
+      key: 'calculation',
+      label: 'Projection',
+      content: <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>{projectionControls}</div>,
     });
   }
 
@@ -713,20 +868,12 @@ export function LineSettingsPanelContent({
       openKeys={openKeys}
       onToggleSection={toggleSection}
       style={style}
-      sections={sections}
+      sections={line.debtScheduleRole ? sections.map((s) => ({ ...s, content: <ReadOnly>{s.content}</ReadOnly> })) : sections}
       beforeSections={
-        !isChild ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-              Line type
-            </span>
-            <SegmentedControl
-              size="sm"
-              value={lineType}
-              options={LINE_TYPE_OPTIONS}
-              onChange={(value) => handleLineTypeChange(value as 'normal' | 'debt' | 'check')}
-            />
-          </div>
+        line.debtScheduleRole ? (
+          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+            Generated from the debt lines in your capital structure. Read only.
+          </p>
         ) : undefined
       }
       footer={
@@ -737,5 +884,15 @@ export function LineSettingsPanelContent({
         ) : undefined
       }
     />
+  );
+}
+
+/** Disables every control inside — a native <fieldset disabled> covers inputs, selects and
+ *  buttons; pointer-events covers design-system controls that aren't native (Switch, chips). */
+function ReadOnly({ children }: { children: ReactNode }) {
+  return (
+    <fieldset disabled style={{ border: 'none', margin: 0, padding: 0, minWidth: 0, opacity: 0.75 }}>
+      <div style={{ pointerEvents: 'none' }}>{children}</div>
+    </fieldset>
   );
 }

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, Dialog } from '@basis/design-system';
-import type { DebtTrancheProperties, StatementLine, StatementSchema } from '../../data';
+import type { DebtTrancheProperties, LineRole, StatementLine, StatementSchema } from '../../data';
+import { isDebtScheduleSection } from '../../lib/debtSchedule';
 import { SectionEditor, LineSettingsPanelContent } from './SectionEditor';
 import { buildNameIndex, collectRefIds, isCalculated } from '../../lib/engine/resolve';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../lib/lineDependents';
@@ -93,8 +94,13 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
     }
   }
 
+  /** Appends a blank line and selects it, so its settings panel opens with the (autofocused)
+   *  name field ready to type into — same as addSubLine below. */
   function addLine(sectionId: string) {
-    onChangeSchema(schemaEdit.addLine(schema, sectionId));
+    const next = schemaEdit.addLine(schema, sectionId);
+    onChangeSchema(next);
+    const added = next.sections.find((s) => s.id === sectionId)?.lines.at(-1);
+    if (added) setSelectedRowId(added.id);
   }
 
   function updateLine(lineId: string, patch: Partial<StatementLine>) {
@@ -103,6 +109,10 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
 
   function setLineProjection(lineId: string, selection: schemaEdit.ProjectionSelection) {
     onChangeSchema(schemaEdit.setLineProjection(schema, lineId, selection));
+  }
+
+  function setLineRole(lineId: string, role: LineRole) {
+    onChangeSchema(schemaEdit.setLineRole(schema, lineId, role));
   }
 
   function changeDebtProperties(lineId: string, patch: Partial<DebtTrancheProperties>) {
@@ -163,6 +173,10 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
   }
 
   function reorderLine(toSectionId: string, lineId: string, beforeLineId: string | null) {
+    // Generated Debt Schedule lines never move, and nothing else moves into that section.
+    const target = schema.sections.find((s) => s.id === toSectionId);
+    if (target && isDebtScheduleSection(target)) return;
+    if (schemaEdit.findLine(schema, lineId)?.debtScheduleRole) return;
     onChangeSchema(schemaEdit.reorderLine(schema, lineId, toSectionId, beforeLineId));
   }
 
@@ -194,6 +208,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
               onDelete={() => deleteSection(section.id)}
               onAddLine={() => addLine(section.id)}
               onUpdateLine={updateLine}
+              onSetRole={setLineRole}
               onDeleteLine={(lineId) => deleteLine(section.id, lineId)}
               onReorderLine={(lineId, beforeLineId) => reorderLine(section.id, lineId, beforeLineId)}
             />
@@ -206,6 +221,7 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
 
         {selectedLine && selectedRowSection ? (
           <LineSettingsPanelContent
+            key={selectedLine.id}
             line={selectedLine}
             isChild={selectedIsChild}
             isKpi={selectedIsKpi}
@@ -217,9 +233,12 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
             nameIndex={nameIndex}
             onUpdateLine={updateLine}
             onSetProjection={setLineProjection}
+            onSetRole={setLineRole}
             onDeleteChildLine={deleteChildLine}
             onClose={() => setSelectedRowId(null)}
-            style={{ position: 'sticky', top: 'var(--space-8)', maxHeight: 'calc(100vh - 160px)' }}
+            // Sticks just below the hosting screen's own sticky header when it publishes where that is
+            // (StatementDefinitionsScreen); otherwise the original position and height.
+            style={{ position: 'sticky', top: 'var(--panel-sticky-top, var(--space-8))', maxHeight: 'var(--panel-max-height, calc(100vh - 160px))' }}
           />
         ) : null}
       </div>

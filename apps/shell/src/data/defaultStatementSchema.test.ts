@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { addChildLine } from '../lib/statementLineChildren';
+import { setLineRole } from '../lib/statementSchemaEdit';
 import type { TimelinePeriod } from './types';
 
 function period(id: string): TimelinePeriod {
@@ -17,9 +18,9 @@ describe('createDefaultStatementSchema — capital structure', () => {
     expect(lineByName.get('1L Debt')?.allowsSubLines).toBe(true);
     expect(lineByName.get('2L Debt')?.allowsSubLines).toBe(true);
     expect(lineByName.get('Unsecured Debt')?.allowsSubLines).toBe(true);
-    // Tiers are optional (required: false) — a company with no tranches under a tier shouldn't
-    // be blocked from mapping/saving.
-    expect(lineByName.get('1L Debt')?.required).toBe(false);
+    // Tiers are optional — a company with no tranches under a tier shouldn't be blocked from
+    // mapping/saving.
+    expect(lineByName.get('1L Debt')?.role).toBe('optional');
   });
 
   it('marks each tier as lineKind "debt" — a schema-declared flag, not a hardcoded line-name check', () => {
@@ -104,9 +105,12 @@ describe('createDefaultStatementSchema — Checks', () => {
   const balanceSheet = schema.sections.find((s) => s.name === 'Balance Sheet')!;
   const lineByName = new Map(balanceSheet.lines.map((l) => [l.name, l]));
 
-  it('tags both check lines as lineKind "check", not debt', () => {
+  it('makes both check lines the Check role, not debt', () => {
     expect(checks.lines.map((l) => l.name)).toEqual(['Balance Sheet Check', 'Cash Flow Check']);
-    for (const l of checks.lines) expect(l.lineKind).toBe('check');
+    for (const l of checks.lines) {
+      expect(l.role).toBe('check');
+      expect(l.lineKind).toBeUndefined();
+    }
   });
 
   // Every source (non-formula) Balance Sheet line needs a real value here — Total
@@ -195,7 +199,9 @@ describe('createDefaultStatementSchema — Equity roll-forward and Change in NWC
         [dividendsPaid.id]: [null, 20],
       } as Record<string, (number | null)[]>,
     };
-    const evaluation = evaluateModel(schema, model);
+    // Net Income is Calculated in the template (never mapped); this test is about the roll-forward
+    // itself, so feed it directly by treating that one line as sourced.
+    const evaluation = evaluateModel(setLineRole(schema, netIncomeLine.id, 'optional'), model);
     expect(evaluation.getValue(retainedEarnings.id, 0)).toBe(500);
     expect(evaluation.getValue(retainedEarnings.id, 1)).toBe(560); // 500 + 80 − 20
   });
@@ -251,5 +257,38 @@ describe('createDefaultStatementSchema — Equity roll-forward and Change in NWC
     };
     const evaluationWithDebt = evaluateModel(schema, withZeroDebt);
     expect(evaluationWithDebt.getValue(financing.id, 0)).toBe(-20);
+  });
+});
+
+describe('createDefaultStatementSchema — roles and projections', () => {
+  const template = createDefaultStatementSchema();
+  const allLines = template.sections.flatMap((s) => s.lines);
+  const find = (sectionName: string, lineName: string) => template.sections.find((s) => s.name === sectionName)!.lines.find((l) => l.name === lineName)!;
+
+  it('links Net Interest Expense, Debt Borrowings and Debt Repayments to the Debt Schedule totals', () => {
+    const cases: Array<[string, string, string]> = [
+      ['Income Statement', 'Net Interest Expense', 'Interest Expense'],
+      ['Cash Flow Statement', 'Debt Borrowings', 'Borrowings'],
+      ['Cash Flow Statement', 'Debt Repayments', 'Repayments'],
+    ];
+    for (const [sectionName, lineName, scheduleLineName] of cases) {
+      const target = find(sectionName, lineName);
+      const scheduleLine = find('Debt Schedule', scheduleLineName);
+      // Still sourced (mapped for actuals): the projected periods read the schedule via a formula.
+      expect(target.projection).toEqual({ method: 'formula' });
+      expect(target.formula).toEqual({ kind: 'ref', lineId: scheduleLine.id });
+    }
+  });
+
+  it('gives every sourced line a projection, except a debt line or a parent that sums sub-lines', () => {
+    const missing = allLines
+      .filter((l) => (l.role === 'required' || l.role === 'optional') && l.projection === null && l.lineKind !== 'debt' && !l.allowsSubLines)
+      .map((l) => l.name);
+    expect(missing).toEqual([]);
+  });
+
+  it('never gives a Calculated or Check line a projection', () => {
+    const withProjection = allLines.filter((l) => (l.role === 'calculated' || l.role === 'check') && l.projection !== null && !l.debtScheduleRole).map((l) => l.name);
+    expect(withProjection).toEqual([]);
   });
 });

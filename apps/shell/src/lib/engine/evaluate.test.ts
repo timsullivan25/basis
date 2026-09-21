@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { evaluateModel } from './evaluate';
 import type { DriverDefinition, Model, ProjectionMethod, ResolvedFormula, StatementLine, StatementSchema, TimelinePeriod } from '../../data';
 
+/** A sourced line: mapped values win where they exist, its formula (a projection) is the fallback. */
 function line(id: string, formula: ResolvedFormula | null = null): StatementLine {
   return {
     id,
     name: id,
-    required: formula === null,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -15,6 +16,11 @@ function line(id: string, formula: ResolvedFormula | null = null): StatementLine
     projection: null,
     aliases: [],
   };
+}
+
+/** A Calculated line: its formula gives every period; a mapped value is never read. */
+function calcLine(id: string, formula: ResolvedFormula): StatementLine {
+  return { ...line(id, formula), role: 'calculated' };
 }
 
 function ref(lineId: string): ResolvedFormula {
@@ -308,6 +314,12 @@ describe('driverRef and the mapped-value-first priority', () => {
     expect(result.getValue('total', 0)).toBe(999);
   });
 
+  it('a Calculated line ignores any mapped value — its formula gives every period', () => {
+    const s = schema([line('a'), line('b'), calcLine('total', bin('+', ref('a'), ref('b')))]);
+    const m = model(1, { a: [10], b: [20], total: [999] });
+    expect(evaluateModel(s, m).getValue('total', 0)).toBe(30);
+  });
+
   it('falls back to the formula for a period with no mapped value', () => {
     const s = schema([line('a'), line('b'), line('total', bin('+', ref('a'), ref('b')))]);
     const m = model(2, { a: [10, 15], b: [20, 25], total: [999] });
@@ -436,7 +448,7 @@ describe('driver defaults (no explicit value entered for a period)', () => {
   });
 
   it('actual has no computed default at all (null, not an inferred number)', () => {
-    const s = schema([line('cost', driverRef('one-time'))], [driver('one-time', 'actual', 'cost')]);
+    const s = schema([line('cost', driverRef('one-time'))], [driver('one-time', 'hardcode', 'cost')]);
     const m = modelWithTimeline(mixedTimeline, { cost: [40] });
     const result = evaluateModel(s, m);
     expect(result.getDriverValue('one-time', 1)).toBeNull();

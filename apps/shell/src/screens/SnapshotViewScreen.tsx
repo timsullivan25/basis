@@ -4,7 +4,8 @@ import { snapshotRepository, type Company, type ScenarioKey, type Snapshot, type
 import { getLineRowStyle } from '../components/statements/statementFormatting';
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
-import { buildNameIndex, formatFormula, isCalculated } from '../lib/engine/resolve';
+import { buildNameIndex, formatFormula } from '../lib/engine/resolve';
+import { isFormulaOnly } from '../lib/lineRole';
 import { toSnapshotLineValues } from '../lib/snapshot';
 
 interface SnapshotViewScreenProps {
@@ -77,7 +78,7 @@ export function SnapshotViewScreen({ company, snapshotId, onReturnToLive }: Snap
             <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
               {row.line.name}
             </span>
-            {isCalculated(row.line) && !row.line.projection ? (
+            {isFormulaOnly(row.line) ? (
               <span title={`Formula: ${formatFormula(row.line.formula, nameIndex)}`}>
                 <Icon name="function-square" size={11} color="var(--text-tertiary)" />
               </span>

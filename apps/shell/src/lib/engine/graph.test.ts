@@ -6,7 +6,7 @@ function line(id: string, formula: ResolvedFormula | null = null): StatementLine
   return {
     id,
     name: id,
-    required: formula === null,
+    role: formula === null ? 'required' : 'calculated',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',

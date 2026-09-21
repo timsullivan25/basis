@@ -1,5 +1,6 @@
 import type { DriverDefinition, Model, PeriodType, ResolvedFormula, StatementLine, StatementSchema, Timeline } from '../../data';
 import { buildLineGraph } from './graph';
+import { isFormulaOnly } from '../lineRole';
 
 const TOLERANCE = 1e-6;
 const MAX_ITERATIONS = 100;
@@ -128,10 +129,10 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
    *  default is ever needed for, so both lines are guaranteed already resolved in memo. */
   function defaultDriverValue(driver: DriverDefinition): number | null {
     // 0% growth and 0% roll-off are both "no adjustment assumed yet" — a safe default that
-    // doesn't invent a number. 'actual' has no sensible default at all (it's a hardcoded number
+    // doesn't invent a number. 'hardcode' has no sensible default at all (it's a hardcoded number
     // with nothing to fall back to); percent-of/days-of alone get the ratio inference below.
     if (driver.method === 'growth' || driver.method === 'roll-off') return 0;
-    if (driver.method === 'actual') return null;
+    if (driver.method === 'hardcode') return null;
     if (lastActualIndex < 0 || !driver.basisLineId) return null;
     const targetValue = readLine(driver.targetLineId, lastActualIndex, undefined);
     const basisValue = readLine(driver.basisLineId, lastActualIndex, undefined);
@@ -215,17 +216,17 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
     }
   }
 
-  // An explicit mapped value always wins over a formula when one exists for this exact period —
-  // the formula (if any) is only ever the fallback. This is what lets a normally-sourced line
-  // (mapped for every actual period) carry a projection formula for its future periods without
-  // the two ever colliding: the mapped branch already covers every actual period, so the formula
-  // only fires where no mapped value could possibly exist. It's also what lets an issuer-reported
-  // subtotal (a line that also has a structural formula) prefer its as-reported figure over
-  // recomputing it, wherever the source actually states one.
+  // A Required/Optional line takes its mapped value wherever one exists for this exact period;
+  // its formula (its projection) is only the fallback — which is what lets a sourced line carry
+  // a projection for its future periods without the two ever colliding: the mapped branch already
+  // covers every actual period, so the formula only fires where no mapped value could exist. A
+  // Calculated or Check line is never mapped: its formula produces every period, actual or not.
   function computeLine(lineId: string, periodIndex: number, cycleValues: Map<string, number | null> | undefined): number | null {
-    const mapped = historicalValue(lineId, periodIndex);
-    if (mapped !== null) return mapped;
     const line = linesById.get(lineId);
+    if (!line || !isFormulaOnly(line)) {
+      const mapped = historicalValue(lineId, periodIndex);
+      if (mapped !== null) return mapped;
+    }
     return line?.formula ? evalNode(line.formula, periodIndex, cycleValues) : null;
   }
 

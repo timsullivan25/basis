@@ -68,7 +68,7 @@ export interface BasisDb extends DBSchema {
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 13;
+const DB_VERSION = 17;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -194,7 +194,10 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 'lineInstances' no
         // longer exists on the current BasisDb type (the whole point of this deletion), but
         // idb's deleteObjectStore only accepts today's known store names.
-        if (oldVersion >= 11) db.deleteObjectStore('lineInstances' as any);
+        // Guarded by existence: only a v11 install still has it. An unguarded delete on any later
+        // version threw NotFoundError inside this async callback, where it's swallowed — the version
+        // bumped and every migration below it silently never ran.
+        if (oldVersion >= 11 && db.objectStoreNames.contains('lineInstances' as any)) db.deleteObjectStore('lineInstances' as any);
         if (oldVersion >= 1 && oldVersion < 12) {
           if (oldVersion >= 3) {
             db.deleteObjectStore('modelImports');
@@ -262,6 +265,15 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
             const s = db.createObjectStore('analysisResults', { keyPath: 'id' });
             s.createIndex('by-modelId', 'modelId');
           }
+        }
+
+        // v14 -> v17 (v15: a line's explicit `role` and projection type — see StatementLine;
+        // v16/v17: Hardcode is a projection method of its own, replacing 'actual').
+        // No conversion of older saved data — this app is pre-beta, so everything is cleared and
+        // re-seeded instead: the default template regenerates itself the next time the template
+        // list is read, and models are re-imported.
+        if (oldVersion >= 1 && oldVersion < 17) {
+          for (const name of Array.from(db.objectStoreNames)) transaction.objectStore(name).clear();
         }
       },
     });

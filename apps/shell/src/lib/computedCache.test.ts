@@ -5,7 +5,7 @@ import type { Model, Scenario, StatementLine, StatementSchema, TimelinePeriod } 
 
 function line(id: string, name: string): StatementLine {
   return {
-    id, name, required: true, rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
+    id, name, role: 'required', rowFormat: 'normal', numberFormat: 'number', sign: 'natural', aggregation: 'sum',
     formula: null, projection: null, aliases: [],
   };
 }

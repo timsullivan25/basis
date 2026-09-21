@@ -30,6 +30,7 @@ color-scheme:light;
 --status-positive-bg:var(--green-50);--status-positive-fg:var(--green-800);--status-positive-border:var(--green-300);
 --status-negative-bg:var(--red-50);--status-negative-fg:var(--red-800);--status-negative-border:var(--red-300);
 --status-caution-bg:var(--amber-50);--status-caution-fg:var(--amber-800);--status-caution-border:var(--amber-300);
+--status-violet-bg:var(--violet-100);--status-violet-fg:var(--violet-700);--status-violet-border:var(--violet-300);
 --status-neutral-bg:var(--ink-100);--status-neutral-fg:var(--ink-700);--status-neutral-border:var(--ink-200);
 /* Data direction */
 --value-up:var(--green-600);--value-down:var(--red-600);--value-flat:var(--ink-400);
@@ -61,6 +62,7 @@ color-scheme:dark;
 --status-positive-bg:#08281E;--status-positive-fg:var(--green-300);--status-positive-border:#14543C;
 --status-negative-bg:#2C0E17;--status-negative-fg:var(--red-300);--status-negative-border:#6B1930;
 --status-caution-bg:#2A1D06;--status-caution-fg:var(--amber-300);--status-caution-border:#6B4507;
+--status-violet-bg:#1E1740;--status-violet-fg:var(--violet-300);--status-violet-border:#3F3180;
 --status-neutral-bg:var(--ink-800);--status-neutral-fg:var(--ink-200);--status-neutral-border:var(--ink-700);
 --value-up:#3FBE8C;--value-down:#F0637F;--value-flat:var(--ink-500);
 --value-up-bg:#0C3327;--value-down-bg:#3A1220;

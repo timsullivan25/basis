@@ -7,6 +7,9 @@ interface Candidate {
   text: string;
   lineId: string;
   qualified: boolean;
+  /** Only for a qualified candidate: the length of its leading "Section." — see
+   *  NameIndex.qualifierLength. */
+  qualifierLength: number;
 }
 
 /** The only shape buildNameIndex actually needs — deliberately looser than StatementSchema so
@@ -16,6 +19,18 @@ interface Candidate {
 export interface NameIndexInput {
   sections: Array<{ name: string; lines: Array<{ id: string; name: string }> }>;
   drivers?: Array<{ id: string; name: string }>;
+}
+
+/** One line offered by autocomplete. `insertText` is what gets typed into the formula: the
+ *  qualified "Section.Name" form exactly when another line ANYWHERE in the schema shares the
+ *  name — the same rule formatFormula uses to display a reference, so what autocomplete inserts
+ *  and what reopening the line shows always match. */
+export interface NameSuggestion {
+  lineId: string;
+  name: string;
+  sectionName: string;
+  insertText: string;
+  qualified: boolean;
 }
 
 export interface NameIndex {
@@ -30,11 +45,14 @@ export interface NameIndex {
   /** Current display name for a line, and whether some other line currently shares its
    *  (unqualified) name — used by formatFormula to decide whether to qualify on display. */
   describe(lineId: string): { name: string; qualifiedName: string; ambiguous: boolean } | undefined;
-  /** Autocomplete suggestions for a formula being edited on `fromLineId` — unlike `candidates()`
-   *  (the full tokenizer vocabulary), this omits anything that would fail to resolve if picked:
-   *  a name ambiguous from this line's perspective appears only in its qualified form(s), and a
-   *  name only this line itself has (nothing else to resolve to) doesn't appear at all. */
-  suggestions(fromLineId: string): string[];
+  /** Autocomplete entries for a formula being edited on `fromLineId`: every other named line,
+   *  once each, in schema order (the caller filters and ranks by what's typed). Never the line
+   *  itself — a bare self-reference wouldn't resolve, and it would self-cycle anyway. */
+  suggestions(fromLineId: string): NameSuggestion[];
+  /** How many leading characters of `matchedText` are a "Section." qualifier (0 when it isn't a
+   *  qualified reference) — lets the formula editor show the qualifier less prominently than the
+   *  line name that follows it. */
+  qualifierLength(matchedText: string): number;
   /** Current display name for a driver — used by formatFormula to render a driverRef node. No
    *  ambiguity/qualification concept (unlike describe()), since a driver is never resolved from
    *  typed text — this is display-only. */
@@ -60,8 +78,8 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
   const candidateList: Candidate[] = [];
   for (const { line, section } of entries) {
     if (!line.name.trim()) continue;
-    candidateList.push({ text: line.name, lineId: line.id, qualified: false });
-    candidateList.push({ text: `${section.name}.${line.name}`, lineId: line.id, qualified: true });
+    candidateList.push({ text: line.name, lineId: line.id, qualified: false, qualifierLength: 0 });
+    candidateList.push({ text: `${section.name}.${line.name}`, lineId: line.id, qualified: true, qualifierLength: section.name.length + 1 });
   }
 
   return {
@@ -92,29 +110,24 @@ export function buildNameIndex(schema: NameIndexInput): NameIndex {
     },
 
     suggestions(fromLineId) {
-      const seen = new Set<string>();
-      const result: string[] = [];
-      for (const group of byNameKey.values()) {
-        const remaining = group.filter((g) => g.lineId !== fromLineId);
-        if (remaining.length === 0) continue; // only this line has the name — nothing to resolve to
-        if (remaining.length === 1) {
-          const target = entries.find((e) => e.line.id === remaining[0].lineId)!;
-          if (!seen.has(target.line.name)) {
-            seen.add(target.line.name);
-            result.push(target.line.name);
-          }
-        } else {
-          for (const g of remaining) {
-            const target = entries.find((e) => e.line.id === g.lineId)!;
-            const qualified = `${g.sectionName}.${target.line.name}`;
-            if (!seen.has(qualified)) {
-              seen.add(qualified);
-              result.push(qualified);
-            }
-          }
-        }
+      const result: NameSuggestion[] = [];
+      for (const { line, section } of entries) {
+        if (line.id === fromLineId || !line.name.trim()) continue;
+        const qualified = (byNameKey.get(line.name.trim().toLowerCase()) ?? []).length > 1;
+        result.push({
+          lineId: line.id,
+          name: line.name,
+          sectionName: section.name,
+          insertText: qualified ? `${section.name}.${line.name}` : line.name,
+          qualified,
+        });
       }
       return result;
+    },
+
+    qualifierLength(matchedText) {
+      const lower = matchedText.toLowerCase();
+      return candidateList.find((c) => c.qualified && c.text.toLowerCase() === lower)?.qualifierLength ?? 0;
     },
 
     describeDriver(driverId) {
@@ -255,6 +268,12 @@ function lastActualOf(inner: ResolvedFormula): ResolvedFormula {
 
 /** A pure carry-forward: this period repeats the line's own immediately preceding value. No
  *  driver at all — 'flat' needs no per-period assumption to hold constant. */
+/** A Link projection — the line simply reads another line, period for period (negated when
+ *  `flipSign`). */
+export function buildLinkFormula(basisLineId: string, flipSign = false): ResolvedFormula {
+  return flipSign ? { kind: 'neg', arg: ref(basisLineId) } : ref(basisLineId);
+}
+
 export function buildFlatFormula(lineId: string): ResolvedFormula {
   return priorPeriodOf(ref(lineId));
 }
@@ -288,7 +307,7 @@ export function buildRollOffFormula(lineId: string, driverId: string): ResolvedF
 }
 
 /** The driver IS the value — a per-period hardcoded number, no computation at all. */
-export function buildActualFormula(driverId: string): ResolvedFormula {
+export function buildHardcodeFormula(driverId: string): ResolvedFormula {
   return driverRef(driverId);
 }
 

@@ -68,6 +68,7 @@ import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
+import { effectiveLineKind } from '../lib/statementLineChildren';
 
 interface ModelWorkspaceScreenProps {
   company: Company;
@@ -138,8 +139,9 @@ const COMPARE_METRIC_CONCEPTS: SummaryConcept[] = [
 /**
  * The current model's live view — a drivers panel over the projected periods, statement
  * sub-tabs over the full period grid, both reading the model's persisted historicals plus
- * every calculated line's live value from the engine (mapped-value-wins, formula as fallback —
- * see lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
+ * every calculated line's live value from the engine (a sourced line's mapped value wins,
+ * its formula is the fallback; a calculated line is all formula — see
+ * lib/engine/evaluate.ts's computeLine). No history/read-only mode yet (that's phase 07,
  * once Snapshot exists) — this is always today's current model.
  */
 
@@ -167,7 +169,7 @@ interface DriverRow {
   unit?: string;
   /** Only set alongside driverId, for a row whose method has a well-defined implied historical
    *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
-   *  driver-less row, or an 'actual'/'roll-off' child projection, all of which show a plain
+   *  driver-less row, or a 'hardcode'/'roll-off' projection, all of which show a plain
    *  dash in historical columns instead of an implied number. */
   targetLineId?: string;
   method?: ProjectionMethod;
@@ -892,9 +894,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             </span>
           );
         }
-        // evaluation already applies mapped-value-wins-else-formula for every line uniformly —
-        // status/badge columns elsewhere already say whether a line is calculated, so the value
-        // itself doesn't need a second color cue on top of that. A lineKind 'check' line is the
+        // evaluation already applies the right rule for each role — status/badge columns
+        // elsewhere already say whether a line is calculated, so the value itself doesn't need a
+        // second color cue on top of that. A Check line is the
         // one deliberate exception — its whole purpose is to flag its own computed value.
         const value = evaluation?.getValue(row.line.id, i) ?? null;
         const checkStatus = getCheckStatus(row.line, value);
@@ -995,6 +997,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const sectionStartIndex = driverRows.length;
     for (const line of section.lines) {
       if (line.parentLineId !== undefined) continue; // rendered as a child below its parent, not its own top-level row
+      // Debt is handled by the Debt Schedule, not projected with drivers — nothing to show here.
+      if (effectiveLineKind(schema, line) === 'debt') continue;
       const ownDriver = schemaDriverByLineId.get(line.id);
       const children = line.allowsSubLines ? (childLinesByParentId.get(line.id) ?? []) : [];
       if (!ownDriver && children.length === 0) continue;

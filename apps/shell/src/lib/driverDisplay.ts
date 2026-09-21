@@ -11,7 +11,7 @@ import type { LineValues } from './computedCache';
  *  any period actually evaluates to — evaluateModel's own driverValue()/defaultDriverValue()
  *  logic (lib/engine/evaluate.ts) is untouched.
  *
- *  'actual' and 'roll-off' have no defined single-period ratio — an 'actual' driver IS a
+ *  'hardcode' and 'roll-off' have no defined single-period ratio — a 'hardcode' driver IS a
  *  hardcoded absolute number with nothing to imply, and 'roll-off' anchors once to the last
  *  actual period rather than varying per period — so both simply return null, same as any other
  *  uncomputable cell. */

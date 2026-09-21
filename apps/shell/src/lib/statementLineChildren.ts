@@ -1,6 +1,6 @@
 import type { DriverDefinition, ProjectionMethod, ResolvedFormula, StatementLine, StatementSchema } from '../data/types';
 import {
-  buildActualFormula,
+  buildHardcodeFormula,
   buildDaysFormula,
   buildFlatFormula,
   buildGrowthFormula,
@@ -40,7 +40,7 @@ export function childrenOf(schema: StatementSchema, parentLineId: string): State
 /** A child's effective kind is always its parent's, walked live off the schema — never
  *  independently stored on the child (see StatementLine.lineKind's own doc comment), so it can
  *  never drift out of sync with the parent. */
-export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | 'check' | undefined {
+export function effectiveLineKind(schema: StatementSchema, line: StatementLine): 'debt' | undefined {
   if (!line.parentLineId) return line.lineKind;
   const parent = findLine(schema, line.parentLineId);
   return parent ? effectiveLineKind(schema, parent) : undefined;
@@ -73,7 +73,7 @@ export function addChildLine(
   const newLine: StatementLine = {
     id: newId,
     name,
-    required: false,
+    role: 'optional',
     rowFormat: 'normal',
     numberFormat: 'number',
     sign: 'natural',
@@ -204,7 +204,7 @@ export function removeRollOffContra(schema: StatementSchema, childLineId: string
 export type ChildProjectionSelection =
   | { method: 'flat' }
   | { method: 'growth' }
-  | { method: 'actual' }
+  | { method: 'hardcode' }
   | { method: 'percent-of' | 'days-of' | 'roll-off'; basisLineId: string };
 
 const DRIVER_UNIT: Record<Exclude<ProjectionMethod, 'flat'>, string> = {
@@ -212,7 +212,7 @@ const DRIVER_UNIT: Record<Exclude<ProjectionMethod, 'flat'>, string> = {
   'percent-of': '%',
   'days-of': 'days',
   'roll-off': '%',
-  actual: '',
+  hardcode: '',
 };
 
 /** The single entry point for changing a child line's projection method — computes and writes
@@ -239,7 +239,7 @@ export function setChildProjection(schema: StatementSchema, lineId: string, sele
   }
 
   const driverId = crypto.randomUUID();
-  if (selection.method === 'growth' || selection.method === 'actual') {
+  if (selection.method === 'growth' || selection.method === 'hardcode') {
     const driver: DriverDefinition = {
       id: driverId,
       name: `${line.name || 'Line'} ${selection.method === 'growth' ? 'Growth Rate' : 'Value'}`,
@@ -248,7 +248,7 @@ export function setChildProjection(schema: StatementSchema, lineId: string, sele
       method: selection.method,
     };
     next = { ...next, drivers: [...next.drivers, driver] };
-    const formula = selection.method === 'growth' ? buildGrowthFormula(lineId, driverId) : buildActualFormula(driverId);
+    const formula = selection.method === 'growth' ? buildGrowthFormula(lineId, driverId) : buildHardcodeFormula(driverId);
     return mapLines(next, (l) => (l.id === lineId ? { ...l, formula, projection: { method: selection.method, driverId } } : l));
   }
 

@@ -1,5 +1,4 @@
 import type { LineMapping, LineNumberFormat, MatchMethod, StatementLine } from '../../../data';
-import { isCalculated } from '../../../lib/engine/resolve';
 
 type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
 
@@ -32,16 +31,14 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
   return mapping.confidence < REVIEW_THRESHOLD;
 }
 
-/** Required and still unmapped — the red dot / save-blocking condition. A purely structural
- *  formula (no `projection`) is never "missing", same reasoning as getRequiredMeta — but a
- *  projection-carrying line still needs a real mapped value for its actual periods, the
- *  projection formula only ever covering periods without one. */
-export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined): boolean {
-  if (isCalculated(target) && !target.projection) return false;
-  if (!target.required) return false;
+/** Required and still unmapped — the red dot / save-blocking condition. Only a line whose role is
+ *  Required can be missing: Optional, Calculated and Check lines never are. A parent that sums
+ *  real sub-lines (`hasChildren`) isn't either — its own mapping is inactive while they exist. */
+export function isMissingRequired(target: StatementLine, mapping: LineMapping | undefined, hasChildren = false): boolean {
+  if (hasChildren || target.role !== 'required') return false;
   return !mapping || mapping.sourceLineIds.length === 0;
 }
 
-export function needsReview(target: StatementLine, mapping: LineMapping | undefined): boolean {
-  return isMissingRequired(target, mapping) || isLowConfidence(mapping);
+export function needsReview(target: StatementLine, mapping: LineMapping | undefined, hasChildren = false): boolean {
+  return isMissingRequired(target, mapping, hasChildren) || isLowConfidence(mapping);
 }

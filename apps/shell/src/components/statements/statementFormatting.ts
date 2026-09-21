@@ -1,8 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine } from '../../data';
-import { isCalculated } from '../../lib/engine/resolve';
 
-type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
+type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'violet' | 'brand';
 
 export const ROW_FORMAT_META: Record<LineRowFormat, { label: string; tone: BadgeTone }> = {
   normal: { label: 'Normal', tone: 'neutral' },
@@ -21,25 +20,33 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
   absolute: { label: 'Absolute', tone: 'caution' },
 };
 
-/** Required/Optional is a manual choice, overridden by "Calculated" only for a genuine
- *  structural formula (Gross Profit-style — never meant to be sourced). A line with a
- *  `projection` method is still normally-sourced (it needs a real mapped value for every actual
- *  period) even though it also carries a formula — that formula only ever governs its future
- *  periods, so it keeps showing Required/Optional rather than being folded into "Calculated". */
+/** The "Role" column's badge. */
 export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
-  if (isCalculated(line) && !line.projection) return { label: 'Calculated', tone: 'positive' };
-  return line.required ? { label: 'Required', tone: 'caution' } : { label: 'Optional', tone: 'neutral' };
+  // A Debt Schedule line is generated, not authored — its own chip, distinct from a hand-written calculation.
+  if (line.debtScheduleRole) return { label: 'Generated', tone: 'violet' };
+  switch (line.role) {
+    case 'calculated':
+      return { label: 'Calculated', tone: 'positive' };
+    case 'linked':
+      return { label: 'Linked', tone: 'info' };
+    case 'check':
+      return { label: 'Check', tone: 'info' };
+    case 'required':
+      return { label: 'Required', tone: 'caution' };
+    case 'optional':
+      return { label: 'Optional', tone: 'neutral' };
+  }
 }
 
-/** Applied when a lineKind 'check' line sets no checkTolerance of its own. */
+/** Applied when a Check line sets no checkTolerance of its own. */
 export const DEFAULT_CHECK_TOLERANCE = 0.001;
 
 /** 'unknown' means "not yet computable" (e.g. the first period, with no prior period to diff
  *  against, or a divide-by-zero guard upstream returning null) — never a failure. Only
- *  meaningful for a lineKind === 'check' line; every other line is always 'unknown'. */
+ *  meaningful for a Check line; every other line is always 'unknown'. */
 export type CheckStatus = 'pass' | 'fail' | 'unknown';
 export function getCheckStatus(line: StatementLine, value: number | null): CheckStatus {
-  if (line.lineKind !== 'check' || value === null) return 'unknown';
+  if (line.role !== 'check' || value === null) return 'unknown';
   return Math.abs(value) > (line.checkTolerance ?? DEFAULT_CHECK_TOLERANCE) ? 'fail' : 'pass';
 }
 

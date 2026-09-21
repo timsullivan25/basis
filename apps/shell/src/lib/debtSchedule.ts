@@ -2,7 +2,7 @@ import type { DebtScheduleRole, DriverDefinition, PeriodType, ResolvedFormula, S
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 import { findSummaryLine } from './summaryLines';
 import {
-  buildActualFormula,
+  buildHardcodeFormula,
   buildCashAvailableForRepaymentFormula,
   buildCashShortfallFormula,
   buildDebtAmortizationFormula,
@@ -101,12 +101,12 @@ export function regenerateDebtSchedule(
       name: 'Minimum Cash Target',
       unit: '',
       targetLineId: minCashTargetId,
-      method: 'actual',
+      method: 'hardcode',
     };
     generatedLines.push({
       ...blankLine(minCashTargetId, 'Minimum Cash Target', { role: 'minimumCashTarget' }),
-      formula: buildActualFormula(minCashTargetDriverId),
-      projection: { method: 'actual', driverId: minCashTargetDriverId },
+      formula: buildHardcodeFormula(minCashTargetDriverId),
+      projection: { method: 'hardcode', driverId: minCashTargetDriverId },
     });
     generatedLines.push({
       ...blankLine(cashAvailableId, 'Cash Available for Repayment', { role: 'cashAvailableForRepayment' }),
@@ -243,7 +243,24 @@ export function regenerateDebtSchedule(
   return next;
 }
 
+/** regenerateDebtSchedule for a bare template, which has no timeline or model settings to read:
+ *  annual periods and no circular calcs, the same assumption createDefaultStatementSchema seeds
+ *  its own schedule with. Those two only change constants inside the generated formulas (per-
+ *  period proration, avg-vs-beginning balance) — never which lines exist or their ids — and a
+ *  model regenerates with its real values the moment it forks the template, so nothing here
+ *  needs to be right about them. Safe to call on every edit: idempotent, and every generated
+ *  line's id is stable (see regenerateDebtSchedule), so a formula referencing one keeps working. */
+export function regenerateTemplateDebtSchedule(schema: StatementSchema): StatementSchema {
+  return regenerateDebtSchedule(schema, periodsPerYearFor('FY'), false);
+}
+
 const SECTION_NAME = 'Debt Schedule';
+
+/** True for the auto-generated Debt Schedule section — read-only in the template editor apart
+ *  from moving the section itself. */
+export function isDebtScheduleSection(section: StatementSection): boolean {
+  return section.id === 'debtSchedule:section' || section.lines.some((l) => l.debtScheduleRole !== undefined);
+}
 /** Fallback ids, used only the very first time a given schedule-level role has never existed in
  *  a schema before (see regenerateDebtSchedule's own doc comment and resolveScheduleLevelId) —
  *  never assumed to be a role's CURRENT id once a schema has been cloned. The three totals are
@@ -303,7 +320,7 @@ function blankLine(id: string, name: string, role: { trancheLineId?: string; rol
   return {
     id,
     name,
-    required: false,
+    role: 'calculated',
     rowFormat: TOTAL_ROLES.has(role.role) ? 'total' : 'normal',
     numberFormat: 'number',
     sign: 'natural',
