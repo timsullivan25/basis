@@ -95,13 +95,13 @@ never changed.
    statement section. Empty answers are allowed and preferred to guesses.
 2. **Consolidate** (`suggestConsolidations.ts`): unmapped, non-empty source lines that belong *added* onto an
    existing match (Goodwill onto an Intangibles match). One request per section, pairing a target section with the
-   imported section of the same name, so a Balance Sheet line is only offered to Balance Sheet targets. Code
-   rejects an addition that just adds up to what the target already reports (its own components — Operating Income
-   plus Depreciation against a mapped EBITDA), and the checks referee the pass: a section whose check gets worse
-   under the additions has them undone.
+   imported section of the same name, so a Balance Sheet line is only offered to Balance Sheet targets. Only targets
+   that are unmapped or hold a weak match are offered; exact, alias, prior and sure-AI matches are settled and left
+   alone (Calculated, Linked and Check lines are never mapped at all). The checks referee the pass: a section whose
+   check gets worse under the additions has them undone.
 3. **Checks** (`reviewChecks.ts`): failing check lines mark sections where something is missing. Code searches for
    sets of up to three unmapped lines whose values close the gap in every period (arithmetic, so code's job), and
-   consolidation is asked again for those sections only, with the gap and any closing lines as evidence. A check
+   consolidation is asked again for those sections only, this time including settled matches, with the gap and any closing lines as evidence. A check
    still failing is reported at the end.
 
 **Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,

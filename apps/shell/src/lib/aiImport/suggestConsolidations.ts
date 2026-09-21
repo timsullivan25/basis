@@ -46,6 +46,13 @@ const latest = (line: ParsedSourceLine, lastIndex: number): string => {
   return v === null || v === undefined ? 'blank' : String(v);
 };
 
+/** A match not worth second-guessing without evidence: the user's own, an exact/alias/prior name hit, or an AI match it was sure of. Weak matches (fuzzy, unsure AI) and unmapped targets are open. */
+export function isSettledMatch(mapping: LineMapping | undefined): boolean {
+  if (!mapping || mapping.sourceLineIds.length === 0) return false;
+  if (mapping.approved || mapping.method === 'manual' || mapping.method === 'exact' || mapping.method === 'alias' || mapping.method === 'prior') return true;
+  return mapping.method === 'ai' && mapping.confidence >= CONFIDENCE.high;
+}
+
 /** True when the line carries any non-zero number — an all-zero or blank line has nothing to consolidate. */
 export function hasValue(line: ParsedSourceLine): boolean {
   return line.values.some((v) => v !== null && v !== 0);
@@ -60,6 +67,8 @@ export function unmappedSourceLines(workbook: ParsedWorkbook, mapping: Record<st
 export interface ConsolidationOptions {
   /** Restrict to these target sections (by id) — the checks pass uses this to look only where a check is failing. */
   onlySectionIds?: ReadonlySet<string>;
+  /** Also offer targets whose match is already settled (see isSettledMatch). Off for the general pass; the checks pass turns it on for a section whose check shows something is missing. */
+  includeSettled?: boolean;
   /** Extra text shown to the model for a target section (id -> text): the failing check, its gap, and lines that would close it. */
   evidenceBySectionId?: ReadonlyMap<string, string>;
 }
@@ -68,7 +77,7 @@ export interface ConsolidationOptions {
  * Looks for unmapped imported lines that belong ADDED to a target that is already mapped (Goodwill onto an
  * Intangibles match; an extra debt line onto a debt target). One request per statement section, pairing a
  * target section with the imported section of the same name — so a big import stays small and a Balance
- * Sheet line is only ever offered to Balance Sheet targets. Targets the user set or approved are left alone.
+ * Sheet line is only ever offered to Balance Sheet targets. Targets the user set or approved are left alone, and so are settled matches unless `includeSettled` is set.
  * Returns the full new mapping (old sources plus additions, method 'ai', flagged) only for targets it changed.
  */
 export async function suggestConsolidations(
@@ -89,6 +98,7 @@ export async function suggestConsolidations(
   const targetsBySection = new Map<string, MappingTarget[]>();
   for (const t of targets) {
     if (options.onlySectionIds && !options.onlySectionIds.has(t.section.id)) continue;
+    if (!options.includeSettled && isSettledMatch(mapping[t.line.id])) continue;
     targetsBySection.set(t.section.id, [...(targetsBySection.get(t.section.id) ?? []), t]);
   }
 
@@ -126,7 +136,6 @@ export async function suggestConsolidations(
       for (const [targetId, add] of Object.entries(parsed)) {
         const before = mapping[targetId];
         const existing = before?.sourceLineIds ?? [];
-        if (decomposes(add.sources, existing, sourceById)) continue;
         const names = add.sources.map((id) => sourceById.get(id)?.name ?? id).join(', ');
         result[targetId] = {
           targetLineId: targetId,
@@ -140,21 +149,6 @@ export async function suggestConsolidations(
     }),
   );
   return result;
-}
-
-/** Lines that add up to what the target already reports are that figure's own components (Operating Income plus Depreciation, against a mapped EBITDA), not more of it — adding them would count it twice. */
-export function decomposes(added: string[], existing: string[], byId: ReadonlyMap<string, ParsedSourceLine>): boolean {
-  if (existing.length === 0) return false;
-  const total = (ids: string[], i: number) => ids.reduce((sum, id) => sum + (byId.get(id)?.values[i] ?? 0), 0);
-  const periods = byId.get(existing[0])?.values.length ?? 0;
-  let compared = 0;
-  for (let i = 0; i < periods; i++) {
-    const have = total(existing, i);
-    if (have === 0) continue;
-    if (Math.abs(total(added, i) - have) > Math.max(0.05, Math.abs(have) * 0.0005)) return false;
-    compared++;
-  }
-  return compared > 0;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

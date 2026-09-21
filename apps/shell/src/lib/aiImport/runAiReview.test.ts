@@ -65,7 +65,7 @@ describe('runAiReview', () => {
       return req.prompt.includes('CHECK FAILING') ? { additions: [] } : { additions: [{ target: 'assets', sources: ['noise'], confidence: 'high', reason: 'Other assets.' }] };
     });
     const balanced = { ...workbook, lines: workbook.lines.map((l) => (l.id === 'l' ? { ...l, values: [100 - 40, 120 - 50] } : l)) };
-    const start = { assets: mapped('assets', ['a']), liab: mapped('liab', ['l', 'x']) };
+    const start = { assets: { ...mapped('assets', ['a']), method: 'fuzzy' as const, confidence: 0.7 }, liab: mapped('liab', ['l', 'x']) };
     const result = await runAiReview({ provider, schema, targets, workbook: balanced, mapping: start, isSettled: settled });
     expect(result.reverted).toEqual(['Balance Sheet']);
     expect(result.mapping.assets.sourceLineIds).toEqual(['a']);

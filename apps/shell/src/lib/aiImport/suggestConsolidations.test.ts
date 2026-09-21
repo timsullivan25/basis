@@ -52,16 +52,18 @@ describe('suggestConsolidations', () => {
     expect(none.requests).toHaveLength(0);
   });
 
-  it("skips additions that are the existing match's own components (would count it twice)", async () => {
-    const wb: ParsedWorkbook = {
-      periods: [{ type: 'FY', date: '', name: 'FY24' }],
-      lines: [
-        { id: 'ebitda', section: 'Balance Sheet', name: 'Reported EBITDA', values: [828.7] },
-        { id: 'ebit', section: 'Balance Sheet', name: 'Income From Operations', values: [71.5] },
-        { id: 'dep', section: 'Balance Sheet', name: 'Depreciation', values: [757.2] },
-      ],
-    };
-    const provider = new FakeLlmProvider({ additions: [{ target: 'gi', sources: ['ebit', 'dep'], confidence: 'high', reason: 'x' }] });
-    expect(await suggestConsolidations(provider, targets, wb, { gi: m('gi', ['ebitda']) })).toEqual({});
+  it('leaves settled matches alone unless asked, but offers unmapped and weak ones', async () => {
+    const settledAll = { gi: m('gi', ['intang'], { method: 'exact', confidence: 1 }), cash: m('cash', ['cashsrc'], { method: 'ai', confidence: 0.75 }) };
+    const quiet = new FakeLlmProvider({ additions: [] });
+    await suggestConsolidations(quiet, targets, workbook, settledAll);
+    expect(quiet.requests).toHaveLength(0);
+    const forced = new FakeLlmProvider({ additions: [] });
+    await suggestConsolidations(forced, targets, workbook, settledAll, { includeSettled: true });
+    expect(forced.requests[0].prompt).toContain('name=Goodwill & Intangibles');
+    const weak = new FakeLlmProvider({ additions: [] });
+    await suggestConsolidations(weak, targets, workbook, { gi: m('gi', ['intang']), cash: m('cash', ['cashsrc'], { method: 'ai', confidence: 0.6 }) });
+    const prompt = weak.requests[0].prompt;
+    expect(prompt).toContain('name=Goodwill & Intangibles');
+    expect(prompt).toContain('name=Cash');
   });
 });

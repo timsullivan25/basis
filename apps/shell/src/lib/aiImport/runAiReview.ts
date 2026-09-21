@@ -38,9 +38,10 @@ export interface AiReviewInput {
 /**
  * The mapping review: three passes in order, each flagging what it changes for a person to check.
  * 1. Fill — unmapped and tied targets, from unmapped source lines.
- * 2. Consolidate — unmapped source lines that belong added onto an existing match (Goodwill onto Intangibles).
+ * 2. Consolidate — unmapped source lines that belong added onto an existing weak match (Goodwill onto Intangibles).
+ *    Settled matches (exact, alias, prior, sure AI) are left alone here.
  * 3. Checks — with the mapping as it now stands, any failing check line marks a section where something is
- *    missing; consolidation is asked again, there only, with the gap and any lines that close it as evidence.
+ *    missing; consolidation is asked again, there only and including settled matches, with the gap and any lines that close it as evidence.
  *    A check still failing afterwards is reported, not hidden.
  */
 export async function runAiReview(input: AiReviewInput): Promise<AiReviewResult> {
@@ -78,7 +79,7 @@ export async function runAiReview(input: AiReviewInput): Promise<AiReviewResult>
       const text = checkEvidenceText(check, workbook, candidatesForCheck(check, workbook, mapping));
       evidenceBySectionId.set(check.section.id, [evidenceBySectionId.get(check.section.id), text].filter(Boolean).join('\n'));
     }
-    const fixes = await suggestConsolidations(provider, targets, workbook, mapping, { onlySectionIds: new Set(evidenceBySectionId.keys()), evidenceBySectionId });
+    const fixes = await suggestConsolidations(provider, targets, workbook, mapping, { onlySectionIds: new Set(evidenceBySectionId.keys()), evidenceBySectionId, includeSettled: true });
     changedByChecks = Object.keys(fixes).length;
     mapping = { ...mapping, ...fixes };
   }
