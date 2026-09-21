@@ -5,7 +5,7 @@ import { parseBasisTemplate, TemplateParseError } from '../../lib/parseBasisTemp
 
 const TEMPLATE_OPTIONS = [
   { value: 'basis-template', label: 'Basis Template' },
-  { value: 'extract-ai', label: 'Extract with AI (coming soon)', disabled: true },
+  { value: 'extract-ai', label: 'Extract with AI (any Excel model)' },
 ];
 
 function formatFileSize(bytes: number): string {
@@ -40,6 +40,26 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
     onClose();
   }
 
+  /** A Basis Template upload must parse as one right now; an AI-extracted upload can be any workbook, so only its extension is checked. */
+  function validate(picked: File, type: ModelTemplateType) {
+    if (type === 'extract-ai') {
+      setFileError(null);
+      setValidating(false);
+      return;
+    }
+    setFileError(null);
+    setValidating(true);
+    parseBasisTemplate(picked)
+      .then(() => setFileError(null))
+      .catch((err) => setFileError(err instanceof TemplateParseError ? err.message : 'Could not read this file.'))
+      .finally(() => setValidating(false));
+  }
+
+  function handleTypeChange(type: ModelTemplateType) {
+    setTemplateType(type);
+    if (file) validate(file, type);
+  }
+
   function handleFilesSelected(files: File[]) {
     const picked = files[0];
     if (!picked) return;
@@ -49,12 +69,7 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
       return;
     }
     setFile(picked);
-    setFileError(null);
-    setValidating(true);
-    parseBasisTemplate(picked)
-      .then(() => setFileError(null))
-      .catch((err) => setFileError(err instanceof TemplateParseError ? err.message : 'Could not read this file.'))
-      .finally(() => setValidating(false));
+    validate(picked, templateType);
   }
 
   function handleContinue() {
@@ -93,9 +108,15 @@ export function CreateModelDialog({ open, companyName, onClose, onContinue }: Cr
             size="sm"
             options={TEMPLATE_OPTIONS}
             value={templateType}
-            onChange={(e) => setTemplateType(e.target.value as ModelTemplateType)}
+            onChange={(e) => handleTypeChange(e.target.value as ModelTemplateType)}
           />
         </Field>
+
+        {templateType === 'extract-ai' ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+            Upload any Excel financial model. Basis will find the historical statements, show you what it found to review, and then continue into the usual mapping step.
+          </span>
+        ) : null}
 
         <Field label="Model file" error={fileError ?? undefined} hint={!fileError && validating ? 'Checking the file…' : undefined}>
           {file ? (

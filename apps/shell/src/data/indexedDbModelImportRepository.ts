@@ -10,15 +10,17 @@ export class IndexedDbModelImportRepository implements ModelImportRepository {
 
   async create(input: CreateModelImportInput): Promise<ModelImport> {
     const db = await openBasisDb();
+    const root = input.originalFile ?? input.file;
     const modelImport: ModelImport = {
       id: crypto.randomUUID(),
       companyId: input.companyId,
       templateType: input.templateType,
       statementSchemaId: input.statementSchemaId,
-      fileName: input.file.name,
-      fileSize: input.file.size,
+      fileName: root.name,
+      fileSize: root.size,
       uploadedAt: new Date().toISOString(),
       file: input.file,
+      ...(input.originalFile ? { originalFile: input.originalFile } : {}),
     };
     await db.add('modelImports', modelImport);
     return modelImport;

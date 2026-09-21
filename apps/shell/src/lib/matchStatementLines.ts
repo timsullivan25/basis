@@ -2,7 +2,8 @@ import type { LineMapping, ParsedSourceLine, StatementLine, StatementSection } f
 
 const FUZZY_THRESHOLD = 0.6;
 
-function normalize(value: string): string {
+/** Case/punctuation/whitespace-insensitive form of a line name, shared with the AI importer's evidence scan so both agree on what "matches". */
+export function normalize(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 

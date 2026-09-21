@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Dialog, Icon, IconButton } from '@basis/design-system';
 import {
   computedResultRepository,
@@ -22,6 +22,8 @@ import {
   type LineValues,
 } from '../../lib/computedCache';
 import { evaluateModel } from '../../lib/engine/evaluate';
+import { createDefaultStatementSchema } from '../../data/defaultStatementSchema';
+import { AiImportScreen } from './aiImport/AiImportScreen';
 import { CreateModelDialog } from './CreateModelDialog';
 import { SummaryPanel } from './SummaryPanel';
 import type { ModelMappingScreenProps } from './mapping/ModelMappingScreen';
@@ -63,6 +65,8 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
   const [modelSchema, setModelSchema] = useState<StatementSchema | null>(null);
   const [summaryResult, setSummaryResult] = useState<LineValues | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // The upload currently being reviewed by the AI importer (null when that dialog is closed).
+  const [aiFile, setAiFile] = useState<File | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -100,6 +104,10 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
     };
   }, [company.id]);
 
+  // Line names and aliases the AI importer scores sheets against: the first template, like the
+  // mapping screen's default choice — falling back to the seeded default if none has loaded.
+  const aiSections = useMemo(() => schemas?.[0]?.sections ?? createDefaultStatementSchema().sections, [schemas]);
+
   async function handleDelete() {
     if (!model) return;
     setDeleting(true);
@@ -129,7 +137,7 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
     setSummaryResult(schema ? await readOrComputeResult(savedModel, schema) : null);
   }
 
-  function startNewImport(input: { templateType: ModelTemplateType; file: File }) {
+  function startNewImport(input: { templateType: ModelTemplateType; file: File; originalFile?: File }) {
     if (!schemas) return;
     onOpenMapping({
       company,
@@ -225,9 +233,24 @@ export function FinancialsTab({ company, onOpenMapping, onOpenWorkspace }: Finan
         onClose={() => setDialogOpen(false)}
         onContinue={(input) => {
           setDialogOpen(false);
-          startNewImport(input);
+          if (input.templateType === 'extract-ai') setAiFile(input.file);
+          else startNewImport(input);
         }}
       />
+
+      {aiFile ? (
+        <AiImportScreen
+          file={aiFile}
+          companyName={company.name}
+          sections={aiSections}
+          onCancel={() => setAiFile(null)}
+          onDone={(templateFile) => {
+            const original = aiFile;
+            setAiFile(null);
+            startNewImport({ templateType: 'extract-ai', file: templateFile, originalFile: original });
+          }}
+        />
+      ) : null}
 
       <Dialog
         open={deleteConfirmOpen}
