@@ -1,6 +1,7 @@
 import type { StatementSchema, StatementSchemaRepository } from './types';
 import { openBasisDb } from './db';
 import { createDefaultStatementSchema } from './defaultStatementSchema';
+import { createBundledTemplates } from './templates';
 import { cloneStatementSchemaStructure } from '../lib/statementSchemaClone';
 
 /** First StatementSchemaRepository adapter. Swap for an API-backed one later without touching callers. */
@@ -18,9 +19,9 @@ export class IndexedDbStatementSchemaRepository implements StatementSchemaReposi
 
     // put (not add): concurrent calls on an empty store (e.g. two screens mounting at once)
     // all seed the same fixed id, so they converge on one row instead of racing to add duplicates.
-    const seeded = createDefaultStatementSchema();
-    await db.put('statementSchema', seeded);
-    return [seeded];
+    const seeded = [createDefaultStatementSchema(), ...createBundledTemplates()];
+    for (const schema of seeded) await db.put('statementSchema', schema);
+    return seeded;
   }
 
   async get(id: string): Promise<StatementSchema | undefined> {
