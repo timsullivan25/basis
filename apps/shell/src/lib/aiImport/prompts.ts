@@ -75,6 +75,7 @@ Rules:
 - Do not choose a line marked as already used by another target.
 - If nothing fits, return an empty "sources" list for that target. An empty answer is better than a guess.
 - Do not map subtotals or totals onto a component line, or the reverse.
+- A target that is an adjustment, delta, add-back or change is matched only by an imported line that reports that amount itself, never by a total or level. An imported "Management EBITDA" or "PF LTM Adjusted EBITDA" is a level, so it is not an EBITDA delta or adjustment. If only levels exist for such a target, return no source.
 - confidence is "high" only when you would be surprised to be wrong. "reason" is one short sentence a reviewer can check.`,
   },
   {

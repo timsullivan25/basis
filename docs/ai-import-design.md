@@ -129,6 +129,7 @@ Every prompt lives in `aiImport/prompts.ts` (`PROMPTS`, read through `getPrompt(
 them: each has its description, where it runs, the editable text, an "Edited" badge and reset to default. Only the
 instructions are editable — the output schema stays in code and every answer is still validated, so wording can be
 changed freely. Four switches turn the review passes (fill, consolidate, checks, sub-lines) on or off. Both live in
-localStorage (`aiSettings.ts`) and apply to the next run; the dev-proxy cache keys on the request, so an edited prompt
+`apps/shell/ai-settings.json`, read and written through a dev-server endpoint (`aiSettingsPlugin.ts`, same idea as the
+LLM proxy), so an edit is a reviewable change committed with the code; they apply to the next run; the dev-proxy cache keys on the request, so an edited prompt
 is never served a stale answer.
 

@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadAiSettings, setPassEnabled, setPromptOverride } from './aiSettings';
+import { initAiSettings, loadAiSettings, resetAiSettingsForTests, setPassEnabled, setPromptOverride } from './aiSettings';
 import { getPrompt, PROMPTS } from './prompts';
 
-function stubStorage() {
-  const data = new Map<string, string>();
-  vi.stubGlobal('localStorage', { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v) });
+const puts: string[] = [];
+function stubEndpoint(saved: unknown = {}) {
+  vi.stubGlobal('fetch', async (_url: string, init?: { method?: string; body?: string }) => {
+    if (init?.method === 'PUT') { puts.push(init.body ?? ''); return { ok: true, json: async () => ({}) }; }
+    return { ok: true, json: async () => saved };
+  });
 }
 
 describe('prompt registry and AI settings', () => {
-  beforeEach(stubStorage);
+  beforeEach(() => { puts.length = 0; resetAiSettingsForTests(); stubEndpoint(); });
   afterEach(() => vi.unstubAllGlobals());
 
   it('has a non-empty default for every prompt, with unique ids', () => {
@@ -34,8 +37,20 @@ describe('prompt registry and AI settings', () => {
     expect(loadAiSettings().passes.checks).toBe(false);
   });
 
-  it('falls back to defaults when storage is unavailable', () => {
-    vi.unstubAllGlobals();
+  it('writes every change to the project file through the endpoint', () => {
+    setPromptOverride('fill', 'Custom');
+    setPassEnabled('fill', false);
+    expect(JSON.parse(puts.at(-1)!)).toEqual({ prompts: { fill: 'Custom' }, passes: { fill: false, consolidate: true, checks: true, subLines: true } });
+  });
+
+  it('loads the saved file at startup, and keeps the defaults when the endpoint is missing', async () => {
+    stubEndpoint({ prompts: { fill: 'Saved' }, passes: { checks: false } });
+    await initAiSettings();
+    expect(getPrompt('fill')).toBe('Saved');
+    expect(loadAiSettings().passes.checks).toBe(false);
+    resetAiSettingsForTests();
+    vi.stubGlobal('fetch', async () => { throw new Error('no server'); });
+    await initAiSettings();
     expect(loadAiSettings().prompts).toEqual({});
   });
 });

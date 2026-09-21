@@ -1,6 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
+import { aiSettingsPlugin } from './aiSettingsPlugin.ts'
 import { llmProxyPlugin } from './llmProxyPlugin.ts'
 
 // https://vite.dev/config/
@@ -16,6 +17,7 @@ export default defineConfig(({ mode }) => {
       // through node_modules), so widen the transform to cover it instead of the
       // plugin's default `exclude: /node_modules/`.
       react({ include: /\/(src|design-system)\/.*\.[jt]sx?$/ }),
+      aiSettingsPlugin({ file: 'ai-settings.json' }),
       ...(llmConfigured
         ? [llmProxyPlugin({ baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, cacheDir: '.llm-cache' })]
         : []),
