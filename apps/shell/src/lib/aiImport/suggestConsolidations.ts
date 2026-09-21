@@ -2,6 +2,7 @@ import type { LineMapping, ParsedSourceLine, ParsedWorkbook } from '../../data';
 import { normalize } from '../matchStatementLines';
 import type { LlmProvider } from './llmProvider';
 import type { MappingTarget } from './suggestMappings';
+import { getPrompt } from './prompts';
 
 const CONFIDENCE = { high: 0.75, medium: 0.6, low: 0.4 } as const;
 type Band = keyof typeof CONFIDENCE;
@@ -28,18 +29,6 @@ export const CONSOLIDATION_SCHEMA = {
     },
   },
 } as const;
-
-export const CONSOLIDATION_PROMPT = `You are helping finish mapping an imported financial model onto a company's standard statement lines.
-Each standard ("target") line below is already mapped to zero or more imported lines, which are added together. Some imported lines from the same statement are still unmapped. Decide which unmapped lines are further components of a target line and should be ADDED to what it already sums.
-
-Rules:
-- Answer only with target ids and imported-line ids you are given. Never invent an id.
-- Add an unmapped line to a target only when it is part of the same thing the target reports. Examples: "Goodwill" added to a target "Goodwill & Intangibles" that is mapped only to "Intangible Assets"; "Restricted Cash" added to "Cash & Equivalents"; "Other Long-Term Debt" added to a "Debt" target that has one tranche; an unmapped add-back added to an EBITDA adjustments line.
-- Do not add totals, subtotals, ratios, percentages, per-share figures or other memo lines. A line that reads like a subtotal of lines already mapped is not a component.
-- Do not add a line just because it is unmapped. Many unmapped lines belong to no target; leave them.
-- A line can be added to only one target.
-- If a target already represents everything it should, add nothing to it. Returning no additions at all is a fine answer.
-- confidence is "high" only when the line clearly belongs. "reason" is one short sentence a reviewer can check.`;
 
 const latest = (line: ParsedSourceLine, lastIndex: number): string => {
   const v = line.values[lastIndex];
@@ -111,7 +100,7 @@ export async function suggestConsolidations(
         .map((l) => [`id=${l.id}`, l.group ? `group=${l.group}` : undefined, `name=${l.name}`, `latest=${latest(l, lastIndex)}`].filter(Boolean).join(' | '))
         .join('\n');
       const raw = await provider.generateStructured({
-        system: CONSOLIDATION_PROMPT,
+        system: getPrompt('consolidate'),
         prompt: `Section: ${sectionTargets[0].section.name}\n\nTarget lines:\n${targetText}\n\nUnmapped imported lines in this section:\n${sourceText}`,
         schemaName: 'mapping_consolidations',
         schema: CONSOLIDATION_SCHEMA,

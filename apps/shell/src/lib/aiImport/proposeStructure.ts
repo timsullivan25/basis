@@ -1,6 +1,7 @@
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { addChildLine, childrenOf } from '../statementLineChildren';
 import type { LlmProvider } from './llmProvider';
+import { getPrompt } from './prompts';
 
 /**
  * A change the model proposes to the schema. This is a closed vocabulary, not free-form schema JSON: each
@@ -44,22 +45,6 @@ export const STRUCTURE_SCHEMA = {
     },
   },
 } as const;
-
-const SYSTEM_PROMPT = `You are helping fit an imported financial model onto a company's standard statement structure.
-The standard statement has some "parent" lines that break down into sub-lines: revenue splits into segments, EBITDA splits into adjustments, and each debt class (secured, unsecured, ...) splits into its tranches. Some imported lines were not matched to any standard line. Decide which of those left-over lines are the sub-lines of which parent, and propose them.
-
-Rules:
-- Answer only with parent ids and imported-line ids you are given. Never invent an id.
-- Propose a sub-line only when imported lines clearly break down that parent. Focus on: revenue by segment, product or geography under a revenue parent; the matching cost of revenue by that same segment under a cost-of-revenue parent; add-backs and adjustments under an EBITDA delta line; individual loans, notes and revolvers under a debt class.
-- Cost of revenue is only broken down by segments that revenue is also broken down by. If the file gives no revenue breakdown, propose none for cost of revenue.
-- Ignore segment-level EBITDA, margin, gross profit and growth lines: they are calculations, not components.
-- Imported lines are shown in clusters by the group they sit under in the file. A group with several lines is the strongest sign of a breakdown, so consider each group before single lines.
-- A sub-line's name is a clean, short label (for example "Academia", "Restructuring", "Term Loan B"). Do not include the group or section in it.
-- One sub-line normally comes from one imported line. Use several only when they are pieces of the same item.
-- Use each imported line at most once. Do not use lines marked as used.
-- Do not propose sub-lines for totals or subtotals, ratios, or lines that belong on a standard line of their own.
-- If nothing fits a parent, propose nothing for it. No proposals at all is a fine answer.
-- confidence is "high" only when the breakdown is obvious. "reason" is one short sentence a reviewer can check.`;
 
 function describeSource(line: ParsedSourceLine, lastIndex: number): string {
   const value = line.values[lastIndex];
@@ -128,7 +113,7 @@ export async function proposeStructure(
     .join('\n');
 
   const raw = await provider.generateStructured({
-    system: SYSTEM_PROMPT,
+    system: getPrompt('subLines'),
     prompt: `Parent lines that can take sub-lines:\n${parentText}\n\nImported lines not matched to any standard line, clustered by group:\n${clusterText(leftover, lastIndex)}`,
     schemaName: 'structure_proposals',
     schema: STRUCTURE_SCHEMA,

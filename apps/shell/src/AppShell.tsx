@@ -4,6 +4,7 @@ import type { Company } from './data';
 import { ModelMappingScreen, type ModelMappingScreenProps } from './components/models/mapping/ModelMappingScreen';
 import { CompanyDetailScreen, COMPANY_DETAIL_TABS } from './screens/CompanyDetailScreen';
 import { ModelWorkspaceScreen } from './screens/ModelWorkspaceScreen';
+import { AiSettingsScreen } from './screens/AiSettingsScreen';
 import { PlaceholderScreen } from './screens/PlaceholderScreen';
 import { PortfolioScreen } from './screens/PortfolioScreen';
 import { SettingsIndexScreen } from './screens/SettingsIndexScreen';
@@ -20,7 +21,10 @@ const NAV_ITEMS: SideNavItem[] = [
     value: 'settings',
     label: 'Settings',
     icon: 'settings',
-    children: [{ value: 'settings-statements', label: 'Financial Statement Definitions' }],
+    children: [
+      { value: 'settings-statements', label: 'Financial Statement Definitions' },
+      { value: 'settings-ai', label: 'AI Import' },
+    ],
   },
 ];
 
@@ -30,6 +34,7 @@ const SCREENS: Record<string, { title: string; parent?: string }> = {
   reports: { title: 'Reports' },
   settings: { title: 'Settings' },
   'settings-statements': { title: 'Financial Statement Definitions', parent: 'settings' },
+  'settings-ai': { title: 'AI Import', parent: 'settings' },
 };
 
 const PORTFOLIO_CRUMB = 'portfolio-root';
@@ -146,6 +151,9 @@ export function AppShell() {
     }
     if (active === 'settings-statements') {
       return <StatementDefinitionsScreen />;
+    }
+    if (active === 'settings-ai') {
+      return <AiSettingsScreen />;
     }
     return <PlaceholderScreen title={screen.title} />;
   }

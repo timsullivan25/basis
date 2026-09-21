@@ -2,6 +2,7 @@ import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementSchema } f
 import type { LlmProvider } from './llmProvider';
 import { checkFormulaText, closingSubsets, type FailingCheck } from './reviewChecks';
 import type { MappingTarget } from './suggestMappings';
+import { getPrompt } from './prompts';
 
 const CONFIDENCE = { high: 0.75, medium: 0.6, low: 0.4 } as const;
 export type Band = keyof typeof CONFIDENCE;
@@ -38,19 +39,6 @@ export const CHECK_FIX_SCHEMA = {
     },
   },
 } as const;
-
-export const CHECK_FIX_PROMPT = `You are helping fix the mapping of an imported financial model onto a company's standard statement lines. A check that should equal zero does not, so the mapping is probably wrong or incomplete somewhere in this statement.
-
-Each target line below is mapped to zero or more imported lines, which are added together. You may change that: ADD an unmapped imported line to a target, REMOVE an imported line from a target (only targets marked removable), or MOVE a line by removing it from one target and adding it to another.
-
-Rules:
-- Answer only with target ids and imported-line ids you are given. Never invent an id.
-- Use the numbers. The gap is what is missing or double counted; a change should move the gap toward zero. You are told what earlier attempts did to the gap — do not repeat one that made it worse.
-- Every change must also make sense on its own. A line goes on a target because it is that kind of item, never only because the numbers tie: debt does not belong in an operating liability, and a subtotal is not a component.
-- Prefer the smallest change that explains the gap. Do not remap lines that look correct.
-- Remove a line only when it looks wrongly placed, and say why.
-- If you can see no sensible change, return no changes. That is a fine answer.
-- confidence is "high" only when the change clearly belongs. "reason" is one short sentence a reviewer can check.`;
 
 const latest = (line: ParsedSourceLine, lastIndex: number): string => {
   const v = line.values[lastIndex];
@@ -108,7 +96,7 @@ export async function proposeCheckFixes(provider: LlmProvider, request: CheckFix
   const poolText = pool.map((l) => [`id=${l.id}`, l.group ? `group=${l.group}` : undefined, `name=${l.name}`, `latest=${latest(l, lastIndex)}`].filter(Boolean).join(' | ')).join('\n');
 
   const raw = await provider.generateStructured({
-    system: CHECK_FIX_PROMPT,
+    system: getPrompt('checks'),
     prompt: [
       `CHECK: "${check.line.name}" = ${checkFormulaText(check, schema)}. It should be zero.`,
       `Values by period: ${values}.`,

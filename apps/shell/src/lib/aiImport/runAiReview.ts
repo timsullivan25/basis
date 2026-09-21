@@ -41,6 +41,8 @@ export interface AiReviewInput {
   /** A match that needs no fill pass: it has a source and isn't a tie. */
   isSettled: (mapping: LineMapping | undefined) => boolean;
   onStep?: (step: AiReviewStep) => void;
+  /** Passes to skip (from Settings). All run by default. */
+  passes?: Partial<Record<AiReviewStep, boolean>>;
 }
 
 const stub = (id: string): Omit<LineMapping, 'previous'> => ({ targetLineId: id, sourceLineIds: [], method: 'none', confidence: 0, note: '', approved: false });
@@ -69,7 +71,8 @@ function withPrevious(old: Record<string, LineMapping>, next: Record<string, Lin
  * A check that is still off is reported, never hidden.
  */
 export async function runAiReview(input: AiReviewInput): Promise<AiReviewResult> {
-  const { provider, schema, targets, workbook, isSettled, manualHistoricals = {}, onStep = () => {} } = input;
+  const { provider, schema, targets, workbook, isSettled, manualHistoricals = {}, onStep = () => {}, passes = {} } = input;
+  const runs = (step: AiReviewStep) => passes[step] !== false;
   const evaluate = (m: Record<string, LineMapping>) => evaluateChecks(schema, workbook, m, manualHistoricals);
   const gapOf = (m: Record<string, LineMapping>, checkId: string) => {
     const c = evaluate(m).find((x) => x.line.id === checkId);
@@ -78,12 +81,12 @@ export async function runAiReview(input: AiReviewInput): Promise<AiReviewResult>
   let mapping = input.mapping;
 
   onStep('fill');
-  const filled = await suggestMappings(provider, targets, workbook, mapping, isSettled);
+  const filled = runs('fill') ? await suggestMappings(provider, targets, workbook, mapping, isSettled) : {};
   mapping = withPrevious(mapping, { ...mapping, ...filled });
   const afterFill = mapping;
 
   onStep('consolidate');
-  const consolidated = await suggestConsolidations(provider, targets, workbook, mapping);
+  const consolidated = runs('consolidate') ? await suggestConsolidations(provider, targets, workbook, mapping) : {};
   mapping = withPrevious(mapping, { ...mapping, ...consolidated });
 
   onStep('checks');
@@ -95,7 +98,7 @@ export async function runAiReview(input: AiReviewInput): Promise<AiReviewResult>
   const priorGap = new Map<string, number>();
   const finished = new Set<string>();
   const fixedIds = new Set<string>();
-  for (let round = 1; round <= MAX_CHECK_ROUNDS; round++) {
+  for (let round = 1; runs('checks') && round <= MAX_CHECK_ROUNDS; round++) {
     const active = evaluate(mapping).filter((c) => checkGap(c) > 0 && !finished.has(c.line.id));
     if (active.length === 0) break;
     for (const check of active) {

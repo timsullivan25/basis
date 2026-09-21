@@ -122,3 +122,13 @@ settings and new lines/sections are later ops on the same path; settings usually
 window, so they need a second extraction window.
 
 Saving accepted matches back as aliases is deliberately not done yet.
+
+## Settings (Settings > AI Import)
+
+Every prompt lives in `aiImport/prompts.ts` (`PROMPTS`, read through `getPrompt(id)`), and the Settings screen edits
+them: each has its description, where it runs, the editable text, an "Edited" badge and reset to default. Only the
+instructions are editable — the output schema stays in code and every answer is still validated, so wording can be
+changed freely. Four switches turn the review passes (fill, consolidate, checks, sub-lines) on or off. Both live in
+localStorage (`aiSettings.ts`) and apply to the next run; the dev-proxy cache keys on the request, so an edited prompt
+is never served a stale answer.
+

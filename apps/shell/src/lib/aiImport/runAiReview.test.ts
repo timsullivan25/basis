@@ -87,4 +87,11 @@ describe('runAiReview — checks pass', () => {
     expect(result.mapping.assets.sourceLineIds).toEqual(['a']);
     expect(result.checks).toEqual([]);
   });
+
+  it('skips passes the user switched off', async () => {
+    const provider = new FakeLlmProvider({ matches: [], additions: [], changes: [] });
+    const result = await runAiReview({ provider, schema, targets, workbook, mapping: start, isSettled: settled, passes: { fill: false, consolidate: false, checks: false } });
+    expect(provider.requests).toHaveLength(0);
+    expect(result.mapping).toEqual(start);
+  });
 });

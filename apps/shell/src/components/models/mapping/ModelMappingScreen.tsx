@@ -42,6 +42,7 @@ import { MappingRowDetail } from './MappingRowDetail';
 import { applyStructureOp, proposeStructure, subLineParents, type StructureOp } from '../../../lib/aiImport/proposeStructure';
 import { StructureProposalDialog } from './StructureProposalDialog';
 import { getLlmProvider } from '../../../lib/aiImport/provider';
+import { loadAiSettings } from '../../../lib/aiImport/aiSettings';
 import { runAiReview, type AiReviewResult, type AiReviewStep } from '../../../lib/aiImport/runAiReview';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
@@ -347,6 +348,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       const result = await runAiReview({
         provider: getLlmProvider(), schema, targets: mappableLines, workbook, mapping, manualHistoricals, isSettled: isAiSettled,
         onStep: (step) => setAiState({ status: 'running', step }),
+        passes: loadAiSettings().passes,
       });
       setMapping(result.mapping);
       setAiState({ status: 'done', result, asked: aiCandidateCount });
@@ -981,7 +983,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 Needs review · {reviewLines.length}
               </Button>
             ) : null}
-            {mode === 'mapping' ? (
+            {mode === 'mapping' && (({ fill, consolidate, checks }) => fill || consolidate || checks)(loadAiSettings().passes) ? (
               <Button
                 size="sm"
                 iconLeft="sparkles"
@@ -992,7 +994,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 {aiState.status === 'running' ? `${{ fill: 'Matching', consolidate: 'Consolidating', checks: 'Checking' }[aiState.step]}…` : `Review with AI · ${aiCandidateCount}`}
               </Button>
             ) : null}
-            {mode === 'mapping' && canSuggestStructure ? (
+            {mode === 'mapping' && canSuggestStructure && loadAiSettings().passes.subLines ? (
               <Button
                 size="sm"
                 iconLeft="sparkles"

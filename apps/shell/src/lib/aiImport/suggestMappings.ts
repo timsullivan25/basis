@@ -1,5 +1,6 @@
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine, StatementSection } from '../../data';
 import type { LlmProvider } from './llmProvider';
+import { getPrompt } from './prompts';
 
 export type MappingTarget = { line: StatementLine; section: StatementSection };
 
@@ -30,18 +31,6 @@ export const MAPPING_SUGGESTION_SCHEMA = {
     },
   },
 } as const;
-
-const SYSTEM_PROMPT = `You are helping map the line items of an imported financial model onto a company's standard statement lines.
-Exact, alias and fuzzy name matching have already been tried and failed (or found several equally good candidates) for the target lines below. Your job is to find the imported line that belongs on each one.
-
-Rules:
-- Answer only with ids from the lists you are given. Never invent an id.
-- Choose the imported line that reports the same thing as the target, judging by its name, its group, its section, and its latest value. A group is the sub-heading the line sits under in the source file, so "Academia > Revenue" is segment revenue, not total revenue.
-- Prefer one imported line. Give several only when the target is genuinely the sum of them (for example a target "Cash" made up of "Cash" and "Restricted cash").
-- Do not choose a line marked as already used by another target.
-- If nothing fits, return an empty "sources" list for that target. An empty answer is better than a guess.
-- Do not map subtotals or totals onto a component line, or the reverse.
-- confidence is "high" only when you would be surprised to be wrong. "reason" is one short sentence a reviewer can check.`;
 
 function describeSource(line: ParsedSourceLine, lastIndex: number, claimedBy: string | undefined): string {
   const value = line.values[lastIndex];
@@ -90,7 +79,7 @@ export async function suggestMappings(
         .map(({ line, section }) => `id=${line.id} | section=${section.name} | name=${line.name}${line.aliases.length ? ` | also called: ${line.aliases.join(', ')}` : ''}${line.role === 'required' ? ' | required' : ''}`)
         .join('\n');
       const raw = await provider.generateStructured({
-        system: SYSTEM_PROMPT,
+        system: getPrompt('fill'),
         prompt: `Target lines to place:\n${targetText}\n\nImported lines (latest period value shown):\n${sourceText}`,
         schemaName: 'mapping_suggestions',
         schema: MAPPING_SUGGESTION_SCHEMA,
