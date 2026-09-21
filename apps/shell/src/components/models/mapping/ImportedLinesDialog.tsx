@@ -44,6 +44,7 @@ export function ImportedLinesDialog({ open, workbook, onClose }: ImportedLinesDi
                   {line.section}
                 </td>
                 <td style={{ padding: 'var(--space-3) var(--space-4)', color: 'var(--text-primary)', borderBottom: '1px solid var(--border-subtle)' }}>
+                  {line.group ? <span style={{ color: 'var(--text-tertiary)' }}>{line.group} — </span> : null}
                   {line.name}
                 </td>
                 <td

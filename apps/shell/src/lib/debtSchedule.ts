@@ -1,4 +1,4 @@
-import type { DebtScheduleRole, DriverDefinition, PeriodType, ResolvedFormula, StatementLine, StatementSchema } from '../data/types';
+import type { DebtScheduleRole, DriverDefinition, PeriodType, ResolvedFormula, StatementLine, StatementSchema, StatementSection } from '../data/types';
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 import { findSummaryLine } from './summaryLines';
 import {

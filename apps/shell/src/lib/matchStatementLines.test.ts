@@ -33,4 +33,36 @@ describe('matchStatementLines', () => {
     expect(result['Gross Profit'].sourceLineIds).toEqual([]);
     expect(result['Balance Check'].sourceLineIds).toEqual([]);
   });
+
+  describe('lines under a group', () => {
+    const grouped = (group: string | undefined, name: string): ParsedSourceLine => ({ id: `src-${group}-${name}`, section: 'IS', group, name, values: [1] });
+    const sections = (l: StatementLine): StatementSection[] => [{ id: 's', name: 'S', lines: [l] }];
+
+    it('matches on the line name alone, whatever its group', () => {
+      const result = matchStatementLines(sections(line('Revenue', 'required')), [grouped('Segment A', 'Revenue')]);
+      expect(result.Revenue.sourceLineIds).toEqual(['src-Segment A-Revenue']);
+      expect(result.Revenue.method).toBe('exact');
+      expect(result.Revenue.alternativeSourceLineIds).toBeUndefined();
+    });
+
+    it('matches an alias on the line name, ignoring the group', () => {
+      const target = { ...line('Cash', 'required'), aliases: ['Cash & Equivalents'] };
+      const result = matchStatementLines(sections(target), [grouped('Assets', 'Cash & Equivalents')]);
+      expect(result.Cash.method).toBe('alias');
+    });
+
+    it('proposes the first of several equally good matches and lists the rest as alternatives', () => {
+      const result = matchStatementLines(sections(line('Revenue', 'required')), [grouped('Segment A', 'Revenue'), grouped('Segment B', 'Revenue')]);
+      expect(result.Revenue.sourceLineIds).toEqual(['src-Segment A-Revenue']);
+      expect(result.Revenue.alternativeSourceLineIds).toEqual(['src-Segment B-Revenue']);
+    });
+
+    it('flags equally good fuzzy matches too, but not a clear best one', () => {
+      const tie = matchStatementLines(sections(line('Revenues', 'required')), [grouped('A', 'Revenue'), grouped('B', 'Revenue')]);
+      expect(tie.Revenues.method).toBe('fuzzy');
+      expect(tie.Revenues.alternativeSourceLineIds).toHaveLength(1);
+      const clear = matchStatementLines(sections(line('Revenues', 'required')), [grouped('A', 'Revenue'), grouped('B', 'Revenu')]);
+      expect(clear.Revenues.alternativeSourceLineIds).toBeUndefined();
+    });
+  });
 });

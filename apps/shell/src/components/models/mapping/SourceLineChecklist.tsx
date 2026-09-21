@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button, Checkbox, Input } from '@basis/design-system';
 import type { ParsedSourceLine, ParsedWorkbook } from '../../../data';
 import { formatPeriodValue } from './mappingFormatting';
+import { sourceLineLabel } from '../../../lib/sourceLineLabel';
 
 function normalizeSection(value: string): string {
   return value.trim().toLowerCase();
@@ -27,7 +28,7 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
   const query = search.trim().toLowerCase();
   const sameSection = normalizeSection(sectionName);
   const pool = (query ? workbook.lines : workbook.lines.filter((line) => normalizeSection(line.section) === sameSection)).filter(
-    (line) => !query || line.name.toLowerCase().includes(query),
+    (line) => !query || sourceLineLabel(line).toLowerCase().includes(query),
   );
 
   function toggle(line: ParsedSourceLine) {
@@ -79,7 +80,7 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
               <Checkbox
                 checked={sourceLineIds.includes(line.id)}
                 label={line.name}
-                description={query && normalizeSection(line.section) !== sameSection ? line.section : undefined}
+                description={[line.group, query && normalizeSection(line.section) !== sameSection ? line.section : undefined].filter(Boolean).join(' · ') || undefined}
                 onChange={() => toggle(line)}
               />
               <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-secondary)' }}>

@@ -39,7 +39,7 @@ import { ImportStepper } from '../ImportStepper';
 import { ImportedLinesDialog } from './ImportedLinesDialog';
 import { MappedLinesDialog } from './MappedLinesDialog';
 import { MappingRowDetail } from './MappingRowDetail';
-import { formatPeriodValue, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
+import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
 
@@ -624,14 +624,15 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         // but its reserved space combined with the handle's own gutter looked like a second,
         // uneven padding next to the handle — schema mode is the one place that visibly showed.
         const missing = mode === 'mapping' && !superseded && isMissingRequired(row.line, m, childCount > 0);
-        const low = mode === 'mapping' && !superseded && isLowConfidence(m);
+        const ambiguous = mode === 'mapping' && !superseded && isAmbiguous(m);
+        const low = mode === 'mapping' && !superseded && (isLowConfidence(m) || ambiguous);
         const dot = missing ? 'var(--red-600)' : low ? 'var(--violet-600)' : null;
         const rowLineStyle = getLineRowStyle(row.line);
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
             {mode === 'mapping' ? (
               <span
-                title={missing ? 'Missing required line' : low ? 'Low confidence match' : undefined}
+                title={missing ? 'Missing required line' : ambiguous ? 'Multiple matches — pick one' : low ? 'Low confidence match' : undefined}
                 style={{ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: dot ?? 'transparent' }}
               />
             ) : null}

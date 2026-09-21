@@ -76,8 +76,8 @@ drivers, scenarios and valuation/returns analysis are left out. Known limitation
 names) lose their context — addressed by **groups** below.
 
 Groups: each planned section may list titled sub-blocks (title, header row, inclusive row range; nesting by
-containment). Extraction keeps the group (nested titles joined with " › ") as its own field, separate from the line's label, so matching runs on the label alone; the Basis Template carries it in a Group column. Same-named lines under different groups match the same schema line equally well, so the match is proposed as the first, the rest are listed as alternatives, and it is flagged for review until the user picks or approves one.
-Code then flags any (group, label) pairs that *still* repeat in a section — a mechanical check for a missing group. Planned
+containment). Extraction names lines "<group> — <label>" (outermost first) so repeated labels stay distinct.
+Code then flags any names that *still* repeat in a section — a mechanical check for a missing group. Planned
 next: use that flag to trigger one targeted LLM follow-up for just that section, then re-check.
 
 Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adapter and dev proxy.

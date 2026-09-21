@@ -288,14 +288,14 @@ describe('groups — repeated labels keep their context', () => {
       ],
     }],
   };
-  const lines = (plan: SheetPlan) => extractHistoricals([SEGMENTS], planOf(plan)).workbook.lines.map((l) => [l.group, l.name]);
+  const names = (plan: SheetPlan) => extractHistoricals([SEGMENTS], planOf(plan)).workbook.lines.map((l) => l.name);
 
-  it('splits each line into its enclosing groups (outermost first) and its own label, leaving ungrouped lines alone', () => {
-    expect(lines(base)).toEqual([
-      ['Academia', 'Revenue'],
-      ['Academia › % of Revenue', 'Costs'],
-      ['Life Sciences', 'Revenue'],
-      [undefined, 'Total'],
+  it('prefixes each line with its enclosing groups, outermost first, and leaves ungrouped lines alone', () => {
+    expect(names(base)).toEqual([
+      'Academia — Revenue',
+      'Academia — % of Revenue — Costs',
+      'Life Sciences — Revenue',
+      'Total',
     ]);
   });
 

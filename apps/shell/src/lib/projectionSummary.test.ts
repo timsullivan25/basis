@@ -61,13 +61,13 @@ describe('summarizeProjection', () => {
 
   it('reads a sub-line inheriting debt as derived even if it still carries a projection', () => {
     const tranche = line('t', 'Revolver', { projection: { method: 'flat' } });
-    const index = buildNameIndex({ sections: [{ id: 's', name: 'S', lines: [tranche] }], drivers: [] });
+    const index = buildNameIndex({ sections: [{ name: 'S', lines: [tranche] }], drivers: [] });
     expect(summarizeProjection(tranche, [], index, true)).toEqual({ label: 'Debt schedule', tone: 'derived' });
   });
 
   it('summarizes a Linked line by the line it reads, and flags one that reads nothing yet', () => {
     const b = line('b', 'B');
-    const index = buildNameIndex({ sections: [{ id: 's', name: 'S', lines: [b] }], drivers: [] });
+    const index = buildNameIndex({ sections: [{ name: 'S', lines: [b] }], drivers: [] });
     const linked = (over: Partial<StatementLine>) => summarizeProjection(line('a', 'A', { role: 'linked', ...over }), [], index);
     expect(linked({ projection: { method: 'link', basisLineId: 'b' } })?.label).toBe('Linked to B');
     expect(linked({ projection: { method: 'link', basisLineId: 'b', flipSign: true } })?.label).toBe('Linked to −B');

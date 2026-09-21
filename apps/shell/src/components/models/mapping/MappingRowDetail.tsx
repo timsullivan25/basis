@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Button } from '@basis/design-system';
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
-import { isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
+import { formatPeriodValue, isAmbiguous, isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
+import { sourceLineLabel } from '../../../lib/sourceLineLabel';
 import { SourceLineChecklist } from './SourceLineChecklist';
 import { LineSettingsPanel, type LineSettingsSection } from '../../common/LineSettingsPanel';
 
 const METHOD_DESCRIPTIONS: Record<string, string> = {
   exact: 'Exact name match',
   alias: 'Alias dictionary',
+  prior: 'Mapped this way last time',
   fuzzy: 'Fuzzy match',
   ai: 'AI proposal',
   manual: 'Manual override',
@@ -121,9 +123,38 @@ export function MappingRowDetail({
 
   const sourceById = (id: string): ParsedSourceLine | undefined => workbook.lines.find((line) => line.id === id);
   const methodMeta = MATCH_METHOD_META[mapping.method];
-  const showApprove = isLowConfidence(mapping);
+  const showApprove = isLowConfidence(mapping) || isAmbiguous(mapping);
+  const candidates = isAmbiguous(mapping)
+    ? [...mapping.sourceLineIds, ...(mapping.alternativeSourceLineIds ?? [])].map(sourceById).filter((l): l is ParsedSourceLine => !!l)
+    : [];
+  const lastPeriodIndex = workbook.periods.length - 1;
 
   const sections: LineSettingsSection[] = [
+    ...(candidates.length > 0
+      ? [{
+          key: 'candidates',
+          label: 'Multiple matches',
+          summary: `${candidates.length} lines`,
+          content: (
+            <div>
+              <p style={{ margin: '0 0 var(--space-4)', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+                {candidates.length} lines in the file match {target.name} equally well. Choose the one that belongs here.
+              </p>
+              {candidates.map((line) => (
+                <div key={line.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-6)', padding: 'var(--space-3) 0', borderBottom: '1px solid var(--border-subtle)' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{line.name}</div>
+                    <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+                      {[line.group, line.section, formatPeriodValue(line.values[lastPeriodIndex] ?? null)].filter(Boolean).join(' · ')}
+                    </div>
+                  </div>
+                  <Button size="sm" variant="secondary" onClick={() => onSetSourceLines([line.id])}>Use this</Button>
+                </div>
+              ))}
+            </div>
+          ),
+        } satisfies LineSettingsSection]
+      : []),
     {
       key: 'mapping',
       label: 'Source mapping',
@@ -146,7 +177,7 @@ export function MappingRowDetail({
           {[
             ['Method', METHOD_DESCRIPTIONS[mapping.method]],
             ['Confidence', mapping.method === 'none' ? '—' : mapping.confidence.toFixed(2)],
-            ['Source lines', mapping.sourceLineIds.length ? mapping.sourceLineIds.map((id) => sourceById(id)?.name).join(', ') : '—'],
+            ['Source lines', mapping.sourceLineIds.length ? mapping.sourceLineIds.map((id) => { const l = sourceById(id); return l ? sourceLineLabel(l) : ''; }).join(', ') : '—'],
             ['Aggregation', mapping.sourceLineIds.length > 1 ? `Sum of ${mapping.sourceLineIds.length} lines` : mapping.sourceLineIds.length ? 'One-to-one' : '—'],
           ].map(([label, value]) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-6)', padding: 'var(--space-2) 0' }}>

@@ -68,7 +68,7 @@ export interface BasisDb extends DBSchema {
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 17;
+const DB_VERSION = 18;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -267,12 +267,13 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
           }
         }
 
-        // v14 -> v17 (v15: a line's explicit `role` and projection type — see StatementLine;
-        // v16/v17: Hardcode is a projection method of its own, replacing 'actual').
+        // v14 -> v18 (v15: a line's explicit `role` and projection type — see StatementLine;
+        // v16/v17: Hardcode is a projection method of its own, replacing 'actual'; v18: the
+        // Basis Template gained a Group column, shifting its periods one column right).
         // No conversion of older saved data — this app is pre-beta, so everything is cleared and
-        // re-seeded instead: the default template regenerates itself the next time the template
-        // list is read, and models are re-imported.
-        if (oldVersion >= 1 && oldVersion < 17) {
+        // re-seeded instead: the default and bundled templates regenerate themselves the next time the
+        // template list is read, and models are re-imported.
+        if (oldVersion >= 1 && oldVersion < 18) {
           for (const name of Array.from(db.objectStoreNames)) transaction.objectStore(name).clear();
         }
       },
