@@ -43,7 +43,7 @@ export function summarizeProjection(line: StatementLine, drivers: DriverDefiniti
       const basisLineId = drivers.find((d) => 'driverId' in projection && d.id === projection.driverId)?.basisLineId;
       return { label: `Rolls off to ${nameOf(basisLineId)}`, tone: 'normal' };
     }
-    case 'actual':
+    case 'hardcode':
       return { label: 'Hardcoded', tone: 'normal' };
     case 'link':
       return { label: `Linked to ${projection.flipSign ? '−' : ''}${nameOf(projection.basisLineId)}`, tone: 'normal' };

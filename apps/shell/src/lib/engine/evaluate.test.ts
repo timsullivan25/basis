@@ -448,7 +448,7 @@ describe('driver defaults (no explicit value entered for a period)', () => {
   });
 
   it('actual has no computed default at all (null, not an inferred number)', () => {
-    const s = schema([line('cost', driverRef('one-time'))], [driver('one-time', 'actual', 'cost')]);
+    const s = schema([line('cost', driverRef('one-time'))], [driver('one-time', 'hardcode', 'cost')]);
     const m = modelWithTimeline(mixedTimeline, { cost: [40] });
     const result = evaluateModel(s, m);
     expect(result.getDriverValue('one-time', 1)).toBeNull();

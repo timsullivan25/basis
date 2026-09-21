@@ -307,7 +307,7 @@ export function buildRollOffFormula(lineId: string, driverId: string): ResolvedF
 }
 
 /** The driver IS the value — a per-period hardcoded number, no computation at all. */
-export function buildActualFormula(driverId: string): ResolvedFormula {
+export function buildHardcodeFormula(driverId: string): ResolvedFormula {
   return driverRef(driverId);
 }
 

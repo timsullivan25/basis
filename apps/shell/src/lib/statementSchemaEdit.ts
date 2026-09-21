@@ -1,10 +1,9 @@
 import type { DriverDefinition, LineRole, ProjectionMethod, StatementLine, StatementSchema } from '../data';
-import { buildActualFormula, buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildLinkFormula, buildRatioFormula } from './engine/resolve';
+import { buildDaysFormula, buildFlatFormula, buildGrowthFormula, buildHardcodeFormula, buildLinkFormula, buildRatioFormula } from './engine/resolve';
 import { childrenOf, removeRollOffContra, setChildProjection } from './statementLineChildren';
 
-// Roll-off/Actual are child-line-only projection methods (see instances/projectionMethod.tsx) —
-// never selectable on a top-level line, so this map deliberately only covers the subset
-// ProjectionSelection actually offers.
+// Units for the ratio-style drivers this module creates (roll-off and hardcode are built in
+// lib/statementLineChildren.ts and below).
 const PROJECTION_METHOD_UNIT: Record<Extract<ProjectionMethod, 'growth' | 'percent-of' | 'days-of'>, string> = {
   growth: '%',
   'percent-of': '%',
@@ -20,7 +19,7 @@ const DRIVER_NAME_PHRASE: Record<'percent-of' | 'days-of', string> = {
 
 /** What the projection controls commit — mirrors StatementLine.projection, and carries a
  *  basisLineId only for the methods that need one ('link', the two ratio methods and roll-off).
- *  'formula' keeps whatever hand-written formula the line already has. 'actual' is Hardcode: a
+ *  'formula' keeps whatever hand-written formula the line already has. 'hardcode' is backed by a
  *  driver whose per-period values ARE the line's projected values. */
 export type ProjectionSelection =
   | { method: 'flat' }
@@ -28,7 +27,7 @@ export type ProjectionSelection =
   | { method: 'percent-of' | 'days-of' | 'roll-off'; basisLineId: string }
   | { method: 'link'; basisLineId: string; flipSign?: boolean }
   | { method: 'formula' }
-  | { method: 'actual' };
+  | { method: 'hardcode' };
 
 /** Pure, in-memory mutations of a schema's own structure (sections, lines, projections) — the
  *  template-builder counterpart to lib/statementLineChildren.ts's dynamic-child mutations. Every
@@ -139,12 +138,12 @@ export function setLineProjection(schema: StatementSchema, lineId: string, selec
   const remainingDrivers = existingDriverId ? uncontra.drivers.filter((d) => d.id !== existingDriverId) : uncontra.drivers;
   const base = { ...uncontra, drivers: remainingDrivers };
 
-  if (selection.method === 'actual') {
+  if (selection.method === 'hardcode') {
     const driverId = crypto.randomUUID();
-    const driver: DriverDefinition = { id: driverId, name: `${line?.name || 'Line'} Value`, unit: '', targetLineId: lineId, method: 'actual' };
+    const driver: DriverDefinition = { id: driverId, name: `${line?.name || 'Line'} Value`, unit: '', targetLineId: lineId, method: 'hardcode' };
     return updateLine({ ...base, drivers: [...remainingDrivers, driver] }, lineId, {
-      formula: buildActualFormula(driverId),
-      projection: { method: 'actual', driverId },
+      formula: buildHardcodeFormula(driverId),
+      projection: { method: 'hardcode', driverId },
     });
   }
   if (selection.method === 'formula') {

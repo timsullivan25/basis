@@ -498,9 +498,9 @@ export function LineSettingsPanelContent({
   const sourced = role === 'required' || role === 'optional';
   const projection = line.projection;
   const rawMethod = projection?.method ?? 'flat';
-  // Hardcode is the 'actual' method: a driver whose per-period values are the line's values.
+  // Hardcode: a driver whose per-period values are the line's values.
   const committedType: ProjectionType =
-    rawMethod === 'link' ? 'link' : rawMethod === 'formula' ? 'formula' : rawMethod === 'actual' ? 'hardcode' : 'standard';
+    rawMethod === 'link' ? 'link' : rawMethod === 'formula' ? 'formula' : rawMethod === 'hardcode' ? 'hardcode' : 'standard';
   const projectionType: ProjectionType = pendingLink ? 'link' : committedType;
   const currentMethod: StandardMethod = pendingMethod ?? (isStandardMethod(rawMethod) ? rawMethod : 'flat');
   const currentDriverId = projection && 'driverId' in projection ? projection.driverId : undefined;
@@ -519,7 +519,7 @@ export function LineSettingsPanelContent({
       return;
     }
     setPendingLink(false);
-    onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : next === 'hardcode' ? { method: 'actual' } : { method: 'formula' });
+    onSetProjection(line.id, next === 'standard' ? { method: 'flat' } : next === 'hardcode' ? { method: 'hardcode' } : { method: 'formula' });
   }
 
   function handleMethodChange(method: StandardMethod) {

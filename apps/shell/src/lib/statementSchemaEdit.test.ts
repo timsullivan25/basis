@@ -145,16 +145,16 @@ describe('line mutations', () => {
 });
 
 describe('setLineProjection', () => {
-  it('"actual" (Hardcode) replaces any prior driver with a value driver the line reads directly', () => {
+  it('"hardcode" replaces any prior driver with a value driver the line reads directly', () => {
     const schema = schemaWith(
       [{ id: 'a', name: 'A', lines: [line('l1', 'Revenue', { projection: { method: 'growth', driverId: 'd1' } })] }],
       [{ id: 'd1', name: 'Revenue Growth', unit: '%', targetLineId: 'l1', method: 'growth' }],
     );
-    const next = setLineProjection(schema, 'l1', { method: 'actual' });
+    const next = setLineProjection(schema, 'l1', { method: 'hardcode' });
     const l1 = next.sections[0].lines[0];
     expect(next.drivers).toHaveLength(1);
-    expect(next.drivers[0]).toMatchObject({ targetLineId: 'l1', method: 'actual' });
-    expect(l1.projection).toEqual({ method: 'actual', driverId: next.drivers[0].id });
+    expect(next.drivers[0]).toMatchObject({ targetLineId: 'l1', method: 'hardcode' });
+    expect(l1.projection).toEqual({ method: 'hardcode', driverId: next.drivers[0].id });
     expect(l1.formula).toEqual({ kind: 'driverRef', driverId: next.drivers[0].id });
   });
 

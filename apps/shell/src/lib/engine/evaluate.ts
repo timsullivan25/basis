@@ -129,10 +129,10 @@ export function evaluateModel(schema: StatementSchema, model: EvaluationInput): 
    *  default is ever needed for, so both lines are guaranteed already resolved in memo. */
   function defaultDriverValue(driver: DriverDefinition): number | null {
     // 0% growth and 0% roll-off are both "no adjustment assumed yet" — a safe default that
-    // doesn't invent a number. 'actual' has no sensible default at all (it's a hardcoded number
+    // doesn't invent a number. 'hardcode' has no sensible default at all (it's a hardcoded number
     // with nothing to fall back to); percent-of/days-of alone get the ratio inference below.
     if (driver.method === 'growth' || driver.method === 'roll-off') return 0;
-    if (driver.method === 'actual') return null;
+    if (driver.method === 'hardcode') return null;
     if (lastActualIndex < 0 || !driver.basisLineId) return null;
     const targetValue = readLine(driver.targetLineId, lastActualIndex, undefined);
     const basisValue = readLine(driver.basisLineId, lastActualIndex, undefined);

@@ -2,7 +2,7 @@ import type { DebtScheduleRole, DriverDefinition, PeriodType, ResolvedFormula, S
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 import { findSummaryLine } from './summaryLines';
 import {
-  buildActualFormula,
+  buildHardcodeFormula,
   buildCashAvailableForRepaymentFormula,
   buildCashShortfallFormula,
   buildDebtAmortizationFormula,
@@ -101,12 +101,12 @@ export function regenerateDebtSchedule(
       name: 'Minimum Cash Target',
       unit: '',
       targetLineId: minCashTargetId,
-      method: 'actual',
+      method: 'hardcode',
     };
     generatedLines.push({
       ...blankLine(minCashTargetId, 'Minimum Cash Target', { role: 'minimumCashTarget' }),
-      formula: buildActualFormula(minCashTargetDriverId),
-      projection: { method: 'actual', driverId: minCashTargetDriverId },
+      formula: buildHardcodeFormula(minCashTargetDriverId),
+      projection: { method: 'hardcode', driverId: minCashTargetDriverId },
     });
     generatedLines.push({
       ...blankLine(cashAvailableId, 'Cash Available for Repayment', { role: 'cashAvailableForRepayment' }),

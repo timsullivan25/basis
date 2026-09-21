@@ -50,9 +50,9 @@ export type ResolvedFormula =
  *  the `driver` fraction is subtracted from the basis line's own formula every period, via a
  *  non-destructive wrapper (see lib/statementLineChildren.ts's applyRollOffContra) — e.g. a
  *  one-time cost that permanently lowers another line's run-rate while continuing to show as a
- *  partial EBITDA add-back. 'actual' has no formula computation at all — the driver IS the
+ *  partial EBITDA add-back. 'hardcode' has no formula computation at all — the driver IS the
  *  value, a per-period hardcoded number. */
-export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' | 'actual';
+export type ProjectionMethod = 'growth' | 'percent-of' | 'days-of' | 'roll-off' | 'hardcode';
 
 /** How a line gets its values — the one field the schema editor's "Role" column edits.
  *  'required' / 'optional' are SOURCED: mapped from an uploaded model for the actual periods (a
@@ -63,8 +63,8 @@ export type LineRole = 'required' | 'optional' | 'calculated' | 'check';
 
 /** A SOURCED line's projection type — how its projected periods get a value. The first group
  *  ('flat' and the driver-backed methods) is "Standard" in the editor; 'link' reads one other
- *  line and 'formula' is a hand-written formula stored in StatementLine.formula. A hardcoded line
- *  is the 'actual' method: its driver IS the value, entered per period by hand. See
+ *  line and 'formula' is a hand-written formula stored in StatementLine.formula. 'hardcode' is one
+ *  of the driver-backed methods: its driver IS the value, entered per period by hand. See
  *  StatementLine.projection. */
 export type LineProjection =
   | { method: 'flat' }
@@ -112,7 +112,7 @@ export interface DriverDefinition {
   method: ProjectionMethod;
   /** Required for 'percent-of' | 'days-of' | 'roll-off' — the line this driver is expressed
    *  against (roll-off's basis line is where the contra adjustment lands, not a ratio basis).
-   *  Absent for 'growth' (references its own target line via priorPeriod instead) and 'actual'
+   *  Absent for 'growth' (references its own target line via priorPeriod instead) and 'hardcode'
    *  (no basis at all — the driver is just a hardcoded number). */
   basisLineId?: string;
 }

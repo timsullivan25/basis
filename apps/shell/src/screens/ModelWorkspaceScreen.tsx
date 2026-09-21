@@ -168,7 +168,7 @@ interface DriverRow {
   unit?: string;
   /** Only set alongside driverId, for a row whose method has a well-defined implied historical
    *  value (growth/percent-of/days-of) — see lib/driverDisplay.ts. Absent for a 'flat' row, a
-   *  driver-less row, or an 'actual'/'roll-off' child projection, all of which show a plain
+   *  driver-less row, or a 'hardcode'/'roll-off' projection, all of which show a plain
    *  dash in historical columns instead of an implied number. */
   targetLineId?: string;
   method?: ProjectionMethod;
