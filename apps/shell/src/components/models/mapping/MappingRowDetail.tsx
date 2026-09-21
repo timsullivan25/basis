@@ -23,6 +23,8 @@ interface MappingRowDetailProps {
   workbook: ParsedWorkbook;
   onSetSourceLines: (sourceLineIds: string[]) => void;
   onApprove: () => void;
+  /** Puts back what this line was mapped to before an AI review changed it. */
+  onReject: () => void;
   /** Set once this line has ≥1 real child line (parentLineId pointing here) summing into it —
    *  its value is superseded by that sum for every period (see StatementLine.allowsSubLines' own
    *  doc comment), so direct mapping here would silently be ignored. Disables the checklist
@@ -54,7 +56,7 @@ const DEFAULT_OPEN_SECTIONS = ['mapping', 'match'];
  *  is strictly the mapping act: which source line(s) feed this target, and reviewing/approving
  *  the match. */
 export function MappingRowDetail({
-  target, sectionName, mapping, workbook, onSetSourceLines, onApprove, supersededByInstanceCount,
+  target, sectionName, mapping, workbook, onSetSourceLines, onApprove, onReject, supersededByInstanceCount,
   calculatedByDebtSchedule, calculated, formula, onClose,
 }: MappingRowDetailProps) {
   const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
@@ -186,6 +188,17 @@ export function MappingRowDetail({
             </div>
           ))}
           <p style={{ margin: 'var(--space-5) 0 0', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-serif)', color: 'var(--text-body)' }}>{mapping.note}</p>
+
+          {mapping.method === 'ai' && !mapping.approved && mapping.previous ? (
+            <div style={{ marginTop: 'var(--space-5)' }}>
+              <Button size="sm" variant="secondary" iconLeft="undo-2" onClick={onReject}>
+                Reject suggestion
+              </Button>
+              <p style={{ margin: 'var(--space-3) 0 0', fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+                Restores the earlier match{mapping.previous.sourceLineIds.length ? ` (${mapping.previous.method})` : ' — this line was unmapped'}.
+              </p>
+            </div>
+          ) : null}
 
           {showApprove ? (
             <div style={{ marginTop: 'var(--space-5)' }}>

@@ -64,20 +64,11 @@ export function unmappedSourceLines(workbook: ParsedWorkbook, mapping: Record<st
   return workbook.lines.filter((l) => !used.has(l.id) && hasValue(l));
 }
 
-export interface ConsolidationOptions {
-  /** Restrict to these target sections (by id) — the checks pass uses this to look only where a check is failing. */
-  onlySectionIds?: ReadonlySet<string>;
-  /** Also offer targets whose match is already settled (see isSettledMatch). Off for the general pass; the checks pass turns it on for a section whose check shows something is missing. */
-  includeSettled?: boolean;
-  /** Extra text shown to the model for a target section (id -> text): the failing check, its gap, and lines that would close it. */
-  evidenceBySectionId?: ReadonlyMap<string, string>;
-}
-
 /**
  * Looks for unmapped imported lines that belong ADDED to a target that is already mapped (Goodwill onto an
  * Intangibles match; an extra debt line onto a debt target). One request per statement section, pairing a
  * target section with the imported section of the same name — so a big import stays small and a Balance
- * Sheet line is only ever offered to Balance Sheet targets. Targets the user set or approved are left alone, and so are settled matches unless `includeSettled` is set.
+ * Sheet line is only ever offered to Balance Sheet targets. Targets the user set or approved are left alone, and so are settled matches.
  * Returns the full new mapping (old sources plus additions, method 'ai', flagged) only for targets it changed.
  */
 export async function suggestConsolidations(
@@ -85,7 +76,6 @@ export async function suggestConsolidations(
   targets: MappingTarget[],
   workbook: ParsedWorkbook,
   mapping: Record<string, LineMapping>,
-  options: ConsolidationOptions = {},
 ): Promise<Record<string, LineMapping>> {
   const pool = unmappedSourceLines(workbook, mapping);
   if (pool.length === 0) return {};
@@ -97,8 +87,7 @@ export async function suggestConsolidations(
 
   const targetsBySection = new Map<string, MappingTarget[]>();
   for (const t of targets) {
-    if (options.onlySectionIds && !options.onlySectionIds.has(t.section.id)) continue;
-    if (!options.includeSettled && isSettledMatch(mapping[t.line.id])) continue;
+    if (isSettledMatch(mapping[t.line.id])) continue;
     targetsBySection.set(t.section.id, [...(targetsBySection.get(t.section.id) ?? []), t]);
   }
 
@@ -121,10 +110,9 @@ export async function suggestConsolidations(
       const sourceText = sectionPool
         .map((l) => [`id=${l.id}`, l.group ? `group=${l.group}` : undefined, `name=${l.name}`, `latest=${latest(l, lastIndex)}`].filter(Boolean).join(' | '))
         .join('\n');
-      const evidence = options.evidenceBySectionId?.get(sectionTargets[0].section.id);
       const raw = await provider.generateStructured({
         system: CONSOLIDATION_PROMPT,
-        prompt: `Section: ${sectionTargets[0].section.name}\n${evidence ? `\n${evidence}\n` : ''}\nTarget lines:\n${targetText}\n\nUnmapped imported lines in this section:\n${sourceText}`,
+        prompt: `Section: ${sectionTargets[0].section.name}\n\nTarget lines:\n${targetText}\n\nUnmapped imported lines in this section:\n${sourceText}`,
         schemaName: 'mapping_consolidations',
         schema: CONSOLIDATION_SCHEMA,
         effort: 'low',

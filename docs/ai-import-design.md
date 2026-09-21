@@ -99,10 +99,18 @@ never changed.
    that are unmapped or hold a weak match are offered; exact, alias, prior and sure-AI matches are settled and left
    alone (Calculated, Linked and Check lines are never mapped at all). The checks referee the pass: a section whose
    check gets worse under the additions has them undone.
-3. **Checks** (`reviewChecks.ts`): failing check lines mark sections where something is missing. Code searches for
-   sets of up to three unmapped lines whose values close the gap in every period (arithmetic, so code's job), and
-   consolidation is asked again for those sections only, this time including settled matches, with the gap and any closing lines as evidence. A check
-   still failing is reported at the end.
+3. **Checks** (`reviewChecks.ts`, `suggestCheckFixes.ts`): with 1 and 2 in place, each check line still off is looked
+   at up to three times. The model sees the check's formula in words, the gap by period, the gap before the last
+   kept change, what earlier tries did to it, and any unmapped lines that close it exactly (code searches sets of up
+   to three — arithmetic is code's job). It may add a line to a target, remove one from a target, or move one
+   (remove plus add). Removals are only allowed from weak (fuzzy) or AI-made mappings, never exact, alias, manual or
+   approved ones. Each proposal is tried on an in-memory copy; it is kept only if it shrinks the gap (the whole set
+   is tried first, then one at a time), and the outcome is told to the model on the next round. Finally, a section
+   whose check ended worse than it was after Fill has everything after Fill undone there. A check still off is
+   reported as improved or unresolved, never hidden.
+
+Each AI change stamps the mapping with `previous` (what it replaced), so a single suggestion can be rejected from the
+line's Match details and the earlier match restored. Nothing is saved until the user saves the mapping.
 
 **Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,
 `StructureOp`) — a parent that allows sub-lines, a clean name, and the unassigned imported lines behind it. Leftover

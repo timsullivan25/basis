@@ -351,6 +351,8 @@ export interface LineMapping {
   /** Other source lines that matched just as well as `sourceLineIds` (same name in another group). Set only by the automatic pass; a non-empty list flags the match for review until the user picks or approves. */
   alternativeSourceLineIds?: string[];
   note: string;
+  /** What this line was mapped to before an AI review changed it — kept so a single suggestion can be rejected and the earlier match restored. Set by the review, cleared on restore. */
+  previous?: Omit<LineMapping, 'previous'>;
   /** Manually confirmed despite low confidence — suppresses the review flag without changing the match. */
   approved: boolean;
 }

@@ -381,6 +381,14 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     setStructureOps(null);
   }
 
+  /** Undoes one AI suggestion: the line goes back to what it was mapped to before the review touched it. */
+  function rejectAiSuggestion(lineId: string) {
+    setMapping((prev) => {
+      const restore = prev[lineId]?.previous;
+      return restore ? { ...prev, [lineId]: { ...restore } } : prev;
+    });
+  }
+
   function setSourceLines(target: StatementLine, sourceLineIds: string[]) {
     const previous = mapping[target.id];
     updateMapping(target.id, {
@@ -1109,6 +1117,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 workbook={workbook}
                 onSetSourceLines={(ids) => setSourceLines(line, ids)}
                 onApprove={() => updateMapping(line.id, { approved: true })}
+                onReject={() => rejectAiSuggestion(line.id)}
                 supersededByInstanceCount={childCount}
                 calculatedByDebtSchedule={isDebtScheduleGenerated(line)}
                 calculated={isFormulaOnly(line)}
@@ -1267,7 +1276,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       {aiState.status === 'done' || aiState.status === 'failed' ? (
         <div style={{ position: 'fixed', right: 'var(--space-8)', bottom: 'var(--space-8)', zIndex: 200 }}>
           <Toast
-            tone={aiState.status === 'failed' ? 'negative' : aiState.result.checks.some((c) => c.status === 'unresolved') ? 'caution' : aiState.result.filled + aiState.result.consolidated > 0 ? 'positive' : 'info'}
+            tone={aiState.status === 'failed' ? 'negative' : aiState.result.checks.some((c) => c.status !== 'resolved') ? 'caution' : aiState.result.filled + aiState.result.consolidated > 0 ? 'positive' : 'info'}
             title={aiState.status === 'failed' ? 'AI review failed' : 'AI review finished'}
             onDismiss={() => setAiState({ status: 'idle' })}
           >
@@ -1322,9 +1331,10 @@ function aiReviewSummary(result: AiReviewResult, asked: number): string {
   const parts = [
     result.filled > 0 ? `Suggested a match for ${result.filled} of ${asked} open lines.` : asked > 0 ? `No suggestion for the ${asked} open lines.` : '',
     result.consolidated > 0 ? `Suggested adding lines to ${result.consolidated} existing match${result.consolidated === 1 ? '' : 'es'}.` : '',
-    ...result.reverted.map((section) => `Undid the consolidation suggestions in ${section}: they made its check worse.`),
+    result.fixed > 0 ? `Changed ${result.fixed} more line${result.fixed === 1 ? '' : 's'} to close check gaps.` : '',
+    ...result.reverted.map((section) => `Undid the later suggestions in ${section}: its check ended worse than it started.`),
     ...result.checks.map((c) =>
-      c.status === 'resolved' ? `${c.section} check now passes.` : `${c.section} check still fails${c.latest === null ? '' : ` (${Math.round(c.latest * 100) / 100} in the latest period)`} — a line may still be missing.`,
+      c.status === 'resolved' ? `${c.section} check now passes.` : `${c.section} check ${c.status === 'improved' ? 'is closer but still fails' : 'still fails'}${c.latest === null ? '' : ` (${Math.round(c.latest * 100) / 100} in the latest period)`} — a line may still be missing.`,
     ),
   ].filter(Boolean);
   return `${parts.join(' ')} Everything suggested is flagged for review.`;

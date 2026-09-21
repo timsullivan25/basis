@@ -1,6 +1,7 @@
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { getCheckStatus } from '../../components/statements/statementFormatting';
 import { evaluateModel } from '../engine/evaluate';
+import { buildNameIndex, formatFormula } from '../engine/resolve';
 import { normalize } from '../matchStatementLines';
 import { buildTimeline } from '../periodTimeline';
 import { resolveActuals } from '../resolveActuals';
@@ -82,13 +83,12 @@ export function candidatesForCheck(check: FailingCheck, workbook: ParsedWorkbook
   return workbook.lines.filter((l) => normalize(l.section) === normalize(check.section.name) && !used.has(l.id) && hasValue(l));
 }
 
-/** The paragraph shown to the model for a failing check: the gap per period, and any lines that would close it exactly. */
-export function checkEvidenceText(check: FailingCheck, workbook: ParsedWorkbook, candidates: ParsedSourceLine[]): string {
-  const byId = new Map(workbook.lines.map((l) => [l.id, l]));
-  const gaps = workbook.periods.map((p, i) => `${p.name}: ${check.values[i] === null || check.values[i] === undefined ? 'n/a' : Math.round((check.values[i] as number) * 100) / 100}`).join(', ');
-  const subsets = closingSubsets(check, candidates);
-  const closing = subsets.length
-    ? `\nThese unmapped lines would close the gap exactly in every period (strong evidence they are missing from a target): ${subsets.map((s) => s.lineIds.map((id) => `${byId.get(id)?.name} [id=${id}]`).join(' + ')).join('; ')}.`
-    : '\nNo small set of unmapped lines closes the gap exactly, so the gap may have another cause.';
-  return `CHECK FAILING: "${check.line.name}" should be zero but is: ${gaps}. Something is likely missing from, or double counted in, this statement's mapping.${closing}`;
+/** Total absolute size of a check across periods, ignoring any period inside its tolerance — the single number the review tries to shrink. */
+export function checkGap(check: FailingCheck): number {
+  return check.values.reduce<number>((sum, v) => (getCheckStatus(check.line, v) === 'fail' ? sum + Math.abs(v as number) : sum), 0);
+}
+
+/** The check's formula in words ("Total Assets - Total Liabilities & Equity"), so the model can see what the check compares. */
+export function checkFormulaText(check: FailingCheck, schema: StatementSchema): string {
+  return formatFormula(check.line.formula, buildNameIndex(schema));
 }

@@ -43,23 +43,11 @@ describe('suggestConsolidations', () => {
     expect(quiet.requests).toHaveLength(0);
   });
 
-  it('shows the model check evidence for a section and can be limited to failing sections', async () => {
-    const provider = new FakeLlmProvider({ additions: [] });
-    await suggestConsolidations(provider, targets, workbook, { gi: m('gi', ['intang']) }, { onlySectionIds: new Set(['bs']), evidenceBySectionId: new Map([['bs', 'CHECK FAILING: gap 8000']]) });
-    expect(provider.requests[0].prompt).toContain('CHECK FAILING: gap 8000');
-    const none = new FakeLlmProvider({ additions: [] });
-    await suggestConsolidations(none, targets, workbook, {}, { onlySectionIds: new Set(['other']) });
-    expect(none.requests).toHaveLength(0);
-  });
-
-  it('leaves settled matches alone unless asked, but offers unmapped and weak ones', async () => {
+  it('leaves settled matches alone, but offers unmapped and weak ones', async () => {
     const settledAll = { gi: m('gi', ['intang'], { method: 'exact', confidence: 1 }), cash: m('cash', ['cashsrc'], { method: 'ai', confidence: 0.75 }) };
     const quiet = new FakeLlmProvider({ additions: [] });
     await suggestConsolidations(quiet, targets, workbook, settledAll);
     expect(quiet.requests).toHaveLength(0);
-    const forced = new FakeLlmProvider({ additions: [] });
-    await suggestConsolidations(forced, targets, workbook, settledAll, { includeSettled: true });
-    expect(forced.requests[0].prompt).toContain('name=Goodwill & Intangibles');
     const weak = new FakeLlmProvider({ additions: [] });
     await suggestConsolidations(weak, targets, workbook, { gi: m('gi', ['intang']), cash: m('cash', ['cashsrc'], { method: 'ai', confidence: 0.6 }) });
     const prompt = weak.requests[0].prompt;
