@@ -7,6 +7,7 @@ const BADGE_TONES = {
   positive: ['var(--status-positive-bg)', 'var(--status-positive-fg)', 'var(--status-positive-border)'],
   negative: ['var(--status-negative-bg)', 'var(--status-negative-fg)', 'var(--status-negative-border)'],
   caution: ['var(--status-caution-bg)', 'var(--status-caution-fg)', 'var(--status-caution-border)'],
+  violet: ['var(--status-violet-bg)', 'var(--status-violet-fg)', 'var(--status-violet-border)'],
   brand: ['var(--blue-700)', 'var(--white)', 'transparent'],
 };
 

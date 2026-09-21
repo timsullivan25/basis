@@ -2,7 +2,7 @@ import * as React from 'react';
 
 /** Status pill — system-owned state (Live, Stale, Breach, Draft). */
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  tone?: 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
+  tone?: 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'violet' | 'brand';
   size?: 'sm' | 'md';
   /** Lucide icon name shown before the label. */
   icon?: string;

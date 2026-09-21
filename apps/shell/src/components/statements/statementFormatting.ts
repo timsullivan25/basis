@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { LineNumberFormat, LineRowFormat, LineSign, StatementLine } from '../../data';
 
-type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'brand';
+type BadgeTone = 'neutral' | 'info' | 'positive' | 'negative' | 'caution' | 'violet' | 'brand';
 
 export const ROW_FORMAT_META: Record<LineRowFormat, { label: string; tone: BadgeTone }> = {
   normal: { label: 'Normal', tone: 'neutral' },
@@ -22,6 +22,8 @@ export const SIGN_META: Record<LineSign, { label: string; tone: BadgeTone }> = {
 
 /** The "Role" column's badge. */
 export function getRequiredMeta(line: StatementLine): { label: string; tone: BadgeTone } {
+  // A Debt Schedule line is generated, not authored — its own chip, distinct from a hand-written calculation.
+  if (line.debtScheduleRole) return { label: 'Generated', tone: 'violet' };
   switch (line.role) {
     case 'calculated':
       return { label: 'Calculated', tone: 'positive' };

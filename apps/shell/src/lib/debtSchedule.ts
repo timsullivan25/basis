@@ -255,6 +255,12 @@ export function regenerateTemplateDebtSchedule(schema: StatementSchema): Stateme
 }
 
 const SECTION_NAME = 'Debt Schedule';
+
+/** True for the auto-generated Debt Schedule section — read-only in the template editor apart
+ *  from moving the section itself. */
+export function isDebtScheduleSection(section: StatementSection): boolean {
+  return section.id === 'debtSchedule:section' || section.lines.some((l) => l.debtScheduleRole !== undefined);
+}
 /** Fallback ids, used only the very first time a given schedule-level role has never existed in
  *  a schema before (see regenerateDebtSchedule's own doc comment and resolveScheduleLevelId) —
  *  never assumed to be a role's CURRENT id once a schema has been cloned. The three totals are

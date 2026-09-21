@@ -1,10 +1,12 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Badge, Button, DataTable, Icon, IconButton, Input, Select, SegmentedControl, Switch, Tag, Tooltip } from '@basis/design-system';
 import type { DriverDefinition, LineNumberFormat, LineRole, LineRowFormat, LineSign, ProjectionMethod, StatementLine, StatementSchema, StatementSection } from '../../data';
 import { collectRefIds, formatFormula, isCalculated, type NameIndex } from '../../lib/engine/resolve';
 import { buildSectionRows, type SectionRow } from '../../lib/statementRowBuilder';
 import { isFormulaOnly } from '../../lib/lineRole';
 import { summarizeProjection } from '../../lib/projectionSummary';
+import { isDebtScheduleSection } from '../../lib/debtSchedule';
+import { effectiveLineKind } from '../../lib/statementLineChildren';
 import type { ProjectionSelection } from '../../lib/statementSchemaEdit';
 import type { InstanceTarget } from '../models/instances/projectionMethod';
 import { FormulaInput } from './FormulaInput';
@@ -85,8 +87,11 @@ export function SectionEditor({
   onAddLine, onUpdateLine, onSetRole, onDeleteLine, onReorderLine,
 }: SectionEditorProps) {
   const rows = buildSectionRows(schema, section);
+  // The Debt Schedule is regenerated from the capital structure, so nothing in it is editable —
+  // only the section itself can be moved.
+  const generated = isDebtScheduleSection(section);
 
-  const columns = [
+  const editableColumns = [
     {
       key: 'name',
       label: 'Line name',
@@ -203,7 +208,7 @@ export function SectionEditor({
       render: (_: unknown, row: SectionRow) => {
         const target = row.line ?? row.childLine;
         if (!target) return null;
-        const summary = summarizeProjection(target, schema.drivers, nameIndex);
+        const summary = summarizeProjection(target, schema.drivers, nameIndex, effectiveLineKind(schema, target) === 'debt');
         // An em-dash, not blank: "nothing to project here" reads differently from "missing".
         if (!summary) return <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>—</span>;
         return (
@@ -307,21 +312,33 @@ export function SectionEditor({
         ) : null,
     },
   ];
+  const columns = generated ? editableColumns.filter((c) => c.key !== 'actions').map((c) => ({ ...c, canEdit: () => false })) : editableColumns;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', background: 'var(--surface-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', minHeight: 40, padding: '0 var(--space-8)', borderBottom: '1px solid var(--border-subtle)' }}>
-        <SectionName name={section.name} onRename={onRename} />
+        {generated ? (
+          <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-heading)', color: 'var(--text-primary)' }}>{section.name}</span>
+        ) : (
+          <SectionName name={section.name} onRename={onRename} />
+        )}
+        {generated ? (
+          <Badge tone="violet" size="sm" icon="sparkles">Auto-generated</Badge>
+        ) : null}
         <div style={{ flex: '1 1 auto' }} />
-        <Switch
-          size="sm"
-          label="Freeform lines"
-          checked={section.allowsFreeformLines ?? false}
-          onChange={onSetAllowsFreeformLines}
-        />
+        {generated ? (
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Built from the debt lines in your capital structure — read only.</span>
+        ) : (
+          <Switch
+            size="sm"
+            label="Freeform lines"
+            checked={section.allowsFreeformLines ?? false}
+            onChange={onSetAllowsFreeformLines}
+          />
+        )}
         <IconButton icon="arrow-up" label="Move section up" size="sm" variant="ghost" onClick={onMoveUp} disabled={isFirst} />
         <IconButton icon="arrow-down" label="Move section down" size="sm" variant="ghost" onClick={onMoveDown} disabled={isLast} />
-        <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />
+        {generated ? null : <IconButton icon="trash-2" label="Delete section" size="sm" variant="ghost" onClick={onDelete} />}
       </div>
 
       {rows.length > 0 ? (
@@ -339,10 +356,12 @@ export function SectionEditor({
             }
             if (row.line || row.childLine) onSelectLine(row.id);
           }}
-          draggableRows
+          draggableRows={!generated}
           dragHandleMode="hover"
-          canDragRow={(row: SectionRow) => Boolean(row.line)}
-          onReorder={(draggedKey, beforeKey) => onReorderLine(draggedKey, beforeKey)}
+          canDragRow={(row: SectionRow) => !generated && Boolean(row.line)}
+          onReorder={(draggedKey, beforeKey) => {
+            if (!generated) onReorderLine(draggedKey, beforeKey);
+          }}
         />
       ) : (
         // Still a valid drop target for a line dragged in from another section — otherwise an
@@ -360,11 +379,13 @@ export function SectionEditor({
         </div>
       )}
 
-      <div style={{ padding: 'var(--space-5) var(--space-8)', borderTop: '1px solid var(--border-subtle)' }}>
-        <Button size="sm" variant="ghost" iconLeft="plus" onClick={onAddLine}>
-          Add line
-        </Button>
-      </div>
+      {generated ? null : (
+        <div style={{ padding: 'var(--space-5) var(--space-8)', borderTop: '1px solid var(--border-subtle)' }}>
+          <Button size="sm" variant="ghost" iconLeft="plus" onClick={onAddLine}>
+            Add line
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -842,8 +863,8 @@ export function LineSettingsPanelContent({
         </div>
       ),
     });
-  } else if (isChild || lineType !== 'debt') {
-    // A top-level debt line's value comes from the Debt Schedule, so it has no projection here.
+  } else if (!(isChild ? isDebtLine : lineType === 'debt')) {
+    // A debt line's value (top-level, or a sub-line inheriting it) comes from the Debt Schedule, so it has no projection here.
     sections.push({
       key: 'calculation',
       label: 'Projection',
@@ -860,7 +881,14 @@ export function LineSettingsPanelContent({
       openKeys={openKeys}
       onToggleSection={toggleSection}
       style={style}
-      sections={sections}
+      sections={line.debtScheduleRole ? sections.map((s) => ({ ...s, content: <ReadOnly>{s.content}</ReadOnly> })) : sections}
+      beforeSections={
+        line.debtScheduleRole ? (
+          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+            Generated from the debt lines in your capital structure. Read only.
+          </p>
+        ) : undefined
+      }
       footer={
         isChild && onDeleteChildLine ? (
           <Button size="sm" variant="ghost" iconLeft="trash-2" onClick={() => onDeleteChildLine(line.id)}>
@@ -869,5 +897,15 @@ export function LineSettingsPanelContent({
         ) : undefined
       }
     />
+  );
+}
+
+/** Disables every control inside — a native <fieldset disabled> covers inputs, selects and
+ *  buttons; pointer-events covers design-system controls that aren't native (Switch, chips). */
+function ReadOnly({ children }: { children: ReactNode }) {
+  return (
+    <fieldset disabled style={{ border: 'none', margin: 0, padding: 0, minWidth: 0, opacity: 0.75 }}>
+      <div style={{ pointerEvents: 'none' }}>{children}</div>
+    </fieldset>
   );
 }

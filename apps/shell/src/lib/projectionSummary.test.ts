@@ -59,6 +59,12 @@ describe('summarizeProjection', () => {
     expect(summary(line('a', 'A', { lineKind: 'debt' }))).toEqual({ label: 'Debt schedule', tone: 'derived' });
   });
 
+  it('reads a sub-line inheriting debt as derived even if it still carries a projection', () => {
+    const tranche = line('t', 'Revolver', { projection: { method: 'flat' } });
+    const index = buildNameIndex({ sections: [{ id: 's', name: 'S', lines: [tranche] }], drivers: [] });
+    expect(summarizeProjection(tranche, [], index, true)).toEqual({ label: 'Debt schedule', tone: 'derived' });
+  });
+
   it('flags a sourced line with no projection at all', () => {
     expect(summary(line('a', 'A'))).toEqual({ label: 'Not set', tone: 'missing' });
   });

@@ -14,7 +14,7 @@ export interface ProjectionSummary {
  *  Projection column. `null` for a Calculated or Check line — one formula covers every period, so
  *  there's no projection to summarize. A basis line is named the way formulas name it (qualified
  *  only when another line shares its name — see NameIndex.describe). */
-export function summarizeProjection(line: StatementLine, drivers: DriverDefinition[], nameIndex: NameIndex): ProjectionSummary | null {
+export function summarizeProjection(line: StatementLine, drivers: DriverDefinition[], nameIndex: NameIndex, isDebt = line.lineKind === 'debt'): ProjectionSummary | null {
   if (isFormulaOnly(line)) return null;
 
   const nameOf = (lineId: string | undefined): string => {
@@ -23,6 +23,9 @@ export function summarizeProjection(line: StatementLine, drivers: DriverDefiniti
   };
 
   const projection = line.projection;
+  // A debt line (incl. a sub-line inheriting it from its parent) is fed by the Debt Schedule, so
+  // any projection it still carries is unused.
+  if (isDebt && projection !== null && !line.allowsSubLines) return { label: 'Debt schedule', tone: 'derived' };
   if (projection === null) {
     if (line.allowsSubLines) return { label: 'Sum of sub-lines', tone: 'derived' };
     if (line.lineKind === 'debt') return { label: 'Debt schedule', tone: 'derived' };

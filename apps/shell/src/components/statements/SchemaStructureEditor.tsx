@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Alert, Button, Dialog } from '@basis/design-system';
 import type { DebtTrancheProperties, LineRole, StatementLine, StatementSchema } from '../../data';
+import { isDebtScheduleSection } from '../../lib/debtSchedule';
 import { SectionEditor, LineSettingsPanelContent } from './SectionEditor';
 import { buildNameIndex, collectRefIds, isCalculated } from '../../lib/engine/resolve';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../lib/lineDependents';
@@ -172,6 +173,10 @@ export function SchemaStructureEditor({ schema, onChangeSchema }: SchemaStructur
   }
 
   function reorderLine(toSectionId: string, lineId: string, beforeLineId: string | null) {
+    // Generated Debt Schedule lines never move, and nothing else moves into that section.
+    const target = schema.sections.find((s) => s.id === toSectionId);
+    if (target && isDebtScheduleSection(target)) return;
+    if (schemaEdit.findLine(schema, lineId)?.debtScheduleRole) return;
     onChangeSchema(schemaEdit.reorderLine(schema, lineId, toSectionId, beforeLineId));
   }
 
