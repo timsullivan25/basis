@@ -2,11 +2,7 @@ import { useState } from 'react';
 import { Button, Checkbox, Input } from '@basis/design-system';
 import type { ParsedSourceLine, ParsedWorkbook } from '../../../data';
 import { formatPeriodValue } from './mappingFormatting';
-import { sourceLineLabel } from '../../../lib/sourceLineLabel';
-
-function normalizeSection(value: string): string {
-  return value.trim().toLowerCase();
-}
+import { searchSourceLines } from '../../../lib/searchSourceLines';
 
 interface SourceLineChecklistProps {
   /** e.g. "Map Revenue from" or "Map new line from" — MappingRowDetail and the mapping
@@ -25,12 +21,7 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
   const [search, setSearch] = useState('');
 
   const sourceById = (id: string): ParsedSourceLine | undefined => workbook.lines.find((line) => line.id === id);
-  const query = search.trim().toLowerCase();
-  const sameSection = normalizeSection(sectionName);
-  const pool = (query ? workbook.lines : workbook.lines.filter((line) => normalizeSection(line.section) === sameSection)).filter(
-    (line) => !query || sourceLineLabel(line).toLowerCase().includes(query),
-  );
-
+  const pool = searchSourceLines(workbook.lines, search, sectionName);
   function toggle(line: ParsedSourceLine) {
     const next = sourceLineIds.includes(line.id) ? sourceLineIds.filter((id) => id !== line.id) : [...sourceLineIds, line.id];
     onSetSourceLines(next);
@@ -80,7 +71,7 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
               <Checkbox
                 checked={sourceLineIds.includes(line.id)}
                 label={line.name}
-                description={[line.group, query && normalizeSection(line.section) !== sameSection ? line.section : undefined].filter(Boolean).join(' · ') || undefined}
+                description={[line.section, line.group].filter(Boolean).join(' - ')}
                 onChange={() => toggle(line)}
               />
               <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-secondary)' }}>
