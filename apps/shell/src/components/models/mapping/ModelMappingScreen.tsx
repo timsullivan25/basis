@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, IconButton, Input, Select, SegmentedControl, Tabs, Toast } from '@basis/design-system';
+import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, IconButton, Input, Select, SegmentedControl, Toast } from '@basis/design-system';
 import {
   mappingRepository,
   modelImportRepository,
@@ -15,6 +15,7 @@ import {
   type ParsedWorkbook,
   type StatementLine,
   type StatementSchema,
+  type StatementSection,
 } from '../../../data';
 import { DEFAULT_ADJUSTMENT_INSTANCE_SEEDS, DEFAULT_ADJUSTMENT_TARGET_LINE_NAME, DEFAULT_SCHEMA_ID } from '../../../data/defaultStatementSchema';
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
@@ -33,6 +34,8 @@ import { buildSectionRows, resolveFlatRowDropTarget } from '../../../lib/stateme
 import * as schemaEdit from '../../../lib/statementSchemaEdit';
 import { getLineRowStyle, getRequiredMeta } from '../../statements/statementFormatting';
 import { LineSettingsPanelContent } from '../../statements/SectionEditor';
+import { SectionCard } from '../../common/SectionCard';
+import { SyncedHScroll } from '../../common/SyncedHScroll';
 import type { InstanceTarget, SchemaLineGroup } from '../instances/projectionMethod';
 import { InstanceMappingDetail } from './InstanceMappingDetail';
 import { ImportStepper } from '../ImportStepper';
@@ -122,7 +125,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   // separate from `mapping` since it's a data override, not a structural mapping decision; only
   // ever applied for a line that's still actually unmapped at Save time.
   const [manualHistoricals, setManualHistoricals] = useState<Record<string, (number | null)[]>>({});
-  const [tab, setTab] = useState('all');
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [onlyReview, setOnlyReview] = useState(false);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
@@ -467,8 +470,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   // Edit-schema-mode mutations — thin wrappers over lib/statementSchemaEdit.ts's pure functions,
   // same pattern SchemaStructureEditor uses, routed through changeSchema so every one of them
   // regenerates the Debt Schedule and (for `editing`) eagerly persists. Section-level management
-  // (rename/reorder/delete/freeform toggle) is deliberately out of scope here — this screen's flat,
-  // tab-filtered table has no per-section header to host those controls, and a model's sections
+  // (rename/reorder/delete/freeform toggle) is deliberately out of scope here — a model's sections
   // rarely need restructuring on their own (unlike lines); use the template builder for that, or
   // change templates before creating the model. Only "add a line" and "add a section" are offered.
   function addSection() {
@@ -625,17 +627,30 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     id: string; __group?: string; line?: StatementLine; sectionName?: string; sectionId?: string;
     addInstanceTarget?: InstanceTarget; childLine?: StatementLine; isKpi?: boolean;
   }> = [];
+  type MappingRow = (typeof rows)[number];
+  // One block per section, each rendered as its own card and table. `rows` stays the flat list (with a
+  // group row per section) that the selected-row lookup and drag-drop resolution work from.
+  const sectionBlocks: Array<{ section: StatementSection; rows: MappingRow[] }> = [];
   schema.sections.forEach((section) => {
-    if (tab !== 'all' && tab !== section.id) return;
     // "+ Add sub-line/KPI" rows are schema-mode-only now — adding a line is a structural edit,
     // not a mapping act (see Edit-schema mode's own "+ Add" affordances).
-    const sectionRows = buildSectionRows(schema, section, mode === 'schema' ? passesSchemaSearch : passes).filter(
-      (row) => mode === 'schema' || !row.addInstanceTarget,
-    );
-    if (!sectionRows.length) return;
+    const sectionRows: MappingRow[] = buildSectionRows(schema, section, mode === 'schema' ? passesSchemaSearch : passes)
+      .filter((row) => mode === 'schema' || !row.addInstanceTarget)
+      .map((row) => ({ ...row, sectionName: section.name, sectionId: section.id }));
+    // An empty section still shows in schema mode (so a new one can be given lines), but not under a search.
+    if (!sectionRows.length && (mode !== 'schema' || query)) return;
     rows.push({ id: `group-${section.id}`, __group: section.name });
-    sectionRows.forEach((row) => rows.push({ ...row, sectionName: section.name, sectionId: section.id }));
+    rows.push(...sectionRows);
+    sectionBlocks.push({ section, rows: sectionRows });
   });
+  function toggleSectionCollapsed(sectionId: string) {
+    setCollapsedSectionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  }
 
   // The row shown in the shared side panel — resolved once here (rather than inside the
   // DataTable's own render) so it can be rendered alongside the table instead of inline.
@@ -881,13 +896,12 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     })),
   ];
 
-  const tabs = [
-    { value: 'all', label: 'All' },
-    ...schema.sections.map((section) => {
-      const issues = section.lines.filter((line) => !line.parentLineId && needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0)).length;
-      return { value: section.id, label: section.name, count: issues > 0 ? issues : undefined };
-    }),
-  ];
+  const reviewCountBySectionId = new Map(
+    schema.sections.map((section) => [
+      section.id,
+      section.lines.filter((line) => !line.parentLineId && needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0)).length,
+    ]),
+  );
 
   const statusText = blockers.length
     ? `${blockers.length} required line${blockers.length > 1 ? 's' : ''} unmapped: ${blockers.map((b) => b.line.name).join(', ')}`
@@ -963,13 +977,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         </Alert>
       ) : null}
 
-      <Tabs
-        tabs={tabs}
-        value={tab}
-        onChange={setTab}
-        size="sm"
-        actions={
-          <>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
+            <Icon name={mode === 'schema' ? 'layout-list' : 'git-merge'} size={14} color="var(--text-secondary)" />
+            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-primary)' }}>
+              {mode === 'schema' ? 'Statement structure' : 'Line item mapping'}
+            </span>
             <Input
               size="sm"
               iconLeft="search"
@@ -1005,65 +1019,84 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 {structureRunning ? 'Looking…' : 'Suggest sub-lines'}
               </Button>
             ) : null}
-          </>
-        }
-      />
-
-      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
-        <Card
-          padding="none"
-          icon={mode === 'schema' ? 'layout-list' : 'git-merge'}
-          title={mode === 'schema' ? 'Statement structure' : 'Line item mapping'}
-          actions={
-            <SegmentedControl
-              size="sm"
-              options={[
-                { value: 'mapping', label: 'Edit mapping' },
-                { value: 'schema', label: 'Edit schema' },
-              ]}
-              value={mode}
-              onChange={(value) => setMode(value as 'mapping' | 'schema')}
-            />
-          }
-          footer={
-            mode === 'schema' ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                <Button size="sm" variant="ghost" iconLeft="plus" onClick={addSection}>
-                  Add section
-                </Button>
-                {tab !== 'all' ? (
-                  <Button size="sm" variant="ghost" iconLeft="plus" onClick={() => addLine(tab)}>
-                    Add line to {schema.sections.find((s) => s.id === tab)?.name || 'this section'}
-                  </Button>
-                ) : null}
-              </div>
-            ) : undefined
-          }
-          style={{ flex: '1 1 auto', minWidth: 0 }}
-        >
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey="id"
-            rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-            dense
-            stickyHeader
-            maxHeight="calc(100vh - 420px)"
-            expandedKey={expandedLineId}
-            onRowClick={(row) => {
-              if (row.addInstanceTarget) {
-                requestAddChild(row.addInstanceTarget);
-                return;
-              }
-              if (row.line || row.childLine) setExpandedLineId(expandedLineId === row.id ? null : row.id);
-            }}
-            draggableRows={mode === 'schema'}
-            dragHandleMode="hover"
-            canDragRow={(row: { line?: StatementLine }) => Boolean(row.line)}
-            canDropBeforeRow={(row: { addInstanceTarget?: InstanceTarget }) => !row.addInstanceTarget}
-            onReorder={mode === 'schema' ? reorderLineSchema : undefined}
-          />
-        </Card>
+            <div style={{ marginLeft: 'auto' }}>
+              <SegmentedControl
+                size="sm"
+                options={[
+                  { value: 'mapping', label: 'Edit mapping' },
+                  { value: 'schema', label: 'Edit schema' },
+                ]}
+                value={mode}
+                onChange={(value) => setMode(value as 'mapping' | 'schema')}
+              />
+            </div>
+          </div>
+          <SyncedHScroll style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
+            {sectionBlocks.map(({ section, rows: sectionRows }) => {
+              const issues = mode === 'mapping' ? (reviewCountBySectionId.get(section.id) ?? 0) : 0;
+              const lineCount = sectionRows.filter((r) => r.line).length;
+              return (
+                <SectionCard
+                  key={section.id}
+                  title={section.name}
+                  meta={`${lineCount} line${lineCount === 1 ? '' : 's'}${issues > 0 ? ` · ${issues} need review` : ''}`}
+                  collapsed={collapsedSectionIds.has(section.id)}
+                  onToggle={() => toggleSectionCollapsed(section.id)}
+                  actions={
+                    mode === 'schema' ? (
+                      <Button size="sm" variant="ghost" iconLeft="plus" onClick={() => addLine(section.id)}>
+                        Add line
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  {sectionRows.length === 0 ? (
+                    <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No lines yet.</div>
+                  ) : (
+                    <DataTable
+                      data-hscroll
+                      columns={columns}
+                      rows={sectionRows}
+                      rowKey="id"
+                      rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+                      dense
+                      stickyHeader={false}
+                      expandedKey={expandedLineId}
+                      onRowClick={(row) => {
+                        if (row.addInstanceTarget) {
+                          requestAddChild(row.addInstanceTarget);
+                          return;
+                        }
+                        if (row.line || row.childLine) setExpandedLineId(expandedLineId === row.id ? null : row.id);
+                      }}
+                      draggableRows={mode === 'schema'}
+                      dragHandleMode="hover"
+                      canDragRow={(row: { line?: StatementLine }) => Boolean(row.line)}
+                      canDropBeforeRow={(row: { addInstanceTarget?: InstanceTarget }) => !row.addInstanceTarget}
+                      // A drop at the bottom of this table means the end of THIS section, not of the last one.
+                      onReorder={
+                        mode === 'schema'
+                          ? (lineId: string, beforeKey: string | null) =>
+                              beforeKey === null ? changeSchema(schemaEdit.reorderLine(schema, lineId, section.id, null)) : reorderLineSchema(lineId, beforeKey)
+                          : undefined
+                      }
+                    />
+                  )}
+                </SectionCard>
+              );
+            })}
+            {sectionBlocks.length === 0 ? (
+              <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No lines match.</div>
+            ) : null}
+          </SyncedHScroll>
+          {mode === 'schema' ? (
+            <div>
+              <Button size="sm" variant="ghost" iconLeft="plus" onClick={addSection}>
+                Add section
+              </Button>
+            </div>
+          ) : null}
+        </div>
 
         {mode === 'schema' && (selectedRow?.line || selectedRow?.childLine) ? (
           (() => {
