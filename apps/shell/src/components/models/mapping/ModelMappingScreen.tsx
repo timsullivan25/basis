@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Dialog, Icon, IconButton, Input, Select, Switch, Toast } from '@basis/design-system';
+import { Alert, Badge, Button, Card, Checkbox, DataTable, Dialog, Icon, IconButton, Input, Popover, Select, Switch, Toast } from '@basis/design-system';
 import {
   mappingRepository,
   modelImportRepository,
@@ -27,7 +27,7 @@ import { buildNameIndex, formatFormula } from '../../../lib/engine/resolve';
 import { expectsMapping, isFormulaOnly } from '../../../lib/lineRole';
 import { evaluateModel } from '../../../lib/engine/evaluate';
 import { cloneStatementSchemaStructure } from '../../../lib/statementSchemaClone';
-import { addChildLine, effectiveLineKind, removeChildLine } from '../../../lib/statementLineChildren';
+import { addChildLine, childrenOf, effectiveLineKind, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
 import { findSchemaDependents, hasSchemaDependents, type SchemaLineDependents } from '../../../lib/lineDependents';
 import { buildSectionRows, resolveFlatRowDropTarget } from '../../../lib/statementRowBuilder';
@@ -127,7 +127,12 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const [manualHistoricals, setManualHistoricals] = useState<Record<string, (number | null)[]>>({});
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
+  // The three view filters below all live together in the toolbar's "Filters" popover (see the
+  // render below) — kept as separate booleans, OR'd together in passesLine, rather than one enum,
+  // since "needs review" and "unmapped only" are meant to be combinable (show either).
   const [onlyReview, setOnlyReview] = useState(false);
+  const [unmappedOnly, setUnmappedOnly] = useState(false);
+  const [hideUnmappable, setHideUnmappable] = useState(false);
   const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
   const [importedLinesOpen, setImportedLinesOpen] = useState(false);
   const [mappedLinesOpen, setMappedLinesOpen] = useState(false);
@@ -293,9 +298,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
     () => allLines.filter(({ line }) => !isDebtScheduleGenerated(line) && expectsMapping(line) && !parentLineIds.has(line.id)),
     [allLines, parentLineIds],
   );
+  const mappableLineIds = useMemo(() => new Set(mappableLines.map(({ line }) => line.id)), [mappableLines]);
   const mappedCount = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) > 0).length;
   const blockers = mappableLines.filter(({ line }) => isMissingRequired(line, mapping[line.id]));
   const reviewLines = mappableLines.filter(({ line }) => needsReview(line, mapping[line.id]));
+  // Broader than reviewLines — needsReview only flags a Required line for being unmapped
+  // (isMissingRequired), so an unmapped Optional line never shows up there at all.
+  const unmappedLines = mappableLines.filter(({ line }) => (mapping[line.id]?.sourceLineIds.length ?? 0) === 0);
 
   const timeline = useMemo(() => (workbook ? buildTimeline(workbook.periods) : []), [workbook]);
   const historicals = useMemo(() => {
@@ -599,8 +608,16 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const liveEvaluation = evaluation;
 
   const query = search.trim().toLowerCase();
-  function passes(line: StatementLine): boolean {
-    if (onlyReview && !needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0)) return false;
+  function passesLine(line: StatementLine): boolean {
+    if (hideUnmappable && !mappableLineIds.has(line.id)) return false;
+    // Two independent "what needs my attention" views, OR'd together rather than one enum, so
+    // both can be on at once (a Required line with a shaky match AND an unmapped Optional line
+    // are both worth seeing) — see this state's own comment.
+    if (onlyReview || unmappedOnly) {
+      const matchesReview = onlyReview && needsReview(line, mapping[line.id], (childCountByLineId.get(line.id) ?? 0) > 0);
+      const matchesUnmapped = unmappedOnly && mappableLineIds.has(line.id) && (mapping[line.id]?.sourceLineIds.length ?? 0) === 0;
+      if (!matchesReview && !matchesUnmapped) return false;
+    }
     if (query) {
       const sourceNames = (mapping[line.id]?.sourceLineIds ?? [])
         .map((id) => wb.lines.find((source) => source.id === id)?.name ?? '')
@@ -611,9 +628,21 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   }
   // With mapping settings off there's no mapping status to filter by, and no source-line names to
   // search — just a plain name search.
-  function passesSchemaSearch(line: StatementLine): boolean {
+  function passesSchemaSearchLine(line: StatementLine): boolean {
     return !query || line.name.toLowerCase().includes(query);
   }
+  /** buildSectionRows only filters TOP-LEVEL lines — a surviving line's children always ride
+   *  along with it unfiltered (see its own doc comment). Without this, "Needs review" or a search
+   *  for a child's own name would hide a parent (and therefore the very child that matches) the
+   *  moment the parent itself doesn't also match — e.g. a superseded Revenue parent, whose own
+   *  stale mapping is inactive and so never "needs review", hiding a sub-line under it that does.
+   *  So a top-level line passes if it matches directly OR any of its own children do. */
+  const activeSchema = schema;
+  function withChildren(lineMatches: (line: StatementLine) => boolean): (line: StatementLine) => boolean {
+    return (line) => lineMatches(line) || childrenOf(activeSchema, line.id).some(lineMatches);
+  }
+  const passes = withChildren(passesLine);
+  const passesSchemaSearch = withChildren(passesSchemaSearchLine);
 
   // Computed once and reused by every column (target/source/status/match) so a superseded
   // parent reads consistently across the whole row, not just the one column that happened to
@@ -679,9 +708,23 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         }
         if (row.childLine) {
           const name = row.childLine.name.trim();
+          // A sub-line is never superseded/debt-generated/formula-only itself (see
+          // isDebtScheduleGenerated's own doc comment — that's only ever a `.line` row), so its dot
+          // is the plain missing/low-confidence/ambiguous check, same as an ordinary top-level line.
+          const cm = mapping[row.childLine.id];
+          const missing = showMappingSettings && isMissingRequired(row.childLine, cm);
+          const cAmbiguous = showMappingSettings && isAmbiguous(cm);
+          const cLow = showMappingSettings && (isLowConfidence(cm) || cAmbiguous);
+          const cDot = missing ? 'var(--red-600)' : cLow ? 'var(--violet-600)' : null;
           return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', paddingLeft: 'var(--space-7)' }}>
               <Icon name="corner-down-right" size={11} color="var(--text-tertiary)" />
+              {showMappingSettings ? (
+                <span
+                  title={missing ? 'Missing required line' : cAmbiguous ? 'Multiple matches — pick one' : cLow ? 'Low confidence match' : undefined}
+                  style={{ width: 6, height: 6, borderRadius: '50%', flex: '0 0 auto', background: cDot ?? 'transparent' }}
+                />
+              ) : null}
               <span style={{ fontSize: 'var(--text-sm)', color: name ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
                 {name || 'Untitled — click to name'}
               </span>
@@ -827,9 +870,10 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       key: 'status',
       label: 'Status',
       width: 110,
-      render: (_: unknown, row: { line?: StatementLine }) => {
-        if (!row.line) return null;
-        const meta = getRequiredMeta(row.line);
+      render: (_: unknown, row: { line?: StatementLine; childLine?: StatementLine }) => {
+        const line = row.line ?? row.childLine;
+        if (!line) return null;
+        const meta = getRequiredMeta(line);
         return (
           <Badge tone={meta.tone} size="sm">
             {meta.label}
@@ -841,11 +885,12 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       key: 'match',
       label: 'Match',
       width: 130,
-      render: (_: unknown, row: { line?: StatementLine }) => {
-        if (!row.line) return null;
-        if ((childCountByLineId.get(row.line.id) ?? 0) > 0 || isDebtScheduleGenerated(row.line)) return null;
-        const m = mapping[row.line.id];
-        if (isFormulaOnly(row.line) || !m) return null;
+      render: (_: unknown, row: { line?: StatementLine; childLine?: StatementLine }) => {
+        const line = row.line ?? row.childLine;
+        if (!line) return null;
+        if (row.line && ((childCountByLineId.get(row.line.id) ?? 0) > 0 || isDebtScheduleGenerated(row.line))) return null;
+        const m = mapping[line.id];
+        if (isFormulaOnly(line) || !m) return null;
         const meta = MATCH_METHOD_META[m.method];
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
@@ -907,8 +952,16 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       : `All target lines mapped and above threshold. Ready to save ${workbook.periods.length} periods.`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-8)', flexWrap: 'wrap' }}>
+    // Fills the full-screen overlay AppShell renders this in (position: fixed; inset: 0 — a
+    // definite height, unlike a max-height-only box) rather than guessing a pixel budget for
+    // "everything above/below the scrollable middle" the way an earlier version of this did.
+    // Header/metrics/alert/footer stay flex: 0 0 auto (their natural size, never shrunk); the
+    // middle row is the one flex: 1 1 auto, min-height: 0 item, so it — and only it — absorbs
+    // whatever space is actually left, and the OVERLAY itself never needs to scroll: each of its
+    // two children (the section-table column and the side panel) fills that row via stretch and
+    // scrolls internally on its own.
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 'var(--space-8)', flexWrap: 'wrap', flex: '0 0 auto' }}>
         <ImportStepper steps={STEPS} current={2} />
 
         <div style={{ display: 'flex', alignItems: 'stretch', gap: 'var(--space-4)' }}>
@@ -945,7 +998,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-6)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 'var(--space-6)', flex: '0 0 auto' }}>
         <Card padding="sm">
           <MetricRow label="Lines imported" value={String(workbook.lines.length)} icon="table-2" onDrill={() => setImportedLinesOpen(true)} />
         </Card>
@@ -963,20 +1016,24 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
             value={String(reviewLines.length)}
             icon="alert-triangle"
             tone={reviewLines.length ? 'caution' : undefined}
-            onDrill={reviewLines.length ? () => setOnlyReview(true) : undefined}
+            onDrill={reviewLines.length ? () => setOnlyReview((prev) => !prev) : undefined}
           />
         </Card>
       </div>
 
       {blockers.length > 0 || reviewLines.length > 0 ? (
-        <Alert tone="caution" compact>
+        <Alert tone="caution" compact style={{ flex: '0 0 auto' }}>
           {statusText}
         </Alert>
       ) : null}
 
-      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 'var(--space-4)' }}>
+      {/* The one region that grows/shrinks — see this component's own return-statement comment.
+          `alignItems` defaults to 'stretch' here (deliberately not overridden), so both the
+          section-table column and the side panel stretch to fill this row's height and scroll
+          internally, rather than sizing to their own content and leaving the OVERLAY to scroll. */}
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', flex: '1 1 auto', minHeight: 0 }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 'var(--space-4)', flex: '0 0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
               <Icon name={showMappingSettings ? 'git-merge' : 'layout-list'} size={14} color="var(--text-secondary)" />
               <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
@@ -993,9 +1050,31 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 style={{ width: 220 }}
               />
               {showMappingSettings ? (
-                <Button size="sm" iconLeft="filter" selected={onlyReview} onClick={() => setOnlyReview(!onlyReview)}>
-                  Needs review · {reviewLines.length}
-                </Button>
+                <Popover
+                  placement="bottom-start"
+                  title="Filters"
+                  trigger={
+                    <Button size="sm" iconLeft="filter" selected={onlyReview || unmappedOnly || hideUnmappable}>
+                      Filters{[onlyReview, unmappedOnly, hideUnmappable].filter(Boolean).length ? ` · ${[onlyReview, unmappedOnly, hideUnmappable].filter(Boolean).length}` : ''}
+                    </Button>
+                  }
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)', width: 240 }}>
+                    <Checkbox label={`Needs review · ${reviewLines.length}`} checked={onlyReview} onChange={setOnlyReview} />
+                    <Checkbox
+                      label={`Unmapped only · ${unmappedLines.length}`}
+                      description="Includes Optional lines — Needs review only flags Required ones."
+                      checked={unmappedOnly}
+                      onChange={setUnmappedOnly}
+                    />
+                    <Checkbox
+                      label="Hide lines that can't be mapped"
+                      description="Calculated, linked and check lines, and lines superseded by sub-lines."
+                      checked={hideUnmappable}
+                      onChange={setHideUnmappable}
+                    />
+                  </div>
+                </Popover>
               ) : null}
               {showMappingSettings && (({ fill, consolidate, checks }) => fill || consolidate || checks)(loadAiSettings().passes) ? (
                 <Button
@@ -1024,7 +1103,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
               <Switch size="sm" label="Show mapping settings" checked={showMappingSettings} onChange={setShowMappingSettings} />
             </div>
           </div>
-          <SyncedHScroll style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
+          <SyncedHScroll style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
             {sectionBlocks.map(({ section, rows: sectionRows }) => {
               const issues = showMappingSettings ? (reviewCountBySectionId.get(section.id) ?? 0) : 0;
               const lineCount = sectionRows.filter((r) => r.line).length;
@@ -1077,7 +1156,7 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
               <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No lines match.</div>
             ) : null}
           </SyncedHScroll>
-          <div>
+          <div style={{ flex: '0 0 auto' }}>
             <Button size="sm" variant="ghost" iconLeft="plus" onClick={addSection}>
               Add section
             </Button>
@@ -1133,13 +1212,16 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                 onDeleteChildLine={isChild ? requestDeleteChild : undefined}
                 onClose={() => setExpandedLineId(null)}
                 mapping={mappingInput}
+                // No explicit height here — `align-items: stretch` (the row's default, two edits
+                // up) already sizes this to match the section-table column next to it, which is
+                // what lets its own accordion body scroll internally instead of the page.
               />
             );
           })()
         ) : null}
       </div>
 
-      <div style={{ position: 'sticky', bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-8)', padding: 'var(--space-5) 0', background: 'var(--surface-app)', borderTop: '1px solid var(--border-default)' }}>
+      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-8)', padding: 'var(--space-5) 0', background: 'var(--surface-app)', borderTop: '1px solid var(--border-default)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
           <Icon name={blockers.length ? 'alert-triangle' : reviewLines.length ? 'info' : 'check-circle-2'} size={14} color={blockers.length ? 'var(--text-caution)' : reviewLines.length ? 'var(--text-secondary)' : 'var(--text-positive)'} />
           <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>{statusText}</span>

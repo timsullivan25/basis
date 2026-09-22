@@ -1,7 +1,6 @@
-import { Button } from '@basis/design-system';
+import { Badge, Button } from '@basis/design-system';
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
-import { sourceLineLabel } from '../../../lib/sourceLineLabel';
 import { SourceLineChecklist } from './SourceLineChecklist';
 import type { LineSettingsSection } from '../../common/LineSettingsPanel';
 
@@ -104,6 +103,7 @@ export function buildMappingRowSections({
     ? [...mapping.sourceLineIds, ...(mapping.alternativeSourceLineIds ?? [])].map(sourceById).filter((l): l is ParsedSourceLine => !!l)
     : [];
   const lastPeriodIndex = workbook.periods.length - 1;
+  const sourceLines = mapping.sourceLineIds.map(sourceById).filter((l): l is ParsedSourceLine => !!l);
 
   return [
     ...(candidates.length > 0
@@ -147,20 +147,53 @@ export function buildMappingRowSections({
     {
       key: 'match',
       label: 'Match details',
-      summary: methodMeta.label,
+      // "Approved" surfaces here too (not just inside, below) so it reads at a glance with the
+      // section collapsed — otherwise the only trace of a reviewed match disappears the moment
+      // approving it silences isLowConfidence/isAmbiguous (see mappingFormatting.ts), which is the
+      // one thing that made it show up as needing review in the first place.
+      summary: mapping.approved ? `${methodMeta.label} · Approved` : methodMeta.label,
       content: (
         <div>
+          {mapping.approved ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-2) 0' }}>
+              <Badge tone="positive" size="sm" icon="check-circle-2">Approved</Badge>
+              <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>Reviewed and confirmed as-is.</span>
+            </div>
+          ) : null}
           {[
             ['Method', METHOD_DESCRIPTIONS[mapping.method]],
             ['Confidence', mapping.method === 'none' ? '—' : mapping.confidence.toFixed(2)],
-            ['Source lines', mapping.sourceLineIds.length ? mapping.sourceLineIds.map((id) => { const l = sourceById(id); return l ? sourceLineLabel(l) : ''; }).join(', ') : '—'],
-            ['Aggregation', mapping.sourceLineIds.length > 1 ? `Sum of ${mapping.sourceLineIds.length} lines` : mapping.sourceLineIds.length ? 'One-to-one' : '—'],
           ].map(([label, value]) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-6)', padding: 'var(--space-2) 0' }}>
               <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>{label}</span>
               <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-body)', textAlign: 'right' }}>{value}</span>
             </div>
           ))}
+          <div style={{ padding: 'var(--space-2) 0' }}>
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Source lines</span>
+            {/* One per line, left-aligned — a comma-joined "Group — Name, Group — Name, ..." paragraph
+                wraps unreadably once there are more than a couple. The group prefix is muted rather
+                than dashed off, so a long list scans as a column of names with faint context, not a
+                wall of repeated punctuation. */}
+            <div style={{ marginTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              {sourceLines.length ? (
+                sourceLines.map((line) => (
+                  <div key={line.id} style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-body)' }}>
+                    {line.group ? <span style={{ color: 'var(--text-tertiary)' }}>{line.group}. </span> : null}
+                    {line.name}
+                  </div>
+                ))
+              ) : (
+                <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-body)' }}>—</span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-6)', padding: 'var(--space-2) 0' }}>
+            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Aggregation</span>
+            <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', color: 'var(--text-body)', textAlign: 'right' }}>
+              {mapping.sourceLineIds.length > 1 ? `Sum of ${mapping.sourceLineIds.length} lines` : mapping.sourceLineIds.length ? 'One-to-one' : '—'}
+            </span>
+          </div>
           <p style={{ margin: 'var(--space-5) 0 0', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-serif)', color: 'var(--text-body)' }}>{mapping.note}</p>
 
           {mapping.method === 'ai' && !mapping.approved && mapping.previous ? (

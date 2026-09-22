@@ -32,7 +32,14 @@ interface LineSettingsPanelProps {
  *  supplies its own accordion sections built from its existing detail components. */
 export function LineSettingsPanel({ title, subtitle, icon, onClose, sections, openKeys, onToggleSection, beforeSections, footer, style }: LineSettingsPanelProps) {
   return (
-    <div style={{ width: 420, flex: '0 0 auto', ...style }}>
+    // A flex column, not just a maxHeight box: `height: 100%` on the Card below never resolves
+    // against a parent whose own height comes only from `max-height` (percentages need a definite
+    // parent height, which max-height alone doesn't give — the box's content just overflows it
+    // instead of the Card ever actually being constrained). Sizing the Card with `flex: 1 1 auto`
+    // against this flex container sidesteps that: flex-grow/shrink distribute this box's own
+    // (max-height-capped) space directly, no percentage resolution involved, so the Card is
+    // reliably clipped to it and its own overflow:auto body can do the actual scrolling.
+    <div style={{ width: 420, flex: '0 0 auto', display: 'flex', flexDirection: 'column', minHeight: 0, ...style }}>
       <Card
         title={title}
         subtitle={subtitle}
@@ -40,7 +47,7 @@ export function LineSettingsPanel({ title, subtitle, icon, onClose, sections, op
         actions={<IconButton icon="x" label="Close" size="sm" variant="ghost" onClick={onClose} />}
         footer={footer}
         padding="none"
-        style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+        style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}
         bodyStyle={{ overflow: 'auto', minHeight: 0 }}
       >
         {beforeSections ? (
