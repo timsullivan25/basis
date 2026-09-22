@@ -147,7 +147,11 @@ export function MappingReviewDialog({ items, summary, schema, workbook, mapping,
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-7)' }}>
         {sections.map((section, i) => (
-          <div key={section.key} style={i > 0 ? { paddingTop: 'var(--space-6)', borderTop: '1px solid var(--border-subtle)' } : undefined}>
+          // Keyed by line id + section key, not just section key — a section's key ('mapping',
+          // 'match', ...) is the same literal across every queue item, so keying on it alone would
+          // have React reuse the same SourceLineChecklist instance (and its own search/scope state)
+          // as Next/Previous moves to a different line entirely.
+          <div key={`${item.id}-${section.key}`} style={i > 0 ? { paddingTop: 'var(--space-6)', borderTop: '1px solid var(--border-subtle)' } : undefined}>
             <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>
               {section.label}
             </div>
