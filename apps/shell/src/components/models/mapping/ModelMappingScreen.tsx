@@ -979,47 +979,51 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
 
       <div style={{ display: 'flex', flexDirection: 'row', gap: 'var(--space-6)', alignItems: 'flex-start' }}>
         <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
-            <Icon name={mode === 'schema' ? 'layout-list' : 'git-merge'} size={14} color="var(--text-secondary)" />
-            <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-primary)' }}>
-              {mode === 'schema' ? 'Statement structure' : 'Line item mapping'}
-            </span>
-            <Input
-              size="sm"
-              iconLeft="search"
-              placeholder={mode === 'schema' ? 'Find a line' : 'Find target or source line'}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 220 }}
-            />
-            {mode === 'mapping' ? (
-              <Button size="sm" iconLeft="filter" selected={onlyReview} onClick={() => setOnlyReview(!onlyReview)}>
-                Needs review · {reviewLines.length}
-              </Button>
-            ) : null}
-            {mode === 'mapping' && (({ fill, consolidate, checks }) => fill || consolidate || checks)(loadAiSettings().passes) ? (
-              <Button
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 'var(--space-4)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
+              <Icon name={mode === 'schema' ? 'layout-list' : 'git-merge'} size={14} color="var(--text-secondary)" />
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                {mode === 'schema' ? 'Statement structure' : 'Line item mapping'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+              <Input
                 size="sm"
-                iconLeft="sparkles"
-                disabled={aiState.status === 'running'}
-                onClick={reviewWithAi}
-                title="Ask AI to (1) place unmapped and tied lines, (2) add leftover lines onto existing matches, and (3) use failing checks to find what's missing. Sends line names and latest values to the model."
-              >
-                {aiState.status === 'running' ? `${{ fill: 'Matching', consolidate: 'Consolidating', checks: 'Checking' }[aiState.step]}…` : `Review with AI · ${aiCandidateCount}`}
-              </Button>
-            ) : null}
-            {mode === 'mapping' && canSuggestStructure && loadAiSettings().passes.subLines ? (
-              <Button
-                size="sm"
-                iconLeft="sparkles"
-                disabled={structureRunning}
-                onClick={suggestSubLines}
-                title="Ask AI which unmatched imported lines are sub-lines (segments, EBITDA adjustments, debt tranches). Sends line names and latest values to the model."
-              >
-                {structureRunning ? 'Looking…' : 'Suggest sub-lines'}
-              </Button>
-            ) : null}
-            <div style={{ marginLeft: 'auto' }}>
+                iconLeft="search"
+                placeholder={mode === 'schema' ? 'Find a line' : 'Find target or source line'}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{ width: 220 }}
+              />
+              {mode === 'mapping' ? (
+                <Button size="sm" iconLeft="filter" selected={onlyReview} onClick={() => setOnlyReview(!onlyReview)}>
+                  Needs review · {reviewLines.length}
+                </Button>
+              ) : null}
+              {mode === 'mapping' && (({ fill, consolidate, checks }) => fill || consolidate || checks)(loadAiSettings().passes) ? (
+                <Button
+                  size="sm"
+                  iconLeft="sparkles"
+                  disabled={aiState.status === 'running'}
+                  onClick={reviewWithAi}
+                  title="Ask AI to (1) place unmapped and tied lines, (2) add leftover lines onto existing matches, and (3) use failing checks to find what's missing. Sends line names and latest values to the model."
+                >
+                  {aiState.status === 'running' ? `${{ fill: 'Matching', consolidate: 'Consolidating', checks: 'Checking' }[aiState.step]}…` : `Review with AI · ${aiCandidateCount}`}
+                </Button>
+              ) : null}
+              {mode === 'mapping' && canSuggestStructure && loadAiSettings().passes.subLines ? (
+                <Button
+                  size="sm"
+                  iconLeft="sparkles"
+                  disabled={structureRunning}
+                  onClick={suggestSubLines}
+                  title="Ask AI which unmatched imported lines are sub-lines (segments, EBITDA adjustments, debt tranches). Sends line names and latest values to the model."
+                >
+                  {structureRunning ? 'Looking…' : 'Suggest sub-lines'}
+                </Button>
+              ) : null}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <SegmentedControl
                 size="sm"
                 options={[
