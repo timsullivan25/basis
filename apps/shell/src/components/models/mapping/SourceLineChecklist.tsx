@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Checkbox, Input } from '@basis/design-system';
+import { Button, Checkbox, Input, Sparkline } from '@basis/design-system';
 import type { ParsedSourceLine, ParsedWorkbook } from '../../../data';
 import { formatPeriodValue } from './mappingFormatting';
 import { searchSourceLines } from '../../../lib/searchSourceLines';
@@ -162,21 +162,31 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
 
 function SourceLineRow({ line, checked, onToggle, lastPeriodIndex }: { line: ParsedSourceLine; checked: boolean; onToggle: () => void; lastPeriodIndex: number }) {
   const [hovered, setHovered] = useState(false);
+  // A shape hint, not a chart — lets two similarly-named candidates (a "Beginning" vs "Ending"
+  // balance, say) be told apart at a glance instead of by name alone. Gaps (an unreported period)
+  // are just dropped rather than interpolated; skipped entirely below one real point, where a line
+  // would be meaningless anyway. Sits in a flex group with the value that wraps onto its own line
+  // rather than needing a separate "wide" mode — free real estate uses it, a cramped one (the side
+  // panel) just drops it below the label instead of squeezing three things onto one row.
+  const trend = line.values.filter((v): v is number => v !== null);
   return (
     <div
       onClick={onToggle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-6)',
+        display: 'flex', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between', gap: 'var(--space-4)',
         padding: 'var(--space-4)', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)',
         background: checked ? 'var(--surface-selected)' : hovered ? 'var(--surface-hover)' : 'transparent',
       }}
     >
       <Checkbox checked={checked} label={line.name} description={[line.section, line.group].filter(Boolean).join(' · ')} onChange={onToggle} />
-      <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-secondary)', flex: '0 0 auto' }}>
-        {formatPeriodValue(line.values[lastPeriodIndex] ?? null)}
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', flex: '0 0 auto', marginLeft: 'auto' }}>
+        {trend.length > 1 ? <Sparkline data={trend} width={64} height={20} /> : null}
+        <span style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)', fontVariantNumeric: 'var(--numeric-tabular)', color: 'var(--text-secondary)', minWidth: 56, textAlign: 'right' }}>
+          {formatPeriodValue(line.values[lastPeriodIndex] ?? null)}
+        </span>
+      </div>
     </div>
   );
 }
