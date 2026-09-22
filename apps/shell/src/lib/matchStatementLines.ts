@@ -3,9 +3,13 @@ import { isFormulaOnly } from './lineRole';
 
 const FUZZY_THRESHOLD = 0.6;
 
-/** Case/punctuation/whitespace-insensitive form of a line name, shared with the AI importer's evidence scan so both agree on what "matches". */
+/**
+ * Case/punctuation/whitespace-insensitive form of a line name, shared with the AI importer's evidence scan and the
+ * summary-line lookup so all of them agree on what "matches". `%` and `/` are kept as their own tokens because they
+ * change what a line is ("% Revenue" is not "Revenue", "EV / EBITDA" is not "EV EBITDA"); every other symbol is noise.
+ */
 export function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return value.trim().toLowerCase().replace(/[%/]/g, ' $& ').replace(/[^a-z0-9%/]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function levenshtein(a: string, b: string): number {

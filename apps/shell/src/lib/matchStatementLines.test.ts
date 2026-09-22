@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchStatementLines } from './matchStatementLines';
+import { matchStatementLines, normalize } from './matchStatementLines';
 import type { LineRole, ParsedSourceLine, StatementLine, StatementSection } from '../data';
 
 function line(name: string, role: LineRole): StatementLine {
@@ -18,6 +18,22 @@ function line(name: string, role: LineRole): StatementLine {
 }
 
 const source = (name: string): ParsedSourceLine => ({ id: `src-${name}`, section: 'IS', name, values: [1] });
+
+describe('normalize', () => {
+  it('ignores case, whitespace and most symbols', () => {
+    expect(normalize('  Property, Plant, & Equipment ')).toBe(normalize('property plant equipment'));
+  });
+
+  it('keeps % and / because they change what a line is', () => {
+    expect(normalize('% Revenue')).not.toBe(normalize('Revenue'));
+    expect(normalize('EV / EBITDA')).not.toBe(normalize('EV EBITDA'));
+    expect(normalize('EV/EBITDA')).toBe(normalize('EV / EBITDA'));
+  });
+
+  it('does not join hyphenated words', () => {
+    expect(normalize('Non-Current Assets')).not.toBe(normalize('Noncurrent Assets'));
+  });
+});
 
 describe('matchStatementLines', () => {
   it('matches a Required or Optional line by name', () => {
