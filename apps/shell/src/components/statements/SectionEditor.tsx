@@ -15,6 +15,17 @@ import { DEFAULT_CHECK_TOLERANCE, NUMBER_FORMAT_META, ROW_FORMAT_META, SIGN_META
 import { LineSettingsPanel, type LineSettingsSection } from '../common/LineSettingsPanel';
 import { DebtTranchePropertiesEditor, NumberInput, PercentInput } from '../models/instances/DebtTranchePropertiesEditor';
 import type { DebtTrancheProperties } from '../../data';
+import { buildMappingRowSections, type MappingRowSectionsProps } from '../models/mapping/mappingRowSections';
+import { buildInstanceMappingSections, type InstanceMappingSectionsProps } from '../models/mapping/instanceMappingSections';
+
+/** What to splice into this panel as its "Mapping" section(s), right after Line properties and
+ *  before Structure/Calculation — supplied only by ModelMappingScreen, only while mapping is
+ *  turned on (see its own showMappingSettings). Undefined everywhere else (the template builder's
+ *  StatementDefinitionsScreen/SchemaStructureEditor has no concept of mapping at all), which keeps
+ *  this panel exactly as it always was there. */
+export type MappingSectionsInput =
+  | ({ kind: 'top' } & Omit<MappingRowSectionsProps, 'target'>)
+  | ({ kind: 'child' } & Omit<InstanceMappingSectionsProps, 'line' | 'manualEntry' | 'onToggleManualEntry'>);
 
 const ROW_FORMAT_OPTIONS = Object.entries(ROW_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
 const NUMBER_FORMAT_OPTIONS = Object.entries(NUMBER_FORMAT_META).map(([value, meta]) => ({ value, label: meta.label }));
@@ -454,6 +465,8 @@ export interface LineSettingsPanelContentProps {
   onDeleteChildLine?: (lineId: string) => void;
   onClose: () => void;
   style?: CSSProperties;
+  /** See MappingSectionsInput's own doc comment. */
+  mapping?: MappingSectionsInput;
 }
 
 type StandardMethod = 'flat' | 'growth' | 'percent-of' | 'days-of' | 'roll-off';
@@ -504,7 +517,7 @@ const mutedNote = { fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' } 
  *  be forgotten. Callers key it by line id, which is what resets its local state on selection. */
 export function LineSettingsPanelContent({
   line, isChild, isKpi, isDebtLine, debtProperties, onChangeDebtProperties,
-  lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onSetRole, onDeleteChildLine, onClose, style,
+  lineGroups, drivers, nameIndex, onUpdateLine, onSetProjection, onSetRole, onDeleteChildLine, onClose, style, mapping,
 }: LineSettingsPanelContentProps) {
   const [aliasDraft, setAliasDraft] = useState('');
   // A choice that needs a basis line isn't committed to the line until one is picked — held here
@@ -512,7 +525,18 @@ export function LineSettingsPanelContent({
   const [pendingMethod, setPendingMethod] = useState<'percent-of' | 'days-of' | 'roll-off' | null>(null);
   // A Linked line's Flip sign switch — held here so it can be set before a basis line is chosen.
   const [flipSign, setFlipSign] = useState(line.projection?.method === 'link' && line.projection.flipSign === true);
-  const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
+  // A child's manual-entry vs. checklist toggle (see instanceMappingSections.tsx) — lives here,
+  // not in that section builder, since it's a plain function now; unconditional like every other
+  // hook here even though it only matters for mapping?.kind === 'child', since which branch
+  // applies can't change without this whole panel remounting first (ModelMappingScreen keys it by
+  // line id) — see this component's own doc comment.
+  const [manualEntry, setManualEntry] = useState(
+    () => mapping?.kind === 'child' && mapping.sourceLineIds.length === 0 && mapping.manualHistoricals.some((v) => v !== null),
+  );
+  // Mapping's own section(s) (when present) start open alongside everything else here — see
+  // DEFAULT_OPEN_SECTIONS' own comment. Keys that end up unused by this particular line (e.g.
+  // 'candidates' when there's no ambiguity) are harmless — Accordion only checks membership.
+  const [openKeys, setOpenKeys] = useState<string[]>(() => (mapping ? [...DEFAULT_OPEN_SECTIONS, 'mapping', 'candidates', 'match'] : DEFAULT_OPEN_SECTIONS));
 
   const role = line.role;
   const sourced = role === 'required' || role === 'optional';
@@ -832,6 +856,17 @@ export function LineSettingsPanelContent({
     },
   ];
   if (!isChild) sections.push({ key: 'properties', label: 'Line properties', content: propertiesContent });
+  // Mapping goes right after Line properties (or, for a child, right after Line name — it has no
+  // properties section) and before Structure/Calculation, whenever mapping is turned on. See
+  // MappingSectionsInput's own doc comment for why this is undefined everywhere but
+  // ModelMappingScreen.
+  if (mapping) {
+    sections.push(
+      ...(mapping.kind === 'top'
+        ? buildMappingRowSections({ target: line, ...mapping })
+        : buildInstanceMappingSections({ line, ...mapping, manualEntry, onToggleManualEntry: () => setManualEntry((prev) => !prev) })),
+    );
+  }
   // Calculated and Check lines have no structure (no line type, sub-lines or tranche properties).
   if (isChild || sourced) sections.push({ key: 'structure', label: 'Structure', content: structureContent });
 

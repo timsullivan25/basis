@@ -647,15 +647,15 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   }
 
   /** Opens the same mapping/schema overlay FinancialsTab's "Edit mapping" button does, straight
-   *  from the workspace — no detour back through the company page. Jumps to Edit-schema mode
-   *  since restructuring, not reviewing a fresh import, is almost always why this gets clicked
+   *  from the workspace — no detour back through the company page. Starts with mapping settings
+   *  off since restructuring, not reviewing a fresh import, is almost always why this gets clicked
    *  from here. */
   function startEditStatement() {
     if (!model || !modelImport) return;
     onOpenMapping({
       company,
       editing: { model, modelImport },
-      initialMode: 'schema',
+      initialShowMapping: false,
       onCancel: () => {},
       onSaved: (updatedModel) => {
         void refreshAfterMappingSession(updatedModel);

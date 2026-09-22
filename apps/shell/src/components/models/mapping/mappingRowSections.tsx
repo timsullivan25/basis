@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import { Button } from '@basis/design-system';
 import type { LineMapping, ParsedSourceLine, ParsedWorkbook, StatementLine } from '../../../data';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, MATCH_METHOD_META } from './mappingFormatting';
 import { sourceLineLabel } from '../../../lib/sourceLineLabel';
 import { SourceLineChecklist } from './SourceLineChecklist';
-import { LineSettingsPanel, type LineSettingsSection } from '../../common/LineSettingsPanel';
+import type { LineSettingsSection } from '../../common/LineSettingsPanel';
 
 const METHOD_DESCRIPTIONS: Record<string, string> = {
   exact: 'Exact name match',
@@ -16,7 +15,7 @@ const METHOD_DESCRIPTIONS: Record<string, string> = {
   none: 'No match',
 };
 
-interface MappingRowDetailProps {
+export interface MappingRowSectionsProps {
   target: StatementLine;
   sectionName: string;
   mapping: LineMapping;
@@ -40,87 +39,62 @@ interface MappingRowDetailProps {
    *  calculated line handled the normal way, never reaching this component with this flag set. */
   calculatedByDebtSchedule?: boolean;
   /** True for a Calculated or Check line (see lib/lineRole.ts) — its formula is its value in every
-   *  period, so nothing is mapped to it; the panel is read-only with the formula shown. */
+   *  period, so nothing is mapped to it; the section is read-only with the formula shown. */
   calculated?: boolean;
   /** Display text for `target.formula` (see lib/engine/resolve.ts's formatFormula) — shown
    *  alongside the calculatedByDebtSchedule explanation so a generated line's own roll-forward
    *  is inspectable without leaving the mapping screen. Omitted (or empty) shows no formula row. */
   formula?: string;
-  onClose: () => void;
 }
 
-const DEFAULT_OPEN_SECTIONS = ['mapping', 'match'];
-
-/** Mapping-only now — name/projection/structure/debt-tranche editing all live in Edit-schema
- *  mode's shared LineSettingsPanelContent instead (see SectionEditor.tsx). This component's job
- *  is strictly the mapping act: which source line(s) feed this target, and reviewing/approving
- *  the match. */
-export function MappingRowDetail({
+/** Builds the "Mapping" accordion section(s) — which source line(s) feed this target, and
+ *  reviewing/approving the match — spliced into the shared line-settings panel
+ *  (LineSettingsPanelContent, see SectionEditor.tsx) right after Line properties, whenever mapping
+ *  is turned on (ModelMappingScreen's showMappingSettings). Name/projection/structure editing
+ *  lives in the rest of that shared panel; this is strictly the mapping act. */
+export function buildMappingRowSections({
   target, sectionName, mapping, workbook, onSetSourceLines, onApprove, onReject, supersededByInstanceCount,
-  calculatedByDebtSchedule, calculated, formula, onClose,
-}: MappingRowDetailProps) {
-  const [openKeys, setOpenKeys] = useState<string[]>(DEFAULT_OPEN_SECTIONS);
-  const toggleSection = (key: string) => setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
-
+  calculatedByDebtSchedule, calculated, formula,
+}: MappingRowSectionsProps): LineSettingsSection[] {
   if (supersededByInstanceCount) {
-    return (
-      <LineSettingsPanel
-        title={target.name}
-        subtitle="Mapping"
-        icon="git-merge"
-        onClose={onClose}
-        openKeys={openKeys}
-        onToggleSection={toggleSection}
-        sections={[
-          {
-            key: 'mapping',
-            label: 'Mapping',
-            content: (
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-                {target.name} is broken into {supersededByInstanceCount} sub-line{supersededByInstanceCount > 1 ? 's' : ''} — its
-                value is the sum of those for every period, so direct mapping here is disabled. Manage its sub-lines from
-                Edit schema mode.
-              </div>
-            ),
-          },
-        ]}
-      />
-    );
+    return [
+      {
+        key: 'mapping',
+        label: 'Mapping',
+        content: (
+          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+            {target.name} is broken into {supersededByInstanceCount} sub-line{supersededByInstanceCount > 1 ? 's' : ''} — its
+            value is the sum of those for every period, so direct mapping here is disabled. Manage its sub-lines below, under
+            Structure.
+          </div>
+        ),
+      },
+    ];
   }
   if (calculatedByDebtSchedule || calculated) {
-    return (
-      <LineSettingsPanel
-        title={target.name}
-        subtitle="Mapping"
-        icon="git-merge"
-        onClose={onClose}
-        openKeys={openKeys}
-        onToggleSection={toggleSection}
-        sections={[
-          {
-            key: 'mapping',
-            label: 'Mapping',
-            content: (
-              <div>
-                <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-                  {calculatedByDebtSchedule
-                    ? `${target.name} is generated by the Debt Schedule, from the tranche details entered in Edit schema mode — read only here.`
-                    : `${target.name} is a calculated line — its formula gives its value in every period, so nothing is mapped to it. Change its type in Edit schema mode.`}
-                </p>
-                {formula ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-5)' }}>
-                    <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
-                      Formula
-                    </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>{formula}</span>
-                  </div>
-                ) : null}
+    return [
+      {
+        key: 'mapping',
+        label: 'Mapping',
+        content: (
+          <div>
+            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+              {calculatedByDebtSchedule
+                ? `${target.name} is generated by the Debt Schedule, from the tranche's own properties — read only here.`
+                : `${target.name} is a calculated line — its formula gives its value in every period, so nothing is mapped to it. Change its type under Line properties above.`}
+            </p>
+            {formula ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-5)' }}>
+                <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  Formula
+                </span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>{formula}</span>
               </div>
-            ),
-          },
-        ]}
-      />
-    );
+            ) : null}
+          </div>
+        ),
+      },
+    ];
   }
 
   const sourceById = (id: string): ParsedSourceLine | undefined => workbook.lines.find((line) => line.id === id);
@@ -131,7 +105,7 @@ export function MappingRowDetail({
     : [];
   const lastPeriodIndex = workbook.periods.length - 1;
 
-  const sections: LineSettingsSection[] = [
+  return [
     ...(candidates.length > 0
       ? [{
           key: 'candidates',
@@ -214,16 +188,4 @@ export function MappingRowDetail({
       ),
     },
   ];
-
-  return (
-    <LineSettingsPanel
-      title={target.name}
-      subtitle="Mapping"
-      icon="git-merge"
-      onClose={onClose}
-      openKeys={openKeys}
-      onToggleSection={toggleSection}
-      sections={sections}
-    />
-  );
 }

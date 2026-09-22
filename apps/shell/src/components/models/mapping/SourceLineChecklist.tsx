@@ -5,7 +5,7 @@ import { formatPeriodValue } from './mappingFormatting';
 import { searchSourceLines } from '../../../lib/searchSourceLines';
 
 interface SourceLineChecklistProps {
-  /** e.g. "Map Revenue from" or "Map new line from" — MappingRowDetail and the mapping
+  /** e.g. "Map Revenue from" or "Map new line from" — mappingRowSections.tsx and the mapping
    *  screen's "+ Add sub-line" creator each supply their own. */
   title: string;
   sectionName: string;
@@ -15,8 +15,8 @@ interface SourceLineChecklistProps {
 }
 
 /** The section-scoped "pick one or more source lines, see the aggregated total" checklist —
- *  extracted out of MappingRowDetail so the mapping screen's "+ Add sub-line/KPI" creator can
- *  reuse the identical control rather than duplicating it (see Phase 9 plan's Slice 4). */
+ *  extracted out of what's now mappingRowSections.tsx so the mapping screen's "+ Add sub-line/KPI"
+ *  creator can reuse the identical control rather than duplicating it (see Phase 9 plan's Slice 4). */
 export function SourceLineChecklist({ title, sectionName, workbook, sourceLineIds, onSetSourceLines }: SourceLineChecklistProps) {
   const [search, setSearch] = useState('');
 
