@@ -116,17 +116,45 @@ export function buildMappingRowSections({
               <p style={{ margin: '0 0 var(--space-4)', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
                 {candidates.length} lines in the file match {target.name} equally well. Choose the one that belongs here.
               </p>
-              {candidates.map((line) => (
-                <div key={line.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-6)', padding: 'var(--space-3) 0', borderBottom: '1px solid var(--border-subtle)' }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{line.name}</div>
-                    <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
-                      {[line.group, line.section, formatPeriodValue(line.values[lastPeriodIndex] ?? null)].filter(Boolean).join(' · ')}
+              {candidates.map((line) => {
+                // The one currently in sourceLineIds — the AI's own top pick, and whatever the
+                // Source mapping checklist below shows checked right now — not necessarily the
+                // first in the list once someone's clicked "Use this" on a different one.
+                const isCurrent = mapping.sourceLineIds.includes(line.id);
+                return (
+                  <div
+                    key={line.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-6)',
+                      padding: 'var(--space-3) var(--space-3)', borderBottom: '1px solid var(--border-subtle)',
+                      background: isCurrent ? 'var(--surface-selected)' : undefined,
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                        <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{line.name}</span>
+                        {isCurrent ? <Badge tone="info" size="sm">Current pick</Badge> : null}
+                      </div>
+                      <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)' }}>
+                        {[line.group, line.section, formatPeriodValue(line.values[lastPeriodIndex] ?? null)].filter(Boolean).join(' · ')}
+                      </div>
                     </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        // Same outcome as picking it in the checklist below and then clicking
+                        // "Approve match" — a candidate here is a settled choice the moment it's
+                        // picked, not a draft that still needs a separate approval step.
+                        onSetSourceLines([line.id]);
+                        onApprove();
+                      }}
+                    >
+                      {isCurrent ? 'Approve' : 'Use this'}
+                    </Button>
                   </div>
-                  <Button size="sm" variant="secondary" onClick={() => onSetSourceLines([line.id])}>Use this</Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ),
         } satisfies LineSettingsSection]
