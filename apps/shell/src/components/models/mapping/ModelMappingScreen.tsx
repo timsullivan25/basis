@@ -46,13 +46,14 @@ import { getLlmProvider } from '../../../lib/aiImport/provider';
 import { loadAiSettings } from '../../../lib/aiImport/aiSettings';
 import { runAiReview, type AiReviewResult, type AiReviewStep } from '../../../lib/aiImport/runAiReview';
 import { formatPeriodValue, isAmbiguous, isLowConfidence, isMissingRequired, needsReview, MATCH_METHOD_META } from './mappingFormatting';
+import { MappingReviewDialog, type MappingReviewItem } from './MappingReviewDialog';
 
 const STEPS = ['Upload model', 'Map line items', 'Save'];
 
 /** A blank mapping entry for a freshly-created child line — same shape matchStatementLines
  *  would produce for an unmatched ordinary line, so a child is indistinguishable from any other
  *  line the moment it exists. */
-function blankMapping(lineId: string): LineMapping {
+export function blankMapping(lineId: string): LineMapping {
   return { targetLineId: lineId, sourceLineIds: [], method: 'none', confidence: 0, note: '', approved: false };
 }
 
@@ -64,7 +65,7 @@ function blankMapping(lineId: string): LineMapping {
  *  ordinary formula (Net Interest Expense, say) isn't tagged and needs no special handling at
  *  all — it's just a normal structural calculated line, same as Gross Profit, already covered by
  *  the existing isCalculated(line) && !line.projection treatment below. */
-function isDebtScheduleGenerated(line: StatementLine): boolean {
+export function isDebtScheduleGenerated(line: StatementLine): boolean {
   return Boolean(line.debtScheduleRole);
 }
 
@@ -141,6 +142,13 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   const [saving, setSaving] = useState(false);
   const [savedToast, setSavedToast] = useState(false);
   const [aiState, setAiState] = useState<{ status: 'idle' } | { status: 'running'; step: AiReviewStep } | { status: 'done'; result: AiReviewResult; asked: number } | { status: 'failed'; message: string }>({ status: 'idle' });
+  // The Monarch-style "flip through every flagged line" dialog — opened either by the toolbar
+  // button (summary omitted, jumps straight in) or automatically once an AI review finishes with
+  // something to look at (summary set — see the derivation right after `wb`/`liveEvaluation`
+  // below, which also consumes `aiState` back to 'idle' in the same breath, replacing the toast).
+  // `items` is a frozen snapshot of which lines to review, not a live filter — see
+  // MappingReviewDialog's own comment on why recomputing it every render would be wrong.
+  const [reviewSession, setReviewSession] = useState<{ items: MappingReviewItem[]; summary?: string } | null>(null);
   // Structure editing (add/delete/reorder lines and sections) is always available; this only
   // toggles the mapping-specific columns, side-panel section, filters and AI actions layered on
   // top of the same rows (see buildSectionRows) — replaces the old Edit mapping/Edit schema mode
@@ -606,6 +614,20 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
   }
   const wb = workbook;
   const liveEvaluation = evaluation;
+
+  // Converts a finished AI run straight into an open review dialog instead of the old toast,
+  // whenever it actually left something flagged — set during render (React's documented pattern
+  // for deriving state from a prop/state change) so the swap is atomic: aiState never settles on
+  // 'done' for a frame with reviewSession still null, so there's no flash of the old toast and no
+  // risk of re-opening the dialog again right after it's closed. A run that flagged nothing at all
+  // falls through to the plain toast below, unchanged.
+  if (aiState.status === 'done' && reviewSession === null && reviewLines.length > 0) {
+    setReviewSession({
+      items: reviewLines.map(({ line, section }) => ({ id: line.id, sectionName: section.name })),
+      summary: aiReviewSummary(aiState.result, aiState.asked),
+    });
+    setAiState({ status: 'idle' });
+  }
 
   const query = search.trim().toLowerCase();
   function passesLine(line: StatementLine): boolean {
@@ -1076,6 +1098,18 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
                   </div>
                 </Popover>
               ) : null}
+              {showMappingSettings && reviewLines.length > 0 ? (
+                <Button
+                  size="sm"
+                  iconLeft="list-checks"
+                  onClick={() =>
+                    setReviewSession({ items: reviewLines.map(({ line, section }) => ({ id: line.id, sectionName: section.name })) })
+                  }
+                  title="Flip through every flagged line one at a time, with its full mapping controls."
+                >
+                  Review flagged · {reviewLines.length}
+                </Button>
+              ) : null}
               {showMappingSettings && (({ fill, consolidate, checks }) => fill || consolidate || checks)(loadAiSettings().passes) ? (
                 <Button
                   size="sm"
@@ -1362,6 +1396,21 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
           mapping={mapping}
           onApply={applyStructure}
           onClose={() => setStructureOps(null)}
+        />
+      ) : null}
+
+      {reviewSession ? (
+        <MappingReviewDialog
+          items={reviewSession.items}
+          summary={reviewSession.summary}
+          schema={schema}
+          workbook={workbook}
+          mapping={mapping}
+          nameIndex={nameIndex}
+          onSetSourceLines={setSourceLines}
+          onApprove={(lineId) => updateMapping(lineId, { approved: true })}
+          onReject={rejectAiSuggestion}
+          onClose={() => setReviewSession(null)}
         />
       ) : null}
 
