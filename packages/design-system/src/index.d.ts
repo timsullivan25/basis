@@ -36,3 +36,6 @@ export * from './components/primitives/Card';
 export * from './components/primitives/Icon';
 export * from './components/primitives/IconButton';
 export * from './components/primitives/Tag';
+
+// TEMPORARY — readability experiment, see dev/contrastLab.js.
+export * from './dev/contrastLab';
