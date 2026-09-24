@@ -1,0 +1,1935 @@
+{
+  "id": "57619cba-c5cd-4d39-a816-42d3172dee99",
+  "name": "Default - Abbreviated Model",
+  "createdAt": "2026-09-20T19:32:11.722Z",
+  "updatedAt": "2026-09-21T02:18:56.822Z",
+  "sections": [
+    {
+      "id": "77e03368-224e-405a-a0d4-4f7ecc8f39b6",
+      "name": "Income Statement",
+      "lines": [
+        {
+          "id": "6c8d4c19-d83d-49de-af17-2cee07492d3e",
+          "name": "Revenue",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "call",
+              "fn": "priorPeriod",
+              "args": [
+                {
+                  "kind": "ref",
+                  "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+                }
+              ]
+            },
+            "right": {
+              "kind": "bin",
+              "op": "+",
+              "left": {
+                "kind": "num",
+                "value": 1
+              },
+              "right": {
+                "kind": "driverRef",
+                "driverId": "452b908f-1db0-41e2-a5fe-25145c736cd9"
+              }
+            }
+          },
+          "projection": {
+            "method": "growth",
+            "driverId": "452b908f-1db0-41e2-a5fe-25145c736cd9"
+          },
+          "aliases": [],
+          "role": "required"
+        },
+        {
+          "id": "f5c0f817-567c-4197-aaa7-5df5297b82ba",
+          "name": "Growth",
+          "rowFormat": "normal",
+          "numberFormat": "percentage",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "-",
+            "left": {
+              "kind": "bin",
+              "op": "/",
+              "left": {
+                "kind": "ref",
+                "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+              },
+              "right": {
+                "kind": "call",
+                "fn": "priorPeriod",
+                "args": [
+                  {
+                    "kind": "ref",
+                    "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+                  }
+                ]
+              }
+            },
+            "right": {
+              "kind": "num",
+              "value": 1
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "1a93a3b1-b54b-4161-ac5c-ff72d156e317",
+          "name": "EBITDA",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "85162b0c-eda0-4dcb-989f-f2d1cba4f06e"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "85162b0c-eda0-4dcb-989f-f2d1cba4f06e"
+          },
+          "aliases": [],
+          "role": "required"
+        },
+        {
+          "id": "034b1ea7-92f0-479e-b1b9-9d1c5d6f5192",
+          "name": "Margin",
+          "rowFormat": "normal",
+          "numberFormat": "percentage",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "/",
+            "left": {
+              "kind": "ref",
+              "lineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317"
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        }
+      ]
+    },
+    {
+      "id": "271bcd7c-4c9b-4561-9ee9-2dcebb2b8f4b",
+      "name": "Balance Sheet",
+      "lines": [
+        {
+          "id": "d25dfe64-5872-44b9-bf68-128fb83f9abd",
+          "name": "Cash",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "ba918a8d-aa36-4828-933d-cd2a0c210179"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "ba918a8d-aa36-4828-933d-cd2a0c210179"
+          },
+          "aliases": [
+            "Cash & Equivalents",
+            "Cash & Cash Equivalents"
+          ],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "a839d94d-706b-4f78-92e7-e1064c5bd73e",
+          "name": "Accounts Receivable",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "a7666397-7605-4f52-8037-437718ede537"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "a7666397-7605-4f52-8037-437718ede537"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "052910fb-34fa-4013-9434-117f22070e42",
+          "name": "Inventory",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "6846b2fb-35fa-4bce-a4c6-48b2c5c12586"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "6846b2fb-35fa-4bce-a4c6-48b2c5c12586"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "8f6044e3-6d7d-4aa0-90a6-d9f85a6b06b8",
+          "name": "Other Current Assets",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "bb991f23-5804-4b3a-bb15-32baa5ec5096"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "bb991f23-5804-4b3a-bb15-32baa5ec5096"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "23a862b6-88c5-4c2c-8f1b-0a94d5cef833",
+          "name": "Total Current Assets",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+              },
+              {
+                "kind": "ref",
+                "lineId": "a839d94d-706b-4f78-92e7-e1064c5bd73e"
+              },
+              {
+                "kind": "ref",
+                "lineId": "052910fb-34fa-4013-9434-117f22070e42"
+              },
+              {
+                "kind": "ref",
+                "lineId": "8f6044e3-6d7d-4aa0-90a6-d9f85a6b06b8"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "a6bbd04e-850e-49c6-9df0-db20ad12832f",
+          "name": "Net PP&E",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "a6bbd04e-850e-49c6-9df0-db20ad12832f"
+              }
+            ]
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "2ab9cca1-ba8b-4b62-b2a0-56667a9f9b78",
+          "name": "Goodwill",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "2ab9cca1-ba8b-4b62-b2a0-56667a9f9b78"
+              }
+            ]
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "ecfb4707-526f-441b-a885-f4b075e11df8",
+          "name": "Other Noncurrent Assets",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "ecfb4707-526f-441b-a885-f4b075e11df8"
+              }
+            ]
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "8d5b187e-8d26-4e9f-893e-feb973ad41ac",
+          "name": "Total Assets",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "23a862b6-88c5-4c2c-8f1b-0a94d5cef833"
+              },
+              {
+                "kind": "ref",
+                "lineId": "a6bbd04e-850e-49c6-9df0-db20ad12832f"
+              },
+              {
+                "kind": "ref",
+                "lineId": "2ab9cca1-ba8b-4b62-b2a0-56667a9f9b78"
+              },
+              {
+                "kind": "ref",
+                "lineId": "ecfb4707-526f-441b-a885-f4b075e11df8"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "b527acd9-81b5-4b0d-a69e-be6d27f29e25",
+          "name": "Accounts Payable",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "54d55927-457a-4c85-97dc-24ba4cc43663"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "54d55927-457a-4c85-97dc-24ba4cc43663"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "0a11b0ac-c45f-4aa4-b58d-635058902c30",
+          "name": "Accrued Expenses",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "bbcdb48c-bbfd-4a42-9142-32969ba03bfd"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "bbcdb48c-bbfd-4a42-9142-32969ba03bfd"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "c02b5d50-2972-47ec-9ce9-35976941356c",
+          "name": "Other Current Liabilities",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "a19cd4b2-d28c-40ff-b54d-77630bcdf0c9"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "a19cd4b2-d28c-40ff-b54d-77630bcdf0c9"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "d2612615-0776-44d2-9b66-0cec56a04cbe",
+          "name": "Total Current Liabilities",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "b527acd9-81b5-4b0d-a69e-be6d27f29e25"
+              },
+              {
+                "kind": "ref",
+                "lineId": "0a11b0ac-c45f-4aa4-b58d-635058902c30"
+              },
+              {
+                "kind": "ref",
+                "lineId": "c02b5d50-2972-47ec-9ce9-35976941356c"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "f31913b6-db2d-4927-a88b-604a3df9958c",
+          "name": "Total Debt",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "f3472b7a-06f2-4048-83a0-c3bf93c9ad95"
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "5d47d036-7723-4ba8-8f65-b222b21d5d83",
+          "name": "Other Noncurrent Liabilities",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "5d47d036-7723-4ba8-8f65-b222b21d5d83"
+              }
+            ]
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "71e10037-45d8-445c-bf26-893b6f0c0821",
+          "name": "Total Liabilities",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "d2612615-0776-44d2-9b66-0cec56a04cbe"
+              },
+              {
+                "kind": "ref",
+                "lineId": "f31913b6-db2d-4927-a88b-604a3df9958c"
+              },
+              {
+                "kind": "ref",
+                "lineId": "5d47d036-7723-4ba8-8f65-b222b21d5d83"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "fab84360-c85d-4738-9751-500da4fc56a2",
+          "name": "Shareholders Equity",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "fab84360-c85d-4738-9751-500da4fc56a2"
+              }
+            ]
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "544e2946-2d91-439a-8c00-407dc65db30d",
+          "name": "Total Liabilities & Equity",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "71e10037-45d8-445c-bf26-893b6f0c0821"
+              },
+              {
+                "kind": "ref",
+                "lineId": "fab84360-c85d-4738-9751-500da4fc56a2"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "7da9e71e-b47e-4c42-a877-d3fd0c2da787",
+          "name": "Check",
+          "rowFormat": "metric",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "-",
+            "left": {
+              "kind": "ref",
+              "lineId": "8d5b187e-8d26-4e9f-893e-feb973ad41ac"
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "544e2946-2d91-439a-8c00-407dc65db30d"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "checkTolerance": 1,
+          "role": "check"
+        }
+      ]
+    },
+    {
+      "id": "91931c34-46f9-46ae-9ddf-993f0582090d",
+      "name": "Cash Flow Statement",
+      "lines": [
+        {
+          "id": "0638ae64-71b6-4a57-8d16-5e3efb9f8f14",
+          "name": "EBITDA",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "875f059c-42c0-4918-b2c2-9031266d9c38",
+          "name": "Interest Expense",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "neg",
+            "arg": {
+              "kind": "ref",
+              "lineId": "debtSchedule:totalInterestExpense"
+            }
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "debtSchedule:totalInterestExpense",
+            "flipSign": true
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "2831fffd-a640-4f25-ae02-0d6ac0206969",
+          "name": "Change in NWC",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "a51a682f-453e-4925-aef6-0d34eca17d23"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "a51a682f-453e-4925-aef6-0d34eca17d23"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "83d3ac63-e155-455d-9bae-e416c749d8b4",
+          "name": "Operating FCF",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "0638ae64-71b6-4a57-8d16-5e3efb9f8f14"
+              },
+              {
+                "kind": "ref",
+                "lineId": "875f059c-42c0-4918-b2c2-9031266d9c38"
+              },
+              {
+                "kind": "ref",
+                "lineId": "2831fffd-a640-4f25-ae02-0d6ac0206969"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "c52a65a4-699d-4cf5-9069-2c28721f9902",
+          "name": "Capex",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "34d812c0-400e-4232-9bdb-c334c0a27f5e"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "34d812c0-400e-4232-9bdb-c334c0a27f5e"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "cceb4843-c73c-4815-ba08-fd2d8eba05b7",
+          "name": "Levered FCF",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "83d3ac63-e155-455d-9bae-e416c749d8b4"
+              },
+              {
+                "kind": "ref",
+                "lineId": "c52a65a4-699d-4cf5-9069-2c28721f9902"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [
+            "FCF",
+            "Free Cash Flow"
+          ],
+          "role": "calculated"
+        },
+        {
+          "id": "86aff4fe-772b-4c70-92d0-93d41207bfb8",
+          "name": "Beginning Cash Balance",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "ba918a8d-aa36-4828-933d-cd2a0c210179"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "3d74aa2d-bb32-4ef4-9074-9fb7420a63b4",
+          "name": "Minimum Cash Balance",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "debtSchedule:minimumCashTarget"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "debtSchedule:minimumCashTarget"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "dae51c55-0996-4e2c-9f25-04a86eef2384",
+          "name": "Cash Available for Debt Repayment",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "cceb4843-c73c-4815-ba08-fd2d8eba05b7"
+              },
+              {
+                "kind": "ref",
+                "lineId": "86aff4fe-772b-4c70-92d0-93d41207bfb8"
+              },
+              {
+                "kind": "neg",
+                "arg": {
+                  "kind": "ref",
+                  "lineId": "3d74aa2d-bb32-4ef4-9074-9fb7420a63b4"
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "0fecd44f-e53f-44c7-a007-09cbcd3702dd",
+          "name": "Mandatory Amortization",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "driverRef",
+            "driverId": "8fb94dcf-be0e-43a9-b20a-3037736330c1"
+          },
+          "projection": {
+            "method": "hardcode",
+            "driverId": "8fb94dcf-be0e-43a9-b20a-3037736330c1"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "95588b89-7ba3-4f16-b263-3e97d78d6168",
+          "name": "Optional Prepayment",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "+",
+            "left": {
+              "kind": "ref",
+              "lineId": "debtSchedule:totalBorrowings"
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "debtSchedule:totalRepayments"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "befe4925-a03a-4849-9f5c-73152961fc05",
+          "name": "Minimum Cash Balance",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "debtSchedule:minimumCashTarget"
+          },
+          "projection": {
+            "method": "link",
+            "basisLineId": "debtSchedule:minimumCashTarget"
+          },
+          "aliases": [],
+          "role": "linked",
+          "allowsSubLines": false
+        },
+        {
+          "id": "ba918a8d-aa36-4828-933d-cd2a0c210179",
+          "name": "Ending Cash Balance",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "dae51c55-0996-4e2c-9f25-04a86eef2384"
+              },
+              {
+                "kind": "ref",
+                "lineId": "0fecd44f-e53f-44c7-a007-09cbcd3702dd"
+              },
+              {
+                "kind": "ref",
+                "lineId": "95588b89-7ba3-4f16-b263-3e97d78d6168"
+              },
+              {
+                "kind": "ref",
+                "lineId": "3d74aa2d-bb32-4ef4-9074-9fb7420a63b4"
+              }
+            ]
+          },
+          "projection": {
+            "method": "formula"
+          },
+          "aliases": [],
+          "role": "required"
+        }
+      ]
+    },
+    {
+      "id": "6d0fca32-3c35-4758-ad8d-429ecbd3d3fd",
+      "name": "Working Capital",
+      "lines": [
+        {
+          "id": "a7666397-7605-4f52-8037-437718ede537",
+          "name": "Accounts Receivable",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "bin",
+              "op": "/",
+              "left": {
+                "kind": "driverRef",
+                "driverId": "666b4f10-0c10-4dbc-aa9d-644e16238feb"
+              },
+              "right": {
+                "kind": "num",
+                "value": 365
+              }
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            }
+          },
+          "projection": {
+            "method": "days-of",
+            "driverId": "666b4f10-0c10-4dbc-aa9d-644e16238feb"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "6846b2fb-35fa-4bce-a4c6-48b2c5c12586",
+          "name": "Inventory",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "87b2f4a9-6022-49eb-871d-e25ce34affc2"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "87b2f4a9-6022-49eb-871d-e25ce34affc2"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "bb991f23-5804-4b3a-bb15-32baa5ec5096",
+          "name": "Other Current Assets",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "0177cd1c-115f-419a-a06d-0b9964148d52"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "0177cd1c-115f-419a-a06d-0b9964148d52"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "aadab77e-cdba-43c3-9495-6eb6a4390d2c",
+          "name": "Current Assets",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "a7666397-7605-4f52-8037-437718ede537"
+              },
+              {
+                "kind": "ref",
+                "lineId": "6846b2fb-35fa-4bce-a4c6-48b2c5c12586"
+              },
+              {
+                "kind": "ref",
+                "lineId": "bb991f23-5804-4b3a-bb15-32baa5ec5096"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "54d55927-457a-4c85-97dc-24ba4cc43663",
+          "name": "Accounts Payable",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "9c3c43ca-0f58-43d0-8aae-b6dffa38b8f6"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "9c3c43ca-0f58-43d0-8aae-b6dffa38b8f6"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "bbcdb48c-bbfd-4a42-9142-32969ba03bfd",
+          "name": "Accrued Expenses",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "832beffa-f2d4-4ed3-a6d5-0e890ac2433c"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "832beffa-f2d4-4ed3-a6d5-0e890ac2433c"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "a19cd4b2-d28c-40ff-b54d-77630bcdf0c9",
+          "name": "Other Current Liabilities",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "ref",
+              "lineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+            },
+            "right": {
+              "kind": "driverRef",
+              "driverId": "85caa12e-3f3c-496c-a11a-3ac29768ad7e"
+            }
+          },
+          "projection": {
+            "method": "percent-of",
+            "driverId": "85caa12e-3f3c-496c-a11a-3ac29768ad7e"
+          },
+          "aliases": [],
+          "role": "optional"
+        },
+        {
+          "id": "78ce819a-d615-4125-ae45-7e42e987eac5",
+          "name": "Current Liabilities",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "54d55927-457a-4c85-97dc-24ba4cc43663"
+              },
+              {
+                "kind": "ref",
+                "lineId": "a19cd4b2-d28c-40ff-b54d-77630bcdf0c9"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "3428904a-7454-404f-b8bb-6994be505b08",
+          "name": "Net Working Capital",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "-",
+            "left": {
+              "kind": "ref",
+              "lineId": "aadab77e-cdba-43c3-9495-6eb6a4390d2c"
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "78ce819a-d615-4125-ae45-7e42e987eac5"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "a51a682f-453e-4925-aef6-0d34eca17d23",
+          "name": "Change in NWC",
+          "rowFormat": "metric",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "-",
+            "left": {
+              "kind": "ref",
+              "lineId": "3428904a-7454-404f-b8bb-6994be505b08"
+            },
+            "right": {
+              "kind": "call",
+              "fn": "priorPeriod",
+              "args": [
+                {
+                  "kind": "ref",
+                  "lineId": "3428904a-7454-404f-b8bb-6994be505b08"
+                }
+              ]
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        }
+      ]
+    },
+    {
+      "id": "57ccc124-f6ac-4bcb-a881-b82064b18dc2",
+      "name": "Capital Structure",
+      "lines": [
+        {
+          "id": "9ecbd0dd-4427-422d-af42-9d7c7701a485",
+          "name": "Secured Debt",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "allowsSubLines": true,
+          "lineKind": "debt",
+          "role": "optional"
+        },
+        {
+          "id": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+          "name": "Revolver",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "ref",
+            "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:endingBalance"
+          },
+          "projection": {
+            "method": "flat"
+          },
+          "aliases": [],
+          "parentLineId": "9ecbd0dd-4427-422d-af42-9d7c7701a485",
+          "debtProperties": {
+            "couponType": "floating",
+            "debtType": "revolver",
+            "commitmentFeeRate": 0.01
+          },
+          "role": "optional"
+        },
+        {
+          "id": "4231fc13-08e8-4894-9199-f9731a6b12a2",
+          "name": "Unsecured Debt",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": null,
+          "projection": null,
+          "aliases": [],
+          "lineKind": "debt",
+          "allowsSubLines": true,
+          "role": "optional"
+        },
+        {
+          "id": "f3472b7a-06f2-4048-83a0-c3bf93c9ad95",
+          "name": "Total Debt",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "9ecbd0dd-4427-422d-af42-9d7c7701a485"
+              },
+              {
+                "kind": "ref",
+                "lineId": "4231fc13-08e8-4894-9199-f9731a6b12a2"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "46e9e427-0266-46de-b08a-4a4c1dba1a80",
+          "name": "Net Debt",
+          "rowFormat": "metric",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "-",
+            "left": {
+              "kind": "ref",
+              "lineId": "f3472b7a-06f2-4048-83a0-c3bf93c9ad95"
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        }
+      ]
+    },
+    {
+      "id": "5adb79b6-94ce-4a47-9729-f3714802f479",
+      "name": "Credit Metrics",
+      "lines": [
+        {
+          "id": "06b696bc-3b7a-4478-bdd2-91c190e0e0b3",
+          "name": "Secured Leverage",
+          "rowFormat": "metric",
+          "numberFormat": "multiple",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "/",
+            "left": {
+              "kind": "bin",
+              "op": "-",
+              "left": {
+                "kind": "ref",
+                "lineId": "9ecbd0dd-4427-422d-af42-9d7c7701a485"
+              },
+              "right": {
+                "kind": "ref",
+                "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+              }
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        },
+        {
+          "id": "0786e3bb-9eed-489d-a0e2-294f103ac5fe",
+          "name": "Total Leverage",
+          "rowFormat": "metric",
+          "numberFormat": "multiple",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "/",
+            "left": {
+              "kind": "bin",
+              "op": "-",
+              "left": {
+                "kind": "ref",
+                "lineId": "f3472b7a-06f2-4048-83a0-c3bf93c9ad95"
+              },
+              "right": {
+                "kind": "ref",
+                "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+              }
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "role": "calculated"
+        }
+      ]
+    },
+    {
+      "id": "debtSchedule:section",
+      "name": "Debt Schedule",
+      "lines": [
+        {
+          "id": "debtSchedule:minimumCashTarget",
+          "name": "Minimum Cash Target",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "driverRef",
+            "driverId": "debtSchedule:minimumCashTargetDriver"
+          },
+          "projection": {
+            "method": "hardcode",
+            "driverId": "debtSchedule:minimumCashTargetDriver"
+          },
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "minimumCashTarget"
+          }
+        },
+        {
+          "id": "debtSchedule:cashAvailableForRepayment",
+          "name": "Cash Available for Repayment",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "max",
+            "args": [
+              {
+                "kind": "num",
+                "value": 0
+              },
+              {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "bin",
+                  "op": "+",
+                  "left": {
+                    "kind": "call",
+                    "fn": "priorPeriod",
+                    "args": [
+                      {
+                        "kind": "ref",
+                        "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "ref",
+                    "lineId": "cceb4843-c73c-4815-ba08-fd2d8eba05b7"
+                  }
+                },
+                "right": {
+                  "kind": "driverRef",
+                  "driverId": "debtSchedule:minimumCashTargetDriver"
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "cashAvailableForRepayment"
+          }
+        },
+        {
+          "id": "debtSchedule:cashShortfall",
+          "name": "Cash Shortfall",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "max",
+            "args": [
+              {
+                "kind": "num",
+                "value": 0
+              },
+              {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "driverRef",
+                  "driverId": "debtSchedule:minimumCashTargetDriver"
+                },
+                "right": {
+                  "kind": "bin",
+                  "op": "+",
+                  "left": {
+                    "kind": "call",
+                    "fn": "priorPeriod",
+                    "args": [
+                      {
+                        "kind": "ref",
+                        "lineId": "d25dfe64-5872-44b9-bf68-128fb83f9abd"
+                      }
+                    ]
+                  },
+                  "right": {
+                    "kind": "ref",
+                    "lineId": "cceb4843-c73c-4815-ba08-fd2d8eba05b7"
+                  }
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "cashShortfall"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance",
+          "name": "Revolver — Beginning Balance",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "priorPeriod",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "beginningBalance"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:amortization",
+          "name": "Revolver — Amortization",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "call",
+              "fn": "lastActual",
+              "args": [
+                {
+                  "kind": "ref",
+                  "lineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c"
+                }
+              ]
+            },
+            "right": {
+              "kind": "num",
+              "value": 0
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "amortization"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:repayment",
+          "name": "Revolver — Repayment",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "min",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:cashAvailableForRepayment"
+              },
+              {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+                },
+                "right": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:amortization"
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "repayment"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:borrowing",
+          "name": "Revolver — Borrowing",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "min",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:cashShortfall"
+              },
+              {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "num",
+                  "value": 0
+                },
+                "right": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "borrowing"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:endingBalance",
+          "name": "Revolver — Ending Balance",
+          "role": "calculated",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "+",
+            "left": {
+              "kind": "bin",
+              "op": "-",
+              "left": {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+                },
+                "right": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:amortization"
+                }
+              },
+              "right": {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:repayment"
+              }
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:borrowing"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "endingBalance"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:interestExpense",
+          "name": "Revolver — Interest Expense",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "num",
+              "value": 0
+            },
+            "right": {
+              "kind": "ref",
+              "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "interestExpense"
+          }
+        },
+        {
+          "id": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:commitmentFee",
+          "name": "Revolver — Commitment Fee",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "bin",
+            "op": "*",
+            "left": {
+              "kind": "num",
+              "value": 0.01
+            },
+            "right": {
+              "kind": "bin",
+              "op": "-",
+              "left": {
+                "kind": "num",
+                "value": 0
+              },
+              "right": {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+              }
+            }
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "trancheLineId": "d2ae726f-bdbf-48e1-a6f6-c97a33519a6c",
+            "role": "commitmentFee"
+          }
+        },
+        {
+          "id": "debtSchedule:revolverBreach",
+          "name": "Revolver Availability Breach",
+          "role": "calculated",
+          "rowFormat": "normal",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "max",
+            "args": [
+              {
+                "kind": "num",
+                "value": 0
+              },
+              {
+                "kind": "bin",
+                "op": "-",
+                "left": {
+                  "kind": "ref",
+                  "lineId": "debtSchedule:cashShortfall"
+                },
+                "right": {
+                  "kind": "bin",
+                  "op": "-",
+                  "left": {
+                    "kind": "num",
+                    "value": 0
+                  },
+                  "right": {
+                    "kind": "ref",
+                    "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:beginningBalance"
+                  }
+                }
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "revolverBreach"
+          }
+        },
+        {
+          "id": "debtSchedule:totalInterestExpense",
+          "name": "Interest Expense",
+          "role": "calculated",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:interestExpense"
+              },
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:commitmentFee"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "totalInterestExpense"
+          }
+        },
+        {
+          "id": "debtSchedule:totalBorrowings",
+          "name": "Borrowings",
+          "role": "calculated",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:borrowing"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "totalBorrowings"
+          }
+        },
+        {
+          "id": "debtSchedule:totalRepayments",
+          "name": "Repayments",
+          "role": "calculated",
+          "rowFormat": "total",
+          "numberFormat": "number",
+          "sign": "natural",
+          "aggregation": "sum",
+          "formula": {
+            "kind": "call",
+            "fn": "sum",
+            "args": [
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:amortization"
+              },
+              {
+                "kind": "ref",
+                "lineId": "debtSchedule:d2ae726f-bdbf-48e1-a6f6-c97a33519a6c:repayment"
+              }
+            ]
+          },
+          "projection": null,
+          "aliases": [],
+          "debtScheduleRole": {
+            "role": "totalRepayments"
+          }
+        }
+      ]
+    }
+  ],
+  "drivers": [
+    {
+      "id": "452b908f-1db0-41e2-a5fe-25145c736cd9",
+      "name": "Revenue Growth Rate",
+      "unit": "%",
+      "targetLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e",
+      "method": "growth"
+    },
+    {
+      "id": "85162b0c-eda0-4dcb-989f-f2d1cba4f06e",
+      "name": "EBITDA % of Revenue",
+      "unit": "%",
+      "targetLineId": "1a93a3b1-b54b-4161-ac5c-ff72d156e317",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "34d812c0-400e-4232-9bdb-c334c0a27f5e",
+      "name": "Capex % of Revenue",
+      "unit": "%",
+      "targetLineId": "c52a65a4-699d-4cf5-9069-2c28721f9902",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "666b4f10-0c10-4dbc-aa9d-644e16238feb",
+      "name": "Accounts Receivable Days of Revenue",
+      "unit": "days",
+      "targetLineId": "a7666397-7605-4f52-8037-437718ede537",
+      "method": "days-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "87b2f4a9-6022-49eb-871d-e25ce34affc2",
+      "name": "Inventory % of Revenue",
+      "unit": "%",
+      "targetLineId": "6846b2fb-35fa-4bce-a4c6-48b2c5c12586",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "0177cd1c-115f-419a-a06d-0b9964148d52",
+      "name": "Other Current Assets % of Revenue",
+      "unit": "%",
+      "targetLineId": "bb991f23-5804-4b3a-bb15-32baa5ec5096",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "9c3c43ca-0f58-43d0-8aae-b6dffa38b8f6",
+      "name": "Accounts Payable % of Revenue",
+      "unit": "%",
+      "targetLineId": "54d55927-457a-4c85-97dc-24ba4cc43663",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "832beffa-f2d4-4ed3-a6d5-0e890ac2433c",
+      "name": "Accrued Expenses % of Revenue",
+      "unit": "%",
+      "targetLineId": "bbcdb48c-bbfd-4a42-9142-32969ba03bfd",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "85caa12e-3f3c-496c-a11a-3ac29768ad7e",
+      "name": "Other Current Liabilities % of Revenue",
+      "unit": "%",
+      "targetLineId": "a19cd4b2-d28c-40ff-b54d-77630bcdf0c9",
+      "method": "percent-of",
+      "basisLineId": "6c8d4c19-d83d-49de-af17-2cee07492d3e"
+    },
+    {
+      "id": "8fb94dcf-be0e-43a9-b20a-3037736330c1",
+      "name": "Mandatory Amortization Value",
+      "unit": "",
+      "targetLineId": "0fecd44f-e53f-44c7-a007-09cbcd3702dd",
+      "method": "hardcode"
+    },
+    {
+      "id": "debtSchedule:minimumCashTargetDriver",
+      "name": "Minimum Cash Target",
+      "unit": "",
+      "targetLineId": "debtSchedule:minimumCashTarget",
+      "method": "hardcode"
+    }
+  ]
+}

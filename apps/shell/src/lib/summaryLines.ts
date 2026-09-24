@@ -1,11 +1,5 @@
 import type { StatementLine, StatementSchema } from '../data';
-
-/** Same normalization `matchStatementLines.ts`'s import-time alias matching already uses —
- *  replicated here rather than imported, since that function isn't exported (it's a private
- *  implementation detail of the opposite-direction match: source-name -> target-line). */
-function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
+import { normalize } from './matchStatementLines';
 
 /** The canonical concepts a schema-independent consumer looks for — a Summary panel, or (from
  *  Phase 8 on) an analysis catalog entry's `requiredConcepts` — since schemas are fully

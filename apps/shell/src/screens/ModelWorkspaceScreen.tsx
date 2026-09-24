@@ -18,6 +18,8 @@ import {
   Tabs,
   Toast,
 } from '@basis/design-system';
+import { SectionCard } from '../components/common/SectionCard';
+import { SyncedHScroll } from '../components/common/SyncedHScroll';
 import {
   analysisResultRepository,
   analysisSettingsRepository,
@@ -201,10 +203,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Summary, Compare or Analyses, so returning to Financials restores it instead of resetting to
   // "All" — see selectTopNav below. A ref, not state: it only needs to be read back on the next
   // top-nav click, never to trigger a render of its own.
-  const financialsSubTabRef = useRef('all');
   // Lines whose sub-line instances are hidden — collapsed via the chevron on a parent row in the
   // main grid below. Keyed by the parent StatementLine's id, not the instance's.
   const [collapsedParentIds, setCollapsedParentIds] = useState<Set<string>>(new Set());
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(new Set());
   // Same idea as collapsedParentIds above, but for the Drivers card below — independent so
   // collapsing a line's children in one table doesn't affect the other.
   const [collapsedDriverParentIds, setCollapsedDriverParentIds] = useState<Set<string>>(new Set());
@@ -645,15 +647,15 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   }
 
   /** Opens the same mapping/schema overlay FinancialsTab's "Edit mapping" button does, straight
-   *  from the workspace — no detour back through the company page. Jumps to Edit-schema mode
-   *  since restructuring, not reviewing a fresh import, is almost always why this gets clicked
+   *  from the workspace — no detour back through the company page. Starts with mapping settings
+   *  off since restructuring, not reviewing a fresh import, is almost always why this gets clicked
    *  from here. */
   function startEditStatement() {
     if (!model || !modelImport) return;
     onOpenMapping({
       company,
       editing: { model, modelImport },
-      initialMode: 'schema',
+      initialShowMapping: false,
       onCancel: () => {},
       onSaved: (updatedModel) => {
         void refreshAfterMappingSession(updatedModel);
@@ -725,13 +727,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>No model to show.</span>;
   }
 
-  // Two nav levels, both driven by the one `tab` state: Summary/Financials/Compare/Analyses are
-  // top-level destinations, while "All" and each statement section are sub-tabs that only make
-  // sense once you're inside Financials — matching mockup 1a's masthead-then-section hierarchy
-  // rather than mixing both levels into one flat tab row.
-  const financialsSubTabs = [{ value: 'all', label: 'All' }, ...schema.sections.map((section) => ({ value: section.id, label: section.name }))];
-  const financialsSubTabValues = new Set(financialsSubTabs.map((t) => t.value));
-  const isFinancialsTab = financialsSubTabValues.has(tab);
+  // Financials is one view — every statement section is its own collapsible card — so the top nav is the only tab row.
+  const isFinancialsTab = tab === 'all';
   const topNavTabs = [
     { value: 'financials', label: 'Financials' },
     { value: 'summary', label: 'Summary' },
@@ -739,13 +736,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
   ];
   const topNavValue = isFinancialsTab ? 'financials' : tab;
-  if (isFinancialsTab) financialsSubTabRef.current = tab;
 
   function selectTopNav(value: string) {
-    // Re-entering Financials restores whichever sub-tab was last active there (tracked in the
-    // ref since `tab` itself has moved on to 'summary'/'compare'/'analyses' by the time this
-    // runs) rather than always resetting to "All".
-    setTab(value === 'financials' ? financialsSubTabRef.current : value);
+    setTab(value === 'financials' ? 'all' : value);
   }
 
   // The same headline concepts SummaryPanel already resolves — not `rowFormat === 'total'`
@@ -826,26 +819,37 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // "Minimum Cash Target") renders ungrouped, same as any ordinary top-level line.
   const lineNameById = new Map(schema.sections.flatMap((s) => s.lines).map((l) => [l.id, l.name]));
 
-  const rows: Array<{ id: string; __group?: string; line?: StatementLine; isChild?: boolean; childCount?: number }> = [];
+  type StatementRow = { id: string; __group?: string; line?: StatementLine; isChild?: boolean; childCount?: number };
+  // One block per section (each rendered as its own card and table); a Debt Schedule tranche still gets its own sub-header row inside.
+  const sectionBlocks: Array<{ section: StatementSchema['sections'][number]; rows: StatementRow[] }> = [];
   schema.sections.forEach((section) => {
-    if (tab !== 'all' && tab !== section.id) return;
     if (!section.lines.length) return;
-    rows.push({ id: `group-${section.id}`, __group: section.name });
+    const sectionRows: StatementRow[] = [];
     let lastTrancheHeaderId: string | undefined;
     section.lines.forEach((line) => {
       const parentId = line.parentLineId;
       if (parentId !== undefined && collapsedParentIds.has(parentId)) return;
       const trancheLineId = line.debtScheduleRole?.trancheLineId;
       if (trancheLineId !== undefined && trancheLineId !== lastTrancheHeaderId) {
-        rows.push({ id: `debt-tranche-${trancheLineId}`, __group: lineNameById.get(trancheLineId) ?? 'Tranche' });
+        sectionRows.push({ id: `debt-tranche-${trancheLineId}`, __group: lineNameById.get(trancheLineId) ?? 'Tranche' });
       }
       lastTrancheHeaderId = trancheLineId;
-      rows.push({
+      sectionRows.push({
         id: line.id, line, isChild: parentId !== undefined || trancheLineId !== undefined,
         childCount: childCountByParentId.get(line.id),
       });
     });
+    sectionBlocks.push({ section, rows: sectionRows });
   });
+
+  function toggleSectionCollapsed(sectionId: string) {
+    setCollapsedSectionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  }
 
   function toggleParentCollapsed(lineId: string) {
     setCollapsedParentIds((prev) => {
@@ -1405,20 +1409,6 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         }
       />
 
-      {isFinancialsTab ? (
-        // Plain background, same as the top nav above — a filled/sunken strip here read as
-        // heavier than the primary nav it's subordinate to, backwards from the hierarchy it's
-        // meant to show. The indent plus the underline-tab convention already carries "these are
-        // Financials' own sub-views" without needing a color block to say it again.
-        <Tabs
-          tabs={financialsSubTabs}
-          value={tab}
-          onChange={setTab}
-          size="sm"
-          style={{ paddingLeft: 'var(--space-6)' }}
-        />
-      ) : null}
-
       {tab === 'summary' ? (
         evaluation ? <SummaryPanel schema={schema} model={model} result={evaluation} /> : null
       ) : tab === 'analyses' ? (
@@ -1482,7 +1472,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         </>
       ) : (
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)' }}>
-        <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <SyncedHScroll style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
           <Card
             title={
               <button
@@ -1537,7 +1527,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
               // Keyed by the active scenario so switching forces a full remount — otherwise a
               // mid-edit DriverValueInput's stale local text buffer would commit against whichever
               // scenario is active by the time it blurs, silently writing to the wrong one.
-              <DataTable key={activeScenarioId} columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
+              <DataTable key={activeScenarioId} data-hscroll columns={driverColumns} rows={driverRows} rowKey="id" dense stickyFirstColumn />
             ) : chartableDriverRows.length === 0 ? (
               <div style={{ padding: 'var(--space-6)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
                 No editable drivers to chart — every line here is either locked (superseded by sub-lines) or a section header.
@@ -1550,7 +1540,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
               // Card with no horizontal inset of its own. Any nonzero value here reproduces exactly
               // the kind of constant-offset misalignment already diagnosed once for the header-vs-
               // rows case — this time between Chart view and Table view/the Financials grid below.
-              <div key={activeScenarioId} style={{ overflowX: 'auto', padding: '0 0 var(--space-4)' }}>
+              <div key={activeScenarioId} data-hscroll style={{ overflowX: 'auto', padding: '0 0 var(--space-4)' }}>
                 <div
                   style={{
                     display: 'grid', gridTemplateColumns: `${DRIVER_NAME_COL_WIDTH}px repeat(${historicalPeriods.length + projectedPeriods.length}, ${DRIVER_PERIOD_COL_WIDTH}px)`,
@@ -1718,19 +1708,27 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             )}
           </Card>
 
-          <Card padding="none">
-            <DataTable
-              columns={columns}
-              rows={rows}
-              rowKey="id"
-              rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
-              dense
-              stickyHeader
-              stickyFirstColumn
-              maxHeight="calc(100vh - 260px)"
-            />
-          </Card>
-        </div>
+          {sectionBlocks.map(({ section, rows: sectionRows }) => (
+            <SectionCard
+              key={section.id}
+              title={section.name}
+              meta={`${sectionRows.filter((r) => r.line).length} lines`}
+              collapsed={collapsedSectionIds.has(section.id)}
+              onToggle={() => toggleSectionCollapsed(section.id)}
+            >
+              <DataTable
+                data-hscroll
+                columns={columns}
+                rows={sectionRows}
+                rowKey="id"
+                rowStyle={(row: { line?: StatementLine }) => (row.line ? getLineRowStyle(row.line) : {})}
+                dense
+                stickyHeader={false}
+                stickyFirstColumn
+              />
+            </SectionCard>
+          ))}
+        </SyncedHScroll>
         {evaluation ? (
           <LiveOutputRail
             schema={schema}

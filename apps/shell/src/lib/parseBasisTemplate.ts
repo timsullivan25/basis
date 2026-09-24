@@ -3,12 +3,14 @@ import type { ParsedPeriod, ParsedSourceLine, ParsedWorkbook, PeriodType } from 
 
 const SHEET_NAME = 'Basis Template';
 
-// Layout: column A = section (sticky down the column), column B = line name,
-// column C onward = one period per column. Rows 1-3 (index 0-2) of the period
-// columns hold type/date/name; line data starts at row 4 (index 3).
+// Layout: column A = section (sticky down the column), column B = group (optional
+// sub-block title, blank for most rows), column C = line name, column D onward = one
+// period per column. Rows 1-3 (index 0-2) of the period columns hold type/date/name;
+// line data starts at row 4 (index 3).
 const SECTION_COL = 0;
-const NAME_COL = 1;
-const PERIOD_START_COL = 2;
+const GROUP_COL = 1;
+const NAME_COL = 2;
+const PERIOD_START_COL = 3;
 const PERIOD_TYPE_ROW = 0;
 const PERIOD_DATE_ROW = 1;
 const PERIOD_NAME_ROW = 2;
@@ -75,7 +77,7 @@ export async function parseBasisTemplate(file: Blob): Promise<ParsedWorkbook> {
     });
   }
   if (periods.length === 0) {
-    throw new TemplateParseError('No periods found starting in column C, rows 1-3.');
+    throw new TemplateParseError('No periods found starting in column D, rows 1-3.');
   }
 
   const lines: ParsedSourceLine[] = [];
@@ -87,9 +89,11 @@ export async function parseBasisTemplate(file: Blob): Promise<ParsedWorkbook> {
     const nameCell = cell(grid, row, NAME_COL);
     if (isBlank(nameCell)) continue;
 
+    const groupCell = cell(grid, row, GROUP_COL);
     lines.push({
       id: `row-${row}`,
       section: currentSection,
+      ...(isBlank(groupCell) ? {} : { group: String(groupCell).trim() }),
       name: String(nameCell).trim(),
       values: periods.map((_, i) => normalizeValue(cell(grid, row, PERIOD_START_COL + i))),
     });

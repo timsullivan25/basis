@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { OpenAiCompatibleProvider, parseJsonLoosely } from './openAiCompatibleProvider';
+import { OpenAiCompatibleProvider, parseJsonLoosely, unwrapSchemaName } from './openAiCompatibleProvider';
 
 const request = { system: 'sys', prompt: 'go', schemaName: 'thing', schema: { type: 'object' } };
 const reply = (content: string) => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
@@ -105,5 +105,13 @@ describe('OpenAiCompatibleProvider timeout and token cap', () => {
       new Promise<Response>((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))));
     const provider = new OpenAiCompatibleProvider({ endpoint: '/x', model: 'm', timeoutMs: 10, maxRetries: 1, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: async () => {} });
     await expect(provider.generateStructured(request)).rejects.toThrow(/no reply within/);
+  });
+});
+
+describe('unwrapSchemaName', () => {
+  it('removes a lone wrapper keyed by the schema name, and leaves everything else alone', () => {
+    expect(unwrapSchemaName({ mapping_suggestions: { matches: [] } }, 'mapping_suggestions')).toEqual({ matches: [] });
+    expect(unwrapSchemaName({ matches: [] }, 'mapping_suggestions')).toEqual({ matches: [] });
+    expect(unwrapSchemaName({ mapping_suggestions: 1, other: 2 }, 'mapping_suggestions')).toEqual({ mapping_suggestions: 1, other: 2 });
   });
 });

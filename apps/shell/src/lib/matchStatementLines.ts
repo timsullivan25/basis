@@ -3,9 +3,13 @@ import { isFormulaOnly } from './lineRole';
 
 const FUZZY_THRESHOLD = 0.6;
 
-/** Case/punctuation/whitespace-insensitive form of a line name, shared with the AI importer's evidence scan so both agree on what "matches". */
+/**
+ * Case/punctuation/whitespace-insensitive form of a line name, shared with the AI importer's evidence scan and the
+ * summary-line lookup so all of them agree on what "matches". `%` and `/` are kept as their own tokens because they
+ * change what a line is ("% Revenue" is not "Revenue", "EV / EBITDA" is not "EV EBITDA"); every other symbol is noise.
+ */
 export function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return value.trim().toLowerCase().replace(/[%/]/g, ' $& ').replace(/[^a-z0-9%/]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function levenshtein(a: string, b: string): number {
@@ -76,65 +80,61 @@ export function matchStatementLines(
   return result;
 }
 
+/** A hit on `hits`: the first is proposed, any others (the same name under another group) ride along as alternatives to be picked between in review. */
+function hit(target: StatementLine, hits: ParsedSourceLine[], method: 'exact' | 'alias' | 'prior', confidence: number, note: (line: ParsedSourceLine) => string): LineMapping {
+  const [first, ...rest] = hits;
+  return {
+    targetLineId: target.id,
+    sourceLineIds: [first.id],
+    ...(rest.length > 0 ? { alternativeSourceLineIds: rest.map((l) => l.id) } : {}),
+    method,
+    confidence,
+    note: rest.length > 0 ? `${hits.length} lines match — ${note(first)} Pick the right one.` : note(first),
+    approved: false,
+  };
+}
+
 function matchOne(target: StatementLine, sourceLines: ParsedSourceLine[], extraAliases: string[]): LineMapping {
   const targetName = normalize(target.name);
 
-  const exact = sourceLines.find((source) => normalize(source.name) === targetName);
-  if (exact) {
-    return {
-      targetLineId: target.id,
-      sourceLineIds: [exact.id],
-      method: 'exact',
-      confidence: 1,
-      note: `"${exact.name}" matches the line name exactly.`,
-      approved: false,
-    };
-  }
+  const exact = sourceLines.filter((source) => normalize(source.name) === targetName);
+  if (exact.length > 0) return hit(target, exact, 'exact', 1, (l) => `"${l.name}" matches the line name exactly.`);
 
   const aliasSet = new Set(target.aliases.map(normalize).filter(Boolean));
   if (aliasSet.size > 0) {
-    const aliasHit = sourceLines.find((source) => aliasSet.has(normalize(source.name)));
-    if (aliasHit) {
-      return {
-        targetLineId: target.id,
-        sourceLineIds: [aliasHit.id],
-        method: 'alias',
-        confidence: 1,
-        note: `"${aliasHit.name}" matches a registered alias.`,
-        approved: false,
-      };
-    }
+    const aliasHits = sourceLines.filter((source) => aliasSet.has(normalize(source.name)));
+    if (aliasHits.length > 0) return hit(target, aliasHits, 'alias', 1, (l) => `"${l.name}" matches a registered alias.`);
   }
 
   // Names carried from the company's previous mapping — a real hit, but not a registered
   // schema alias, so it's tagged and reviewed differently (see MatchMethod).
   const priorSet = new Set(extraAliases.map(normalize).filter(Boolean));
   if (priorSet.size > 0) {
-    const priorHit = sourceLines.find((source) => priorSet.has(normalize(source.name)));
-    if (priorHit) {
-      return {
-        targetLineId: target.id,
-        sourceLineIds: [priorHit.id],
-        method: 'prior',
-        confidence: 1,
-        note: `"${priorHit.name}" matches the line mapped here last time.`,
-        approved: false,
-      };
-    }
+    const priorHits = sourceLines.filter((source) => priorSet.has(normalize(source.name)));
+    if (priorHits.length > 0) return hit(target, priorHits, 'prior', 1, (l) => `"${l.name}" matches the line mapped here last time.`);
   }
 
-  let best: { line: ParsedSourceLine; score: number } | null = null;
+  let bestScore = 0;
+  let best: ParsedSourceLine[] = [];
   for (const source of sourceLines) {
     const score = similarity(target.name, source.name);
-    if (score >= FUZZY_THRESHOLD && (!best || score > best.score)) best = { line: source, score };
+    if (score < FUZZY_THRESHOLD) continue;
+    if (score > bestScore) {
+      bestScore = score;
+      best = [source];
+    } else if (score === bestScore) {
+      best.push(source);
+    }
   }
-  if (best) {
+  if (best.length > 0) {
+    const [first, ...rest] = best;
     return {
       targetLineId: target.id,
-      sourceLineIds: [best.line.id],
+      sourceLineIds: [first.id],
+      ...(rest.length > 0 ? { alternativeSourceLineIds: rest.map((l) => l.id) } : {}),
       method: 'fuzzy',
-      confidence: Number(best.score.toFixed(2)),
-      note: `Fuzzy match on "${best.line.name}" (score ${best.score.toFixed(2)}).`,
+      confidence: Number(bestScore.toFixed(2)),
+      note: `${rest.length > 0 ? `${best.length} lines match — ` : ''}Fuzzy match on "${first.name}" (score ${bestScore.toFixed(2)}).${rest.length > 0 ? ' Pick the right one.' : ''}`,
       approved: false,
     };
   }

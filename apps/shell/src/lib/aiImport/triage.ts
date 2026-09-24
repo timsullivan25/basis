@@ -1,5 +1,6 @@
 import type { LlmProvider } from './llmProvider';
 import { evidenceToText, type SheetEvidence } from './sheetEvidence';
+import { getPrompt } from './prompts';
 
 export interface TriageSheet {
   name: string;
@@ -59,23 +60,10 @@ export const TRIAGE_SCHEMA = {
   },
 } as const;
 
-const SYSTEM_PROMPT = `You are helping import a company's historical financials from an arbitrary Excel financial model.
-Step one: decide WHICH SHEETS hold the historical financials: the three primary statements (Income Statement, Balance Sheet, Cash Flow Statement) and any supporting schedules of historical line items (segment breakouts, KPIs, EBITDA build and adjustments, working capital, debt and capital structure, credit metrics). You are shown one line of facts per sheet.
-
-The facts include how many distinct Basis lines (Revenue, Total Assets, Net Income, ...) appear as row labels on the sheet, grouped by Basis section. Treat them as hints, not answers:
-- Analysis and output sheets (valuation, LBO, comps, summaries, charts) often reproduce a handful of lines. The sheet where the financials are BUILT — the working model — is usually the one with the most matches, and the one to prefer.
-- Choose layout "single" when one sheet holds the financials (typically stacked one section under another), and list it.
-- Choose "multiple" only when they are genuinely split across sheets (e.g. one tab per statement), and list each.
-- Choose "none" if nothing looks like historical financials.
-- For each chosen sheet, list the sections it holds: use the exact Basis section names given where a block corresponds to one, and add any other schedule of historical line items under the sheet's own heading.
-- Do not choose sheets that only hold projections, scenarios, market data or presentation output. Prefer visible sheets.
-- confidence is "high" only when the choice is unambiguous. Put other plausible sheets under "alternatives" with a short note.
-- reasoning: two or three sentences a human can check.`;
-
 /** Asks which sheet(s) hold the historical financials, from per-sheet evidence. Sheet names are validated against the evidence. */
 export async function triageSheets(provider: LlmProvider, evidence: SheetEvidence[], sectionNames: string[]): Promise<TriageResult> {
   const raw = await provider.generateStructured({
-    system: SYSTEM_PROMPT,
+    system: getPrompt('triage'),
     prompt: `Basis section names: ${sectionNames.join(', ')}\n\nSheets:\n${evidenceToText(evidence)}`,
     schemaName: 'financials_sheet_triage',
     schema: TRIAGE_SCHEMA,

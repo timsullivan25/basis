@@ -76,8 +76,60 @@ drivers, scenarios and valuation/returns analysis are left out. Known limitation
 names) lose their context — addressed by **groups** below.
 
 Groups: each planned section may list titled sub-blocks (title, header row, inclusive row range; nesting by
-containment). Extraction names lines "<group> — <label>" (outermost first) so repeated labels stay distinct.
-Code then flags any names that *still* repeat in a section — a mechanical check for a missing group. Planned
+containment). Extraction keeps the group (nested titles joined with " › ") as its own field, separate from the line's label, so matching runs on the label alone; the Basis Template carries it in a Group column. Same-named lines under different groups match the same schema line equally well, so the match is proposed as the first, the rest are listed as alternatives, and it is flagged for review until the user picks or approves one.
+Code then flags any (group, label) pairs that *still* repeat in a section — a mechanical check for a missing group. Planned
 next: use that flag to trigger one targeted LLM follow-up for just that section, then re-check.
 
 Not built yet: step 7 (advisory plan check + follow-up loop), the Anthropic adapter and dev proxy.
+
+## AI-assisted mapping (after import)
+
+Both run from buttons on the mapping screen, so the deterministic pass stays instant. Both send line names,
+groups, sections and each line's **latest value** (not the full series) to the model; every id in an answer is
+validated against what was sent, and every result lands flagged for review (`method: 'ai'`, confidence below the
+0.8 review threshold) — code never lets the model settle a mapping on its own. Manual and approved matches are
+never changed.
+
+**Review with AI** (`aiImport/runAiReview.ts`) runs three passes:
+1. **Fill** (`suggestMappings.ts`): unmapped and tied targets, from unmapped source lines, one request per
+   statement section. Empty answers are allowed and preferred to guesses.
+2. **Consolidate** (`suggestConsolidations.ts`): unmapped, non-empty source lines that belong *added* onto an
+   existing match (Goodwill onto an Intangibles match). One request per section, pairing a target section with the
+   imported section of the same name, so a Balance Sheet line is only offered to Balance Sheet targets. Only targets
+   that are unmapped or hold a weak match are offered; exact, alias, prior and sure-AI matches are settled and left
+   alone (Calculated, Linked and Check lines are never mapped at all). The checks referee the pass: a section whose
+   check gets worse under the additions has them undone.
+3. **Checks** (`reviewChecks.ts`, `suggestCheckFixes.ts`): with 1 and 2 in place, each check line still off is looked
+   at up to three times. The model sees the check's formula in words, the gap by period, the gap before the last
+   kept change, what earlier tries did to it, and any unmapped lines that close it exactly (code searches sets of up
+   to three — arithmetic is code's job). It may add a line to a target, remove one from a target, or move one
+   (remove plus add). Removals are only allowed from weak (fuzzy) or AI-made mappings, never exact, alias, manual or
+   approved ones. Each proposal is tried on an in-memory copy; it is kept only if it shrinks the gap (the whole set
+   is tried first, then one at a time), and the outcome is told to the model on the next round. Finally, a section
+   whose check ended worse than it was after Fill has everything after Fill undone there. A check still off is
+   reported as improved or unresolved, never hidden.
+
+Each AI change stamps the mapping with `previous` (what it replaced), so a single suggestion can be rejected from the
+line's Match details and the earlier match restored. Nothing is saved until the user saves the mapping.
+
+**Suggest sub-lines** (`aiImport/proposeStructure.ts`): the model proposes `addSubLine` ops (closed vocabulary,
+`StructureOp`) — a parent that allows sub-lines, a clean name, and the unassigned imported lines behind it. Leftover
+lines are shown clustered by group (biggest first). Focus parents: Revenue, Cost of Revenue (kept only when revenue
+is broken down too — code enforces it), EBITDA adjustment levels and debt classes; segment-level EBITDA is ignored.
+Ops are applied only through `addChildLine`, so schema invariants hold, and are reviewed one by one in
+`StructureProposalDialog` with code-computed evidence (sub-line total vs the parent's mapped total). Debt tranche
+settings and new lines/sections are later ops on the same path; settings usually live outside the historical
+window, so they need a second extraction window.
+
+Saving accepted matches back as aliases is deliberately not done yet.
+
+## Settings (Settings > AI Import)
+
+Every prompt lives in `aiImport/prompts.ts` (`PROMPTS`, read through `getPrompt(id)`), and the Settings screen edits
+them: each has its description, where it runs, the editable text, an "Edited" badge and reset to default. Only the
+instructions are editable — the output schema stays in code and every answer is still validated, so wording can be
+changed freely. Four switches turn the review passes (fill, consolidate, checks, sub-lines) on or off. Both live in
+`apps/shell/ai-settings.json`, read and written through a dev-server endpoint (`aiSettingsPlugin.ts`, same idea as the
+LLM proxy), so an edit is a reviewable change committed with the code; they apply to the next run; the dev-proxy cache keys on the request, so an edited prompt
+is never served a stale answer.
+

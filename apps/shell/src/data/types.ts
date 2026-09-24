@@ -325,6 +325,9 @@ export interface ParsedSourceLine {
   /** Stable within one parsed workbook (derived from row position at parse time). */
   id: string;
   section: string;
+  /** Title of the sub-block the row sits under in the source (a segment, a debt tranche), nested titles joined with " › ". Context only — matching runs on `name`. */
+  group?: string;
+  /** The row's own label, without its group. */
   name: string;
   /** Aligned index-for-index with ParsedWorkbook.periods; null where the cell was blank. */
   values: (number | null)[];
@@ -345,7 +348,11 @@ export interface LineMapping {
   method: MatchMethod;
   /** 0-1. Meaningless when method is 'none'. */
   confidence: number;
+  /** Other source lines that matched just as well as `sourceLineIds` (same name in another group). Set only by the automatic pass; a non-empty list flags the match for review until the user picks or approves. */
+  alternativeSourceLineIds?: string[];
   note: string;
+  /** What this line was mapped to before an AI review changed it — kept so a single suggestion can be rejected and the earlier match restored. Set by the review, cleared on restore. */
+  previous?: Omit<LineMapping, 'previous'>;
   /** Manually confirmed despite low confidence — suppresses the review flag without changing the match. */
   approved: boolean;
 }

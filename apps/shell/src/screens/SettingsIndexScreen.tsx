@@ -15,6 +15,12 @@ const CATEGORIES: SettingCategory[] = [
     description: 'The sections and lines every import and model is mapped against.',
     icon: 'table-2',
   },
+  {
+    value: 'settings-ai',
+    title: 'AI Import',
+    description: 'The prompts behind the AI importer and mapping review, and which review passes run.',
+    icon: 'sparkles',
+  },
 ];
 
 interface SettingsIndexScreenProps {

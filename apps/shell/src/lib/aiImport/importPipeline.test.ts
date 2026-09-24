@@ -288,14 +288,14 @@ describe('groups — repeated labels keep their context', () => {
       ],
     }],
   };
-  const names = (plan: SheetPlan) => extractHistoricals([SEGMENTS], planOf(plan)).workbook.lines.map((l) => l.name);
+  const lines = (plan: SheetPlan) => extractHistoricals([SEGMENTS], planOf(plan)).workbook.lines.map((l) => [l.group, l.name]);
 
-  it('prefixes each line with its enclosing groups, outermost first, and leaves ungrouped lines alone', () => {
-    expect(names(base)).toEqual([
-      'Academia — Revenue',
-      'Academia — % of Revenue — Costs',
-      'Life Sciences — Revenue',
-      'Total',
+  it('splits each line into its enclosing groups (outermost first) and its own label, leaving ungrouped lines alone', () => {
+    expect(lines(base)).toEqual([
+      ['Academia', 'Revenue'],
+      ['Academia › % of Revenue', 'Costs'],
+      ['Life Sciences', 'Revenue'],
+      [undefined, 'Total'],
     ]);
   });
 
@@ -316,14 +316,16 @@ describe('groups — repeated labels keep their context', () => {
     expect(extractHistoricals([SEGMENTS], planOf(crossing)).warnings.some((w) => w.includes('groups "A" and "B" overlap without nesting'))).toBe(true);
   });
 
-  it('parses groups from a provider answer, defaulting to none and rejecting a malformed group', () => {
+  it('parses groups from a provider answer, defaulting to none and dropping a malformed group without failing the plan', () => {
     const grids = [SEGMENTS];
     const withGroups = parseSheetPlan(rawResult(base), 'Seg', grids);
     expect(withGroups.plan.sections[0].groups).toHaveLength(3);
     const noGroups = parseSheetPlan(rawResult({ ...base, sections: [{ name: 'Segments', firstRow: 3, lastRow: 9 }] as never }), 'Seg', grids);
     expect(noGroups.plan.sections[0].groups).toEqual([]);
-    const bad = rawResult({ ...base, sections: [{ ...base.sections[0], groups: [{ title: 'X', headerRow: 5, firstRow: 4, lastRow: 6 }] }] });
-    expect(() => parseSheetPlan(bad, 'Seg', grids)).toThrow(PlanError);
+    const bad = rawResult({ ...base, sections: [{ ...base.sections[0], groups: [{ title: 'X', headerRow: 5, firstRow: 4, lastRow: 5 }] }] });
+    const dropped = parseSheetPlan(bad, 'Seg', grids);
+    expect(dropped.plan.sections[0].groups).toEqual([]);
+    expect(dropped.openQuestions[0]).toContain('Ignored group "X"');
   });
 
   it('tells the model how to describe groups', async () => {

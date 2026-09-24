@@ -5,3 +5,6 @@ build/
 .env.local
 *.log
 .DS_Store
+
+# iCloud sync-conflict copies
+* 2.*

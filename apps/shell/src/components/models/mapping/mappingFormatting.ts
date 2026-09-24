@@ -31,6 +31,13 @@ export function isLowConfidence(mapping: LineMapping | undefined): boolean {
   return mapping.confidence < REVIEW_THRESHOLD;
 }
 
+/** Several source lines matched equally well and the user hasn't chosen or approved one — the "pick the right one" flag. */
+export function isAmbiguous(mapping: LineMapping | undefined): boolean {
+  if (!mapping || mapping.approved) return false;
+  if (mapping.method === 'manual' || mapping.method === 'none') return false;
+  return (mapping.alternativeSourceLineIds?.length ?? 0) > 0;
+}
+
 /** Required and still unmapped — the red dot / save-blocking condition. Only a line whose role is
  *  Required can be missing: Optional, Calculated and Check lines never are. A parent that sums
  *  real sub-lines (`hasChildren`) isn't either — its own mapping is inactive while they exist. */
@@ -40,5 +47,5 @@ export function isMissingRequired(target: StatementLine, mapping: LineMapping | 
 }
 
 export function needsReview(target: StatementLine, mapping: LineMapping | undefined, hasChildren = false): boolean {
-  return isMissingRequired(target, mapping, hasChildren) || isLowConfidence(mapping);
+  return isMissingRequired(target, mapping, hasChildren) || isLowConfidence(mapping) || isAmbiguous(mapping);
 }

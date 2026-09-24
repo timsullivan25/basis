@@ -1,6 +1,7 @@
 import type { ParsedPeriod, ParsedSourceLine, ParsedWorkbook } from '../../data';
 import type { ExtractionPlan, PeriodColumn, SectionGroup, SheetPlan } from './extractionPlan';
 import { defaultPeriodKeys, isImportableKind, periodKey, periodName, periodOptions, type Granularity } from './periodOptions';
+import { sourceLineLabel } from '../sourceLineLabel';
 import { columnIndex, type GridCell, type SheetGrid } from './workbookGrid';
 
 export type { Granularity } from './periodOptions';
@@ -22,7 +23,7 @@ function toIsoDate(cell: GridCell): string {
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
 }
 
-/** Names of the groups whose row range contains this row, outermost first — how a repeated label gets its context. */
+/** Titles of the groups whose row range contains this row, outermost first — how a repeated label gets its context. */
 function groupPath(rowNumber: number, groups: SectionGroup[]): string[] {
   return groups
     .filter((g) => rowNumber >= g.firstRow && rowNumber <= g.lastRow)
@@ -46,7 +47,7 @@ function partialOverlaps(groups: SectionGroup[]): [SectionGroup, SectionGroup][]
 interface SheetExtraction {
   sheet: string;
   periods: ParsedPeriod[];
-  lines: { id: string; section: string; name: string; values: (number | null)[] }[];
+  lines: { id: string; section: string; group?: string; name: string; values: (number | null)[] }[];
 }
 
 function extractSheet(grid: SheetGrid, plan: SheetPlan, keys: ReadonlySet<string>, warnings: string[]): SheetExtraction | null {
@@ -84,14 +85,15 @@ function extractSheet(grid: SheetGrid, plan: SheetPlan, keys: ReadonlySet<string
         return typeof value === 'number' ? value : null;
       });
       if (values.every((v) => v === null)) continue; // header / spacer rows carry no data
-      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: section.name, name: [...groupPath(rowNumber, section.groups), label].join(' — '), values });
+      const group = groupPath(rowNumber, section.groups).join(' › ');
+      lines.push({ id: `${plan.sheet}!row-${rowNumber}`, section: section.name, ...(group ? { group } : {}), name: label, values });
     }
   }
   for (const section of plan.sections) {
     for (const [a, b] of partialOverlaps(section.groups)) {
       warnings.push(`Sheet "${plan.sheet}", section "${section.name}": groups "${a.title}" and "${b.title}" overlap without nesting.`);
     }
-    const names = lines.filter((l) => l.section === section.name).map((l) => l.name);
+    const names = lines.filter((l) => l.section === section.name).map(sourceLineLabel);
     const repeated = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
     if (repeated.length > 0) {
       warnings.push(`Sheet "${plan.sheet}", section "${section.name}": ${repeated.length} repeated line name${repeated.length === 1 ? '' : 's'} (e.g. "${repeated[0]}") — a group may be missing.`);
@@ -148,6 +150,7 @@ export function extractHistoricals(grids: SheetGrid[], plan: ExtractionPlan, cho
       lines.push({
         id: line.id,
         section: line.section,
+        ...(line.group ? { group: line.group } : {}),
         name: line.name,
         values: keys.map((k) => {
           const i = ownKeys.indexOf(k);
