@@ -117,7 +117,11 @@ export function SourceLineChecklist({ title, sectionName, workbook, sourceLineId
         </div>
       ) : null}
 
-      <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
+      {/* Explicit white, not inherited — this list sits inside an accordion section whose body is
+       *  a gray backdrop (see Accordion.jsx), and relying on that gray showing through a
+       *  transparent background made the whole panel read as one undifferentiated gray wash
+       *  instead of a list of rows sitting on a panel. */}
+      <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', background: 'var(--surface-card)' }}>
         {rows.length === 0 ? (
           <p style={{ margin: 0, padding: 'var(--space-5)', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
             No parsed line matches “{search}”.

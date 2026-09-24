@@ -36,3 +36,6 @@ export { Card } from './components/primitives/Card.jsx';
 export { Icon } from './components/primitives/Icon.jsx';
 export { IconButton } from './components/primitives/IconButton.jsx';
 export { Tag } from './components/primitives/Tag.jsx';
+
+// TEMPORARY — readability experiment, see dev/contrastLab.js.
+export { CONTRAST_VARIANTS, getContrastVariant, setContrastVariant, initContrastVariant, useContrastVariant } from './dev/contrastLab.js';
