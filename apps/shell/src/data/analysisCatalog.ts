@@ -7,6 +7,10 @@ import type { SummaryConcept } from '../lib/summaryLines';
 export interface AnalysisCatalogEntry {
   id: string;
   name: string;
+  /** Lucide icon name — shown on the enable/disable row and again on this analysis's own
+   *  Accordion section in AnalysesPanel, so the same visual identity carries from "turn it on"
+   *  to "here's its output". */
+  icon: string;
   requiredConcepts: SummaryConcept[];
   defaultEnabled: boolean;
 }
@@ -15,12 +19,14 @@ export const ANALYSIS_CATALOG: AnalysisCatalogEntry[] = [
   {
     id: 'dcf',
     name: 'DCF',
+    icon: 'calculator',
     requiredConcepts: ['ebit', 'da', 'capex', 'nwc', 'taxRate'],
     defaultEnabled: false,
   },
   {
     id: 'recoveryWaterfall',
     name: 'Recovery Waterfall',
+    icon: 'waves',
     // No hard requirement here — its valuation is a manual assumption (direct entry always
     // works). EBITDA/Revenue are only needed for the two multiple-based methods, so
     // RecoveryWaterfallPanel checks those itself, conditioned on the method actually chosen,

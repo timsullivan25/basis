@@ -8,7 +8,6 @@ import {
   type ScenarioKey,
   type StatementSchema,
 } from '../../../data';
-import { lastActualIndex } from '../../../lib/dcf';
 import type { LineValues } from '../../../lib/computedCache';
 import {
   computeDistributableValue,
@@ -101,7 +100,12 @@ export function RecoveryWaterfallPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  const periodIndex = inputs.periodIndex ?? lastActualIndex(model.timeline);
+  // Defaults to the LAST period in the timeline, not the last actual — a recovery analysis is
+  // normally run against a future exit/distress point, not today's balance sheet (unlike DCF's
+  // Net Debt, which deliberately reads "now"). Projected periods are always appended after
+  // actuals here, so this naturally lands on the last projection when one exists, and degrades
+  // to the last actual for a historicals-only model.
+  const periodIndex = inputs.periodIndex ?? model.timeline.length - 1;
   const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
   const distributableValue = computeDistributableValue(inputs, {
     ebitda: requiredConcept === 'ebitda' ? conceptValue : null,
