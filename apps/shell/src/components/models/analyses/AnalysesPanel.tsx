@@ -1,8 +1,9 @@
 import { Card, Switch } from '@basis/design-system';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
-import type { AnalysisSettings, DcfInputs, Model, ScenarioKey, StatementSchema } from '../../../data';
+import type { AnalysisSettings, DcfInputs, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
 import { DcfPanel } from './DcfPanel';
+import { RecoveryWaterfallPanel } from './RecoveryWaterfallPanel';
 
 interface AnalysesPanelProps {
   schema: StatementSchema;
@@ -12,6 +13,7 @@ interface AnalysesPanelProps {
   activeScenarioId: ScenarioKey;
   onToggleAnalysis: (analysisId: string, enabled: boolean) => void;
   onUpdateDcfInputs: (scenarioId: ScenarioKey, patch: Partial<DcfInputs>) => void;
+  onUpdateRecoveryInputs: (scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
 }
@@ -27,6 +29,7 @@ export function AnalysesPanel({
   activeScenarioId,
   onToggleAnalysis,
   onUpdateDcfInputs,
+  onUpdateRecoveryInputs,
   onSchemaUpdated,
   onOpenStatementDefinitions,
 }: AnalysesPanelProps) {
@@ -65,6 +68,19 @@ export function AnalysesPanel({
           analysisSettings={analysisSettings}
           activeScenarioId={activeScenarioId}
           onUpdateDcfInputs={onUpdateDcfInputs}
+          onSchemaUpdated={onSchemaUpdated}
+          onOpenStatementDefinitions={onOpenStatementDefinitions}
+        />
+      ) : null}
+
+      {enabledIds.includes('recoveryWaterfall') ? (
+        <RecoveryWaterfallPanel
+          schema={schema}
+          model={model}
+          evaluation={evaluation}
+          analysisSettings={analysisSettings}
+          activeScenarioId={activeScenarioId}
+          onUpdateRecoveryInputs={onUpdateRecoveryInputs}
           onSchemaUpdated={onSchemaUpdated}
           onOpenStatementDefinitions={onOpenStatementDefinitions}
         />

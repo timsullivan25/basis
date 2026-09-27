@@ -18,4 +18,14 @@ export const ANALYSIS_CATALOG: AnalysisCatalogEntry[] = [
     requiredConcepts: ['ebit', 'da', 'capex', 'nwc', 'taxRate'],
     defaultEnabled: false,
   },
+  {
+    id: 'recoveryWaterfall',
+    name: 'Recovery Waterfall',
+    // No hard requirement here — its valuation is a manual assumption (direct entry always
+    // works). EBITDA/Revenue are only needed for the two multiple-based methods, so
+    // RecoveryWaterfallPanel checks those itself, conditioned on the method actually chosen,
+    // rather than gating the whole analysis through the generic missingConceptsFor checklist.
+    requiredConcepts: [],
+    defaultEnabled: false,
+  },
 ];

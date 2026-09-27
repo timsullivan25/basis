@@ -92,7 +92,15 @@ describe('computeUfcf', () => {
 
 describe('effectiveDcfInputs', () => {
   function settings(dcfInputs: AnalysisSettings['dcfInputs']): AnalysisSettings {
-    return { id: 'm1', modelId: 'm1', enabledAnalysisIds: ['dcf'], dcfInputs, createdAt: 't0', updatedAt: 't0' };
+    return {
+      id: 'm1',
+      modelId: 'm1',
+      enabledAnalysisIds: ['dcf'],
+      dcfInputs,
+      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null } },
+      createdAt: 't0',
+      updatedAt: 't0',
+    };
   }
 
   it("returns Base's own values for the 'base' scenario key", () => {

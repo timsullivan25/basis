@@ -16,6 +16,7 @@ export class IndexedDbAnalysisSettingsRepository implements AnalysisSettingsRepo
       modelId,
       enabledAnalysisIds: ANALYSIS_CATALOG.filter((entry) => entry.defaultEnabled).map((entry) => entry.id),
       dcfInputs: { base: { wacc: null, terminalGrowth: null } },
+      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null } },
       createdAt: now,
       updatedAt: now,
     };
@@ -25,7 +26,7 @@ export class IndexedDbAnalysisSettingsRepository implements AnalysisSettingsRepo
 
   async update(
     modelId: string,
-    patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs'>>,
+    patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs' | 'recoveryInputs'>>,
   ): Promise<AnalysisSettings> {
     const db = await openBasisDb();
     const existing = await db.get('analysisSettings', modelId);

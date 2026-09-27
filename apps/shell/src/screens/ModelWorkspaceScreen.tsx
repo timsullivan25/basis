@@ -37,6 +37,7 @@ import {
   type Model,
   type ModelImport,
   type ProjectionMethod,
+  type RecoveryInputs,
   type Scenario,
   type ScenarioKey,
   type Snapshot,
@@ -717,6 +718,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const current = settings.dcfInputs[scenarioId] ?? { wacc: null, terminalGrowth: null };
     const dcfInputs = { ...settings.dcfInputs, [scenarioId]: { ...current, ...patch } };
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { dcfInputs }));
+  }
+
+  async function updateRecoveryInputs(scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null };
+    const recoveryInputs = { ...settings.recoveryInputs, [scenarioId]: { ...current, ...patch } };
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { recoveryInputs }));
   }
 
   if (model === undefined) {
@@ -1421,6 +1430,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             activeScenarioId={activeScenarioId}
             onToggleAnalysis={toggleAnalysis}
             onUpdateDcfInputs={updateDcfInputs}
+            onUpdateRecoveryInputs={updateRecoveryInputs}
             onSchemaUpdated={setSchema}
             onOpenStatementDefinitions={onOpenStatementDefinitions}
           />
