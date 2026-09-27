@@ -14,9 +14,18 @@ import {
   computeRecoveryWaterfall,
   effectiveRecoveryInputs,
   orderedSeniorityTiers,
+  type TrancheRecovery,
 } from '../../../lib/recoveryWaterfall';
 import { canonicalAliasFor, findSummaryLine } from '../../../lib/summaryLines';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
+import { RecoveryClaimChart } from './RecoveryClaimChart';
+
+/** The tranche table's synthetic last row — equity holds no "claim" the way a tranche's balance
+ *  is one, only whatever the waterfall has left, so it never gets a Balance or a Recovery %
+ *  (both stay null, which formatPeriodValue already renders as "—" with no extra casing here). */
+interface DisplayRow extends TrancheRecovery {
+  isEquity?: boolean;
+}
 
 interface RecoveryWaterfallPanelProps {
   schema: StatementSchema;
@@ -115,6 +124,19 @@ export function RecoveryWaterfallPanel({
   const tiers = orderedSeniorityTiers(schema);
   const waterfall = computeRecoveryWaterfall(tiers, (lineId) => evaluation.getValue(lineId, periodIndex), distributableValue);
 
+  // Equity as the bottom "tranche": whatever's left once every real tranche is paid, never a
+  // claim of its own — no balance, no recovery rate, just the residual dollar amount.
+  const equityRow: DisplayRow = {
+    lineId: '__equity__',
+    name: 'Equity',
+    tierName: 'Residual',
+    balance: null,
+    recoveryAmount: waterfall.residualToEquity,
+    recoveryPct: null,
+    isEquity: true,
+  };
+  const displayRows: DisplayRow[] = [...waterfall.tranches, equityRow];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <Card title="Valuation" icon="calculator" padding="md">
@@ -206,6 +228,20 @@ export function RecoveryWaterfallPanel({
             </Alert>
           ) : null}
 
+          {waterfall.tranches.length > 0 || waterfall.residualToEquity !== null ? (
+            <Card title="Claim vs. Recovery" padding="md">
+              <RecoveryClaimChart
+                data={displayRows.map((row) => ({
+                  key: row.lineId,
+                  label: row.name,
+                  sublabel: row.tierName,
+                  claim: row.balance,
+                  recovery: row.recoveryAmount,
+                }))}
+              />
+            </Card>
+          ) : null}
+
           <Card title="Recovery by tranche" padding="none">
             <DataTable
               dense
@@ -215,7 +251,7 @@ export function RecoveryWaterfallPanel({
                   key: 'name',
                   label: 'Tranche',
                   width: 220,
-                  render: (_: unknown, row: (typeof waterfall.tranches)[number]) => (
+                  render: (_: unknown, row: DisplayRow) => (
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
                         {row.name}
@@ -229,25 +265,30 @@ export function RecoveryWaterfallPanel({
                   label: 'Balance',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: (typeof waterfall.tranches)[number]) => formatPeriodValue(row.balance, 'number'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.balance, 'number'),
                 },
                 {
                   key: 'recoveryAmount',
                   label: 'Recovery ($)',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: (typeof waterfall.tranches)[number]) => formatPeriodValue(row.recoveryAmount, 'number'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryAmount, 'number'),
                 },
                 {
                   key: 'recoveryPct',
                   label: 'Recovery (%)',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: (typeof waterfall.tranches)[number]) => formatPeriodValue(row.recoveryPct, 'percentage'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryPct, 'percentage'),
                 },
               ]}
-              rows={waterfall.tranches}
+              rows={displayRows}
               rowKey="lineId"
+              rowStyle={(row: DisplayRow) =>
+                row.isEquity
+                  ? { fontStyle: 'italic', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' }
+                  : {}
+              }
             />
           </Card>
         </>
