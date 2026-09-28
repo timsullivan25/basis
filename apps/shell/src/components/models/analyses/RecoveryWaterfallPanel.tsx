@@ -11,6 +11,7 @@ import {
 import type { LineValues } from '../../../lib/computedCache';
 import {
   computeDistributableValue,
+  computeRecoverySensitivity,
   computeRecoveryWaterfall,
   effectiveRecoveryInputs,
   orderedSeniorityTiers,
@@ -18,12 +19,22 @@ import {
 } from '../../../lib/recoveryWaterfall';
 import { canonicalAliasFor, findSummaryLine } from '../../../lib/summaryLines';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
-import { RecoveryClaimChart } from './RecoveryClaimChart';
+import { RecoverySensitivityChart, type RecoveryRangeRow } from './RecoverySensitivityChart';
 
-/** The tranche table's synthetic last row — equity holds no "claim" the way a tranche's balance
- *  is one, only whatever the waterfall has left, so it never gets a Balance or a Recovery %
- *  (both stay null, which formatPeriodValue already renders as "—" with no extra casing here). */
-interface DisplayRow extends TrancheRecovery {
+/** A table row: real content (admin costs / a tranche / equity) or a `__group` seniority-tier
+ *  divider — DataTable renders `__group` rows itself (a full-width label, see DataTable's own
+ *  doc comment), never reaching these column `render` functions, so the content fields are safe
+ *  to leave undefined on a group row. Equity and (when unset) admin costs carry no real "claim",
+ *  only a residual/paid amount — `balance`/`recoveryPct` stay null there, which formatPeriodValue
+ *  already renders as "—". */
+interface DisplayRow {
+  lineId: string;
+  __group?: string;
+  name?: string;
+  tierName?: string;
+  balance?: number | null;
+  recoveryAmount?: number | null;
+  recoveryPct?: number | null;
   isEquity?: boolean;
 }
 
@@ -47,8 +58,7 @@ const METHOD_OPTIONS = [
 const ADD_NEW_LINE = '__add_new_line__';
 
 /** Local buffer + selectOnFocus + Enter/blur-commit, same pattern DcfPanel's own PercentInput
- *  uses — this one commits the raw number (a multiple or a direct dollar value), not a /100
- *  percentage. */
+ *  uses — this one commits the raw number (a multiple or a dollar value), not a /100 percentage. */
 function NumberInput({ value, onCommit }: { value: number | null; onCommit: (next: number | null) => void }) {
   const [text, setText] = useState(() => (value === null ? '' : String(value)));
   function commit() {
@@ -74,6 +84,10 @@ function NumberInput({ value, onCommit }: { value: number | null; onCommit: (nex
   );
 }
 
+function tranche(t: TrancheRecovery): DisplayRow {
+  return { lineId: t.lineId, name: t.name, tierName: t.tierName, balance: t.balance, recoveryAmount: t.recoveryAmount, recoveryPct: t.recoveryPct };
+}
+
 export function RecoveryWaterfallPanel({
   schema,
   model,
@@ -86,7 +100,7 @@ export function RecoveryWaterfallPanel({
 }: RecoveryWaterfallPanelProps) {
   const inputs: RecoveryInputs = analysisSettings
     ? effectiveRecoveryInputs(analysisSettings, activeScenarioId)
-    : { method: null, multiple: null, periodIndex: null, directValue: null };
+    : { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
 
   const requiredConcept = inputs.method === 'ebitdaMultiple' ? 'ebitda' : inputs.method === 'revenueMultiple' ? 'revenue' : null;
   const conceptLine = requiredConcept ? findSummaryLine(schema, requiredConcept) : undefined;
@@ -116,32 +130,76 @@ export function RecoveryWaterfallPanel({
   // to the last actual for a historicals-only model.
   const periodIndex = inputs.periodIndex ?? model.timeline.length - 1;
   const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
-  const distributableValue = computeDistributableValue(inputs, {
-    ebitda: requiredConcept === 'ebitda' ? conceptValue : null,
-    revenue: requiredConcept === 'revenue' ? conceptValue : null,
-  });
+  const concepts = { ebitda: requiredConcept === 'ebitda' ? conceptValue : null, revenue: requiredConcept === 'revenue' ? conceptValue : null };
+  const distributableValue = computeDistributableValue(inputs, concepts);
 
   const tiers = orderedSeniorityTiers(schema);
-  const waterfall = computeRecoveryWaterfall(tiers, (lineId) => evaluation.getValue(lineId, periodIndex), distributableValue);
+  const getBalance = (lineId: string) => evaluation.getValue(lineId, periodIndex);
+  const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, inputs.adminCosts);
 
-  // Equity as the bottom "tranche": whatever's left once every real tranche is paid, never a
-  // claim of its own — no balance, no recovery rate, just the residual dollar amount.
   const equityRow: DisplayRow = {
     lineId: '__equity__',
     name: 'Equity',
-    tierName: 'Residual',
+    tierName: 'Equity',
     balance: null,
     recoveryAmount: waterfall.residualToEquity,
     recoveryPct: null,
     isEquity: true,
   };
-  const displayRows: DisplayRow[] = [...waterfall.tranches, equityRow];
+
+  // Grouped by seniority, most senior first — a `__group` divider per tier (see DisplayRow's own
+  // doc comment) makes it visible at a glance which claims are pari passu (same group) vs.
+  // strictly senior/junior (different groups), the same question the table alone couldn't answer
+  // when every row just carried its tier name as a small caption.
+  const displayRows: DisplayRow[] = [
+    ...(inputs.adminCosts !== null
+      ? [{ lineId: '__group-admin__', __group: 'Priority (paid before any secured debt)' }, tranche(waterfall.adminCosts)]
+      : []),
+    ...tiers.flatMap((tier) => [
+      { lineId: `__group-${tier.tierLineId}__`, __group: tier.tierName },
+      ...tier.tranches.map((t) => waterfall.tranches.find((r) => r.lineId === t.id)).filter((r): r is TrancheRecovery => r !== undefined).map(tranche),
+    ]),
+    { lineId: '__group-equity__', __group: 'Equity' },
+    equityRow,
+  ];
+
+  const sensitivity = computeRecoverySensitivity(inputs, concepts, tiers, getBalance);
+  const sensitivityRows: RecoveryRangeRow[] = sensitivity
+    ? [
+        ...(inputs.adminCosts !== null
+          ? [
+              {
+                key: '__admin__',
+                label: 'Administrative & Priority Claims',
+                tierName: 'Priority (paid before any secured debt)',
+                low: sensitivity[0].waterfall.adminCosts.recoveryPct,
+                base: sensitivity[2].waterfall.adminCosts.recoveryPct,
+                high: sensitivity[4].waterfall.adminCosts.recoveryPct,
+              },
+            ]
+          : []),
+        ...tiers.flatMap((tier) =>
+          tier.tranches.map((t) => ({
+            key: t.id,
+            label: t.name,
+            tierName: tier.tierName,
+            low: sensitivity[0].waterfall.tranches.find((r) => r.lineId === t.id)?.recoveryPct ?? null,
+            base: sensitivity[2].waterfall.tranches.find((r) => r.lineId === t.id)?.recoveryPct ?? null,
+            high: sensitivity[4].waterfall.tranches.find((r) => r.lineId === t.id)?.recoveryPct ?? null,
+          })),
+        ),
+      ]
+    : [];
+  const equitySensitivityRange =
+    sensitivity && sensitivity[0].waterfall.residualToEquity !== null && sensitivity[4].waterfall.residualToEquity !== null
+      ? { low: sensitivity[0].waterfall.residualToEquity!, base: sensitivity[2].waterfall.residualToEquity ?? 0, high: sensitivity[4].waterfall.residualToEquity! }
+      : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <Card title="Valuation" icon="calculator" padding="md">
         <div key={activeScenarioId} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          <div style={{ display: 'flex', gap: 'var(--space-6)', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-6)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <Field label="Method">
               <Select
                 size="sm"
@@ -179,6 +237,12 @@ export function RecoveryWaterfallPanel({
                   value={inputs.directValue}
                   onCommit={(directValue) => onUpdateRecoveryInputs(activeScenarioId, { directValue })}
                 />
+              </Field>
+            ) : null}
+
+            {inputs.method !== null ? (
+              <Field label="Admin & priority costs">
+                <NumberInput value={inputs.adminCosts} onCommit={(adminCosts) => onUpdateRecoveryInputs(activeScenarioId, { adminCosts })} />
               </Field>
             ) : null}
           </div>
@@ -224,40 +288,21 @@ export function RecoveryWaterfallPanel({
             <Alert tone="caution" title="Distributable value isn't set yet">
               {conceptMissing
                 ? `Resolve ${requiredConcept === 'ebitda' ? 'EBITDA' : 'Revenue'} above, or switch to Direct entry.`
-                : 'Recovery amounts and percentages will show once every input above is filled in. Tranche balances are shown regardless.'}
+                : 'Recovery amounts and percentages will show once every input above is filled in. Balances are shown regardless.'}
             </Alert>
           ) : null}
 
-          {waterfall.tranches.length > 0 || waterfall.residualToEquity !== null ? (
-            <Card title="Claim vs. Recovery" padding="md">
-              <RecoveryClaimChart
-                data={displayRows.map((row) => ({
-                  key: row.lineId,
-                  label: row.name,
-                  sublabel: row.tierName,
-                  claim: row.balance,
-                  recovery: row.recoveryAmount,
-                }))}
-              />
-            </Card>
-          ) : null}
-
-          <Card title="Recovery by tranche" padding="none">
+          <Card title="Recovery Waterfall" padding="none">
             <DataTable
               dense
               stickyFirstColumn
               columns={[
                 {
                   key: 'name',
-                  label: 'Tranche',
-                  width: 220,
+                  label: 'Claim',
+                  width: 260,
                   render: (_: unknown, row: DisplayRow) => (
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>
-                        {row.name}
-                      </span>
-                      <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>{row.tierName}</span>
-                    </div>
+                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{row.name}</span>
                   ),
                 },
                 {
@@ -265,32 +310,45 @@ export function RecoveryWaterfallPanel({
                   label: 'Balance',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.balance, 'number'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.balance ?? null, 'number'),
                 },
                 {
                   key: 'recoveryAmount',
                   label: 'Recovery ($)',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryAmount, 'number'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryAmount ?? null, 'number'),
                 },
                 {
                   key: 'recoveryPct',
                   label: 'Recovery (%)',
                   numeric: true,
                   width: 120,
-                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryPct, 'percentage'),
+                  render: (_: unknown, row: DisplayRow) => formatPeriodValue(row.recoveryPct ?? null, 'percentage'),
                 },
               ]}
               rows={displayRows}
               rowKey="lineId"
               rowStyle={(row: DisplayRow) =>
-                row.isEquity
-                  ? { fontStyle: 'italic', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' }
-                  : {}
+                row.isEquity ? { fontStyle: 'italic', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' } : {}
               }
             />
           </Card>
+
+          {sensitivityRows.length > 0 || equitySensitivityRange ? (
+            <Card
+              title="Recovery Sensitivity"
+              icon="waves"
+              padding="md"
+              subtitle={
+                inputs.method === 'direct'
+                  ? 'Distributable value stepped ±10% / ±20% around today\'s entry.'
+                  : 'Multiple stepped ±0.5x / ±1.0x around today\'s entry.'
+              }
+            >
+              <RecoverySensitivityChart rows={sensitivityRows} equityRange={equitySensitivityRange} />
+            </Card>
+          ) : null}
         </>
       ) : null}
     </div>

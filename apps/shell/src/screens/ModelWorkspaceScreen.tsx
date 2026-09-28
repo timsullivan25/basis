@@ -723,7 +723,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   async function updateRecoveryInputs(scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) {
     if (!model) return;
     const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
-    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null };
+    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
     const recoveryInputs = { ...settings.recoveryInputs, [scenarioId]: { ...current, ...patch } };
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { recoveryInputs }));
   }

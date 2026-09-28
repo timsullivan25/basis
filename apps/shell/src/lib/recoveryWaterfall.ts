@@ -1,7 +1,7 @@
 import type { AnalysisSettings, RecoveryInputs, ScenarioKey, StatementLine, StatementSchema } from '../data';
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 
-const DEFAULT_RECOVERY_INPUTS: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null };
+const DEFAULT_RECOVERY_INPUTS: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
 
 /** A scenario's effective Recovery Waterfall valuation inputs — 'base' is ground truth, a named
  *  scenario's entry is sparse against it (per-field, not whole-record), same convention and same
@@ -17,6 +17,7 @@ export function effectiveRecoveryInputs(settings: AnalysisSettings, scenarioId: 
     multiple: override?.multiple ?? base.multiple,
     periodIndex: override?.periodIndex ?? base.periodIndex,
     directValue: override?.directValue ?? base.directValue,
+    adminCosts: override?.adminCosts ?? base.adminCosts,
   };
 }
 
@@ -99,39 +100,54 @@ export interface TrancheRecovery {
   recoveryPct: number | null;
 }
 
+const ADMIN_COSTS_LINE_ID = '__adminCosts__';
+
 export interface RecoveryWaterfallOutputs {
   distributableValue: number | null;
+  /** Administrative & priority claims — DIP financing, professional fees, wind-down costs — paid
+   *  BEFORE any secured tranche sees a dollar, per the standard priority sequence (DIP →
+   *  administrative → secured → unsecured → equity). Modeled as an ordinary TrancheRecovery
+   *  (a real "claim" that can itself go under-recovered if distributableValue doesn't even cover
+   *  it) rather than a special case like the Equity row below — unlike equity, admin costs DO
+   *  have a defined claim amount and a meaningful recovery rate. `null` claim/recovery-pct when
+   *  no admin cost has been entered (treated as $0, not "unknown" — this input is optional). */
+  adminCosts: TrancheRecovery;
   totalDebtBalance: number | null;
-  /** What's left for equity once every tier is paid — 0 (not null) once every input needed to
-   *  reach that answer is actually known; null when one of them (a balance, the distributable
-   *  value) is still missing. */
+  /** What's left for equity once admin costs and every tier are paid — 0 (not null) once every
+   *  input needed to reach that answer is actually known; null when one of them (a balance, the
+   *  distributable value) is still missing. */
   residualToEquity: number | null;
   tranches: TrancheRecovery[];
 }
 
 /**
- * Walks seniority tiers senior-to-junior, paying each tier in full before any junior tier sees a
- * dollar. Within a tier, every tranche shares pro rata by its own balance's share of the tier's
- * total balance — pari passu, per SeniorityTier's own doc comment. A tier with any unresolved
- * (null) tranche balance makes that tier's own recovery null rather than silently treating the
- * missing balance as zero — same "don't fabricate a number" discipline as lib/dcf.ts's
- * all-or-nothing UFCF row — but doesn't block MORE SENIOR tiers, whose own balances may be fully
- * known, from resolving. A null distributableValue propagates the same way: every tranche's
- * recovery is null, but balances themselves still show, so the table isn't empty while the user
- * is still setting up the valuation.
+ * Walks admin/priority costs first, then seniority tiers senior-to-junior, paying each in full
+ * before anything junior sees a dollar. Within a tier, every tranche shares pro rata by its own
+ * balance's share of the tier's total balance — pari passu, per SeniorityTier's own doc comment.
+ * A tier with any unresolved (null) tranche balance makes that tier's own recovery null rather
+ * than silently treating the missing balance as zero — same "don't fabricate a number" discipline
+ * as lib/dcf.ts's all-or-nothing UFCF row — but doesn't block MORE SENIOR claims, whose own
+ * balances may be fully known, from resolving. A null distributableValue propagates the same way:
+ * every claim's recovery is null, but balances themselves still show, so the table isn't empty
+ * while the user is still setting up the valuation.
  */
 export function computeRecoveryWaterfall(
   tiers: SeniorityTier[],
   getBalance: (lineId: string) => number | null,
   distributableValue: number | null,
+  adminCosts: number | null,
 ): RecoveryWaterfallOutputs {
+  const adminClaim = adminCosts ?? 0;
+  const adminRecovery = distributableValue !== null ? Math.min(distributableValue, adminClaim) : null;
+  const adminRecoveryPct = adminRecovery !== null && adminClaim > 0 ? adminRecovery / adminClaim : null;
+  let remaining = distributableValue !== null && adminRecovery !== null ? distributableValue - adminRecovery : null;
+
   const allTranches = tiers.flatMap((t) => t.tranches);
   const balances = new Map(allTranches.map((t) => [t.id, getBalance(t.id)]));
   const totalDebtBalance = allTranches.every((t) => balances.get(t.id) !== null)
     ? allTranches.reduce((sum, t) => sum + (balances.get(t.id) as number), 0)
     : null;
 
-  let remaining = distributableValue;
   const tranches: TrancheRecovery[] = [];
   for (const tier of tiers) {
     const tierBalances = tier.tranches.map((t) => balances.get(t.id) ?? null);
@@ -154,8 +170,60 @@ export function computeRecoveryWaterfall(
 
   return {
     distributableValue,
+    adminCosts: {
+      lineId: ADMIN_COSTS_LINE_ID,
+      name: 'Administrative & Priority Claims',
+      tierName: 'Priority',
+      balance: adminClaim > 0 ? adminClaim : null,
+      recoveryAmount: adminRecovery,
+      recoveryPct: adminRecoveryPct,
+    },
     totalDebtBalance,
     residualToEquity: remaining !== null && totalDebtBalance !== null ? remaining : null,
     tranches,
   };
+}
+
+/** How far the sweep steps the value that actually drives distributableValue — the multiple
+ *  itself for a multiple-based method (in whole turns, same shape as lib/dcf.ts's
+ *  WACC_STEPS_PCT), or the direct dollar value by percentage for direct entry, since "step the
+ *  multiple" has no meaning there. Both produce 5 points: low/low-mid/base/high-mid/high. */
+const MULTIPLE_STEPS = [-1, -0.5, 0, 0.5, 1];
+const DIRECT_VALUE_STEPS_PCT = [-0.2, -0.1, 0, 0.1, 0.2];
+
+export interface RecoverySensitivityPoint {
+  /** The stepped multiple or direct value this point ran with — the sweep's own x-axis label. */
+  driverValue: number;
+  waterfall: RecoveryWaterfallOutputs;
+}
+
+/**
+ * Re-runs the full waterfall (admin costs included) at each step of the driving multiple/direct
+ * value, holding everything else — tiers, balances, admin costs — fixed. `null` whenever the
+ * method isn't set or its own driver value isn't (mirrors computeDistributableValue's own
+ * null-propagation): a sensitivity sweep around an undefined center means nothing.
+ */
+export function computeRecoverySensitivity(
+  inputs: RecoveryInputs,
+  concepts: DistributableValueConcepts,
+  tiers: SeniorityTier[],
+  getBalance: (lineId: string) => number | null,
+): RecoverySensitivityPoint[] | null {
+  if (inputs.method === null) return null;
+  const baseDriver = inputs.method === 'direct' ? inputs.directValue : inputs.multiple;
+  if (baseDriver === null) return null;
+
+  // A multiple can't sensibly go negative (an EBITDA/revenue multiple below 0x is meaningless) —
+  // clamped at 0 rather than letting a small base multiple's low-end step cross zero.
+  const driverValues =
+    inputs.method === 'direct'
+      ? DIRECT_VALUE_STEPS_PCT.map((pct) => baseDriver * (1 + pct))
+      : MULTIPLE_STEPS.map((delta) => Math.max(0, baseDriver + delta));
+
+  return driverValues.map((driverValue) => {
+    const steppedInputs: RecoveryInputs = inputs.method === 'direct' ? { ...inputs, directValue: driverValue } : { ...inputs, multiple: driverValue };
+    const distributableValue = computeDistributableValue(steppedInputs, concepts);
+    const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, inputs.adminCosts);
+    return { driverValue, waterfall };
+  });
 }

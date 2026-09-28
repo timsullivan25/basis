@@ -628,6 +628,12 @@ export interface RecoveryInputs {
   multiple: number | null;
   periodIndex: number | null;
   directValue: number | null;
+  /** Administrative & priority claims (DIP financing, professional fees, wind-down costs) —
+   *  a flat dollar amount paid out of distributableValue BEFORE any secured tranche, per the
+   *  standard priority sequence. `null` (not 0) means "not entered" — treated as $0 by
+   *  computeRecoveryWaterfall, same "optional, off by default" semantics as the rest of this
+   *  analysis's inputs. */
+  adminCosts: number | null;
 }
 
 /**
@@ -663,7 +669,8 @@ export interface AnalysisSettingsRepository {
   get(modelId: string): Promise<AnalysisSettings | undefined>;
   /** Seeds a fresh row: enabledAnalysisIds from the catalog's defaultEnabled entries,
    *  dcfInputs: { base: { wacc: null, terminalGrowth: null } },
-   *  recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null } }. */
+   *  recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null,
+   *  adminCosts: null } }. */
   create(modelId: string): Promise<AnalysisSettings>;
   update(
     modelId: string,
