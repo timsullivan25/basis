@@ -1,3 +1,4 @@
+import { Badge } from '@basis/design-system';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 
 /** One priority/tranche row's recovery range across the multiple/direct-value sweep — always a
@@ -15,10 +16,11 @@ export interface RecoveryRangeRow {
 }
 
 const RANGE_COLOR = 'var(--chart-1)';
+const FULCRUM_RANGE_COLOR = 'var(--status-caution-fg)';
 const BASE_MARKER_COLOR = 'var(--text-primary)';
 const TRACK_HEIGHT = 16;
 
-function RangeBar({ low, base, high }: { low: number; base: number; high: number }) {
+function RangeBar({ low, base, high, isFulcrum }: { low: number; base: number; high: number; isFulcrum?: boolean }) {
   const lowPct = low * 100;
   const spanPct = (high - low) * 100;
   const basePct = base * 100;
@@ -27,7 +29,8 @@ function RangeBar({ low, base, high }: { low: number; base: number; high: number
       <div
         style={{
           position: 'absolute', top: 0, bottom: 0, left: lowPct + '%', width: spanPct + '%',
-          background: RANGE_COLOR, borderRadius: 'var(--radius-xs)', transition: 'left var(--dur-slow) var(--ease-out), width var(--dur-slow) var(--ease-out)',
+          background: isFulcrum ? FULCRUM_RANGE_COLOR : RANGE_COLOR, borderRadius: 'var(--radius-xs)',
+          transition: 'left var(--dur-slow) var(--ease-out), width var(--dur-slow) var(--ease-out)',
         }}
       />
       {/* The base-case marker — a 2px line with a surface ring so it stays legible sitting on
@@ -53,7 +56,20 @@ function RangeBar({ low, base, high }: { low: number; base: number; high: number
  * bound), so mixing it onto this same 0–100% axis would violate the "one axis" rule — it gets its
  * own small $ range read-out instead (`equityRange` below), never plotted alongside these bars.
  */
-export function RecoverySensitivityChart({ rows, equityRange }: { rows: RecoveryRangeRow[]; equityRange: { low: number; base: number; high: number } | null }) {
+export function RecoverySensitivityChart({
+  rows,
+  equityRange,
+  fulcrumKey,
+}: {
+  rows: RecoveryRangeRow[];
+  equityRange: { low: number; base: number; high: number } | null;
+  /** The base case's fulcrum claim (see lib/recoveryWaterfall.ts's computeRecoveryWaterfall) —
+   *  marked in this chart's own amber, same as the table's Fulcrum badge, so the two views read
+   *  as one story. This chart doesn't recompute a fulcrum per sensitivity point; the badge always
+   *  reflects today's base case, since "the fulcrum moves as the range moves" is a separate,
+   *  more involved question this view isn't trying to answer yet. */
+  fulcrumKey?: string | null;
+}) {
   const groups: { tierName: string; rows: RecoveryRangeRow[] }[] = [];
   for (const row of rows) {
     const last = groups[groups.length - 1];
@@ -78,12 +94,21 @@ export function RecoverySensitivityChart({ rows, equityRange }: { rows: Recovery
             <span style={{ fontSize: 'var(--text-3xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>
               {group.tierName}
             </span>
-            {group.rows.map((row) => (
+            {group.rows.map((row) => {
+              const isFulcrum = row.key === fulcrumKey;
+              return (
               <div key={row.key} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{row.label}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                  <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{row.label}</span>
+                  {isFulcrum ? (
+                    <Badge tone="caution" size="sm" icon="split">
+                      Fulcrum
+                    </Badge>
+                  ) : null}
+                </span>
                 {row.low !== null && row.base !== null && row.high !== null ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
-                    <RangeBar low={row.low} base={row.base} high={row.high} />
+                    <RangeBar low={row.low} base={row.base} high={row.high} isFulcrum={isFulcrum} />
                     <span
                       style={{
                         width: 148, flex: '0 0 auto', textAlign: 'right', fontFamily: 'var(--font-mono)',
@@ -101,7 +126,8 @@ export function RecoverySensitivityChart({ rows, equityRange }: { rows: Recovery
                   <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-disabled)' }}>—</span>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </div>

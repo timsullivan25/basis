@@ -199,6 +199,41 @@ describe('computeRecoveryWaterfall', () => {
       expect(withAdmin.adminCosts.recoveryPct).toBeNull();
     });
   });
+
+  describe('fulcrum security', () => {
+    it('is null when every claim recovers in full — not a distressed capital structure at this value', () => {
+      const result = computeRecoveryWaterfall(tiers, getBalance, 2000, NO_ADMIN_COSTS);
+      expect(result.fulcrumLineId).toBeNull();
+    });
+
+    it('lands on the first tranche in a tier that is itself impaired', () => {
+      // 800 < 1L's 1,000 total, so 1L is the impaired (80%-recovered) tier — Term Loan A is its
+      // first listed tranche.
+      const result = computeRecoveryWaterfall(tiers, getBalance, 800, NO_ADMIN_COSTS);
+      expect(result.fulcrumLineId).toBe('tla');
+    });
+
+    it('lands on a fully-covered senior tier\'s junior neighbor when THAT one is impaired', () => {
+      const result = computeRecoveryWaterfall(tiers, getBalance, 1200, NO_ADMIN_COSTS);
+      expect(result.fulcrumLineId).toBe('notes');
+    });
+
+    it('treats admin costs as senior to every tranche — flags admin itself when IT is impaired', () => {
+      const result = computeRecoveryWaterfall(tiers, getBalance, 50, 100);
+      expect(result.fulcrumLineId).toBe(result.adminCosts.lineId);
+    });
+
+    it('skips an unconfigured admin-costs claim entirely rather than treating its null balance as unknown', () => {
+      const result = computeRecoveryWaterfall(tiers, getBalance, 1200, NO_ADMIN_COSTS);
+      expect(result.fulcrumLineId).toBe('notes'); // same answer as with no admin costs at all
+    });
+
+    it('bails (returns null) once it reaches a claim with an unresolved balance, rather than guessing past it', () => {
+      const withMissingBalance = (id: string) => (id === 'notes' ? null : getBalance(id));
+      const result = computeRecoveryWaterfall(tiers, withMissingBalance, 1200, NO_ADMIN_COSTS);
+      expect(result.fulcrumLineId).toBeNull();
+    });
+  });
 });
 
 describe('computeRecoverySensitivity', () => {

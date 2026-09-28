@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Card, DataTable, Field, Input, MetricCard, Select } from '@basis/design-system';
+import { Alert, Badge, Card, DataTable, Field, Input, MetricCard, Select } from '@basis/design-system';
 import {
   statementSchemaRepository,
   type AnalysisSettings,
@@ -36,6 +36,7 @@ interface DisplayRow {
   recoveryAmount?: number | null;
   recoveryPct?: number | null;
   isEquity?: boolean;
+  isFulcrum?: boolean;
 }
 
 interface RecoveryWaterfallPanelProps {
@@ -84,8 +85,16 @@ function NumberInput({ value, onCommit }: { value: number | null; onCommit: (nex
   );
 }
 
-function tranche(t: TrancheRecovery): DisplayRow {
-  return { lineId: t.lineId, name: t.name, tierName: t.tierName, balance: t.balance, recoveryAmount: t.recoveryAmount, recoveryPct: t.recoveryPct };
+function tranche(t: TrancheRecovery, fulcrumLineId: string | null): DisplayRow {
+  return {
+    lineId: t.lineId,
+    name: t.name,
+    tierName: t.tierName,
+    balance: t.balance,
+    recoveryAmount: t.recoveryAmount,
+    recoveryPct: t.recoveryPct,
+    isFulcrum: t.lineId === fulcrumLineId,
+  };
 }
 
 export function RecoveryWaterfallPanel({
@@ -153,11 +162,17 @@ export function RecoveryWaterfallPanel({
   // when every row just carried its tier name as a small caption.
   const displayRows: DisplayRow[] = [
     ...(inputs.adminCosts !== null
-      ? [{ lineId: '__group-admin__', __group: 'Priority (paid before any secured debt)' }, tranche(waterfall.adminCosts)]
+      ? [
+          { lineId: '__group-admin__', __group: 'Priority (paid before any secured debt)' },
+          tranche(waterfall.adminCosts, waterfall.fulcrumLineId),
+        ]
       : []),
     ...tiers.flatMap((tier) => [
       { lineId: `__group-${tier.tierLineId}__`, __group: tier.tierName },
-      ...tier.tranches.map((t) => waterfall.tranches.find((r) => r.lineId === t.id)).filter((r): r is TrancheRecovery => r !== undefined).map(tranche),
+      ...tier.tranches
+        .map((t) => waterfall.tranches.find((r) => r.lineId === t.id))
+        .filter((r): r is TrancheRecovery => r !== undefined)
+        .map((r) => tranche(r, waterfall.fulcrumLineId)),
     ]),
     { lineId: '__group-equity__', __group: 'Equity' },
     equityRow,
@@ -169,7 +184,7 @@ export function RecoveryWaterfallPanel({
         ...(inputs.adminCosts !== null
           ? [
               {
-                key: '__admin__',
+                key: waterfall.adminCosts.lineId,
                 label: 'Administrative & Priority Claims',
                 tierName: 'Priority (paid before any secured debt)',
                 low: sensitivity[0].waterfall.adminCosts.recoveryPct,
@@ -292,6 +307,14 @@ export function RecoveryWaterfallPanel({
             </Alert>
           ) : null}
 
+          {waterfall.fulcrumLineId !== null ? (
+            <Alert tone="caution" icon="split" title="Fulcrum security" compact>
+              <strong>{[waterfall.adminCosts, ...waterfall.tranches].find((t) => t.lineId === waterfall.fulcrumLineId)?.name}</strong> is the
+              most senior claim not fully recovered at this valuation — restructuring negotiating leverage concentrates here. Everything senior
+              is unimpaired; everything junior recovers nothing regardless of how this claim is negotiated.
+            </Alert>
+          ) : null}
+
           <Card title="Recovery Waterfall" padding="none">
             <DataTable
               dense
@@ -302,7 +325,19 @@ export function RecoveryWaterfallPanel({
                   label: 'Claim',
                   width: 260,
                   render: (_: unknown, row: DisplayRow) => (
-                    <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{row.name}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{row.name}</span>
+                      {row.isFulcrum ? (
+                        <Badge
+                          tone="caution"
+                          size="sm"
+                          icon="split"
+                          title="Fulcrum security — the most senior claim not fully recovered at this valuation. Everything senior is unimpaired; everything junior recovers nothing regardless. This is where restructuring negotiating leverage concentrates."
+                        >
+                          Fulcrum
+                        </Badge>
+                      ) : null}
+                    </span>
                   ),
                 },
                 {
@@ -329,9 +364,11 @@ export function RecoveryWaterfallPanel({
               ]}
               rows={displayRows}
               rowKey="lineId"
-              rowStyle={(row: DisplayRow) =>
-                row.isEquity ? { fontStyle: 'italic', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' } : {}
-              }
+              rowStyle={(row: DisplayRow) => {
+                if (row.isEquity) return { fontStyle: 'italic', background: 'var(--surface-sunken)', borderTop: '1px solid var(--border-default)' };
+                if (row.isFulcrum) return { background: 'var(--status-caution-bg)' };
+                return {};
+              }}
             />
           </Card>
 
@@ -346,7 +383,7 @@ export function RecoveryWaterfallPanel({
                   : 'Multiple stepped ±0.5x / ±1.0x around today\'s entry.'
               }
             >
-              <RecoverySensitivityChart rows={sensitivityRows} equityRange={equitySensitivityRange} />
+              <RecoverySensitivityChart rows={sensitivityRows} equityRange={equitySensitivityRange} fulcrumKey={waterfall.fulcrumLineId} />
             </Card>
           ) : null}
         </>

@@ -118,6 +118,31 @@ export interface RecoveryWaterfallOutputs {
    *  distributable value) is still missing. */
   residualToEquity: number | null;
   tranches: TrancheRecovery[];
+  /** The fulcrum security — the most senior claim (admin costs counts, since it's senior to
+   *  everything) that does NOT recover in full. This is where restructuring negotiating leverage
+   *  concentrates: everything above it is unimpaired and has nothing to negotiate over; everything
+   *  below it recovers nothing regardless of how the fulcrum's own recovery is negotiated, so it
+   *  has no leverage either. `null` when every claim recovers in full (not a distressed capital
+   *  structure at this valuation — nothing to flag) OR when an earlier claim's own recovery isn't
+   *  yet resolvable (same "don't fabricate" discipline as the rest of this function — a claim
+   *  with no real balance, e.g. admin costs left unset, is skipped rather than treated as unknown). */
+  fulcrumLineId: string | null;
+}
+
+/** `balance === 0` is a real, resolved claim (e.g. a tranche already paid off) — trivially
+ *  satisfied, skip to the next claim. `balance === null` is genuinely unresolved (unmapped, or the
+ *  model hasn't evaluated this period) — unlike 0, this must BAIL rather than skip: a claim after
+ *  an unknown one could be the true fulcrum and we'd have no way to tell. The caller is
+ *  responsible for leaving admin costs OUT of this list entirely when it isn't configured (its own
+ *  `balance: null` means "no claim configured," a different meaning than a tranche's `null`, so it
+ *  can't share this function's null-handling). */
+function findFulcrum(claimsInPriorityOrder: TrancheRecovery[]): string | null {
+  for (const claim of claimsInPriorityOrder) {
+    if (claim.balance === 0) continue;
+    if (claim.balance === null || claim.recoveryPct === null) return null;
+    if (claim.recoveryPct < 1) return claim.lineId;
+  }
+  return null;
 }
 
 /**
@@ -168,19 +193,22 @@ export function computeRecoveryWaterfall(
     }
   }
 
+  const adminCostsRecovery: TrancheRecovery = {
+    lineId: ADMIN_COSTS_LINE_ID,
+    name: 'Administrative & Priority Claims',
+    tierName: 'Priority',
+    balance: adminClaim > 0 ? adminClaim : null,
+    recoveryAmount: adminRecovery,
+    recoveryPct: adminRecoveryPct,
+  };
+
   return {
     distributableValue,
-    adminCosts: {
-      lineId: ADMIN_COSTS_LINE_ID,
-      name: 'Administrative & Priority Claims',
-      tierName: 'Priority',
-      balance: adminClaim > 0 ? adminClaim : null,
-      recoveryAmount: adminRecovery,
-      recoveryPct: adminRecoveryPct,
-    },
+    adminCosts: adminCostsRecovery,
     totalDebtBalance,
     residualToEquity: remaining !== null && totalDebtBalance !== null ? remaining : null,
     tranches,
+    fulcrumLineId: findFulcrum(adminClaim > 0 ? [adminCostsRecovery, ...tranches] : tranches),
   };
 }
 
