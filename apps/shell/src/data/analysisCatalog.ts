@@ -18,4 +18,15 @@ export const ANALYSIS_CATALOG: AnalysisCatalogEntry[] = [
     requiredConcepts: ['ebit', 'da', 'capex', 'nwc', 'taxRate'],
     defaultEnabled: false,
   },
+  {
+    id: 'lbo',
+    name: 'LBO',
+    // Same concepts DCF requires, plus revenue/ebitda themselves — every one of these seeds a
+    // real historical or ratio driver in the LBO case (see lib/lbo.ts's seedLboCase). A missing
+    // tax rate in particular isn't a cosmetic gap: it nulls Net Income, which nulls Free Cash
+    // Flow, which stalls the whole debt-schedule sweep — worth surfacing via the same "Required
+    // lines" resolution checklist DCF already has, not a silently degraded seed.
+    requiredConcepts: ['revenue', 'ebitda', 'da', 'capex', 'nwc', 'taxRate'],
+    defaultEnabled: false,
+  },
 ];

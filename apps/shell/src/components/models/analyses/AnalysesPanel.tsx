@@ -1,8 +1,10 @@
 import { Card, Switch } from '@basis/design-system';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
-import type { AnalysisSettings, DcfInputs, Model, ScenarioKey, StatementSchema } from '../../../data';
+import type { AnalysisSettings, DcfInputs, LboCase, Model, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
+import type { SeedLboCaseParams } from '../../../lib/lbo';
 import { DcfPanel } from './DcfPanel';
+import { LboPanel } from './LboPanel';
 
 interface AnalysesPanelProps {
   schema: StatementSchema;
@@ -14,6 +16,10 @@ interface AnalysesPanelProps {
   onUpdateDcfInputs: (scenarioId: ScenarioKey, patch: Partial<DcfInputs>) => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
+  lboCase: LboCase | null;
+  onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>) => void;
+  onRemoveLboCase: () => void;
 }
 
 /** Always starts from the full catalog (today, just DCF) with an enable/disable toggle per entry
@@ -29,6 +35,10 @@ export function AnalysesPanel({
   onUpdateDcfInputs,
   onSchemaUpdated,
   onOpenStatementDefinitions,
+  lboCase,
+  onCreateLboCase,
+  onUpdateLboCase,
+  onRemoveLboCase,
 }: AnalysesPanelProps) {
   const enabledIds = analysisSettings?.enabledAnalysisIds ?? [];
 
@@ -65,6 +75,19 @@ export function AnalysesPanel({
           analysisSettings={analysisSettings}
           activeScenarioId={activeScenarioId}
           onUpdateDcfInputs={onUpdateDcfInputs}
+          onSchemaUpdated={onSchemaUpdated}
+          onOpenStatementDefinitions={onOpenStatementDefinitions}
+        />
+      ) : null}
+
+      {enabledIds.includes('lbo') ? (
+        <LboPanel
+          schema={schema}
+          model={model}
+          lboCase={lboCase}
+          onCreateLboCase={onCreateLboCase}
+          onUpdateLboCase={onUpdateLboCase}
+          onRemoveLboCase={onRemoveLboCase}
           onSchemaUpdated={onSchemaUpdated}
           onOpenStatementDefinitions={onOpenStatementDefinitions}
         />

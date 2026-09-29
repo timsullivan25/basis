@@ -616,6 +616,90 @@ export interface DcfInputs {
   terminalGrowth: number | null;
 }
 
+/** One LBO capital structure/return-target assumption set — see LboCase's own doc comment for
+ *  why this lives on the case itself rather than cascading per-scenario like DcfInputs. */
+export interface LboFinancingInputs {
+  /** Total entry debt as a multiple of entry-period EBITDA — the primary lever this analysis
+   *  exists to test (see lib/lbo.ts's seedLboCase). Editing this resizes the Term Loan tranche's
+   *  debtProperties.originalFaceValue; the Revolver is sized/edited independently and stays
+   *  undrawn at close. Seeded to the company's own current Net Debt / EBITDA so a freshly-enabled
+   *  case starts at a sensible number, never left null afterward. */
+  leverageMultiple: number | null;
+  /** Target sponsor IRRs the Ability to Pay grid solves against, e.g. [0.15, 0.2, 0.25]. */
+  targetIrrs: number[];
+  /** `null` means "same as the implied entry multiple" (no multiple expansion) — computeAbilityToPay's
+   *  own default, per this analysis's usual convention (see lib/lbo.ts). */
+  exitMultiple: number | null;
+  /** Index into the LBO case's OWN timeline (not the base model's) — null defaults to its last period. */
+  exitPeriodIndex: number | null;
+  /** % of entry transaction value paid out at close (financing + advisory fees) — a fixed use of
+   *  proceeds in the Ability to Pay math. `null` (not 0) means "not entered". */
+  transactionExpensesPct: number | null;
+}
+
+/**
+ * A standalone LBO projection — deliberately NOT a second Model row (Model is a strict singleton
+ * per company, "never a peer among several" — see its own doc comment). Everything below Model in
+ * this data model (StatementSchema, evaluateModel, the debt schedule) only ever needs a
+ * {schema, timeline, historicals, driverValues} bundle, never a persisted Model row — so an
+ * LboCase embeds its own private schema fork (the same "deep copy, not an id reference"
+ * convention Snapshot already uses, for the same reason: it must keep working after the live
+ * model/schema changes) rather than registering one in StatementSchemaRepository, and runs
+ * through evaluateModel exactly like the base model does.
+ *
+ * One per model (like AnalysisSettings — this doubles as its own primary key), created the moment
+ * 'lbo' is added to AnalysisSettings.enabledAnalysisIds by resolving Revenue/EBITDA/D&A/CapEx/Net
+ * Working Capital/tax rate/existing Net Debt from the BASE model's own already-computed output at
+ * one entry period — the same lib/summaryLines.ts concept resolution DCF already uses for its own
+ * inputs, not a real mapping UI (see lib/lbo.ts's seedLboCase). Scenario-agnostic for now: unlike
+ * DCF's per-ScenarioKey inputs, one LBO case serves every scenario — unifying its own driver
+ * assumptions with the base model's Base-vs-scenario fork is a real modeling question left for a
+ * later pass, not attempted here.
+ */
+export interface LboCase {
+  /** == modelId — one LBO case per model, so this doubles as the primary key. */
+  id: string;
+  modelId: string;
+  /** The base model timeline period this case was seeded from, at the time it was created —
+   *  display only ("Entry: FY2027"); never re-resolved against the base model afterward, since
+   *  the base model's own periods can shift (re-map, horizon change) without disturbing a case
+   *  already running on its own independent timeline. */
+  entryPeriodLabel: string;
+  /** A full private StatementSchema — see this interface's own doc comment for why it's embedded
+   *  rather than a StatementSchemaRepository id. Mutated directly (tranches added/edited/removed
+   *  via the same lib/statementLineChildren.ts helpers a model's own schema fork uses) as the
+   *  financing package is edited. */
+  schema: StatementSchema;
+  timeline: Timeline;
+  historicals: Record<string, (number | null)[]>;
+  driverValues: Record<string, (number | null)[]>;
+  financing: LboFinancingInputs;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLboCaseInput {
+  modelId: string;
+  entryPeriodLabel: string;
+  schema: StatementSchema;
+  timeline: Timeline;
+  historicals: Record<string, (number | null)[]>;
+  driverValues: Record<string, (number | null)[]>;
+  financing: LboFinancingInputs;
+}
+
+export interface LboCaseRepository {
+  get(modelId: string): Promise<LboCase | undefined>;
+  /** Persists a case built by lib/lbo.ts's seedLboCase — the repository itself does no seeding
+   *  math, same division of labor as ModelRepository.create taking an already-resolved
+   *  CreateModelInput. Replaces any existing case for the model (re-enabling after a Remove
+   *  starts clean, same as toggling DCF back on doesn't restore old WACC/terminal-growth values
+   *  either — see AnalysisSettingsRepository.create). */
+  create(input: CreateLboCaseInput): Promise<LboCase>;
+  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>): Promise<LboCase>;
+  remove(modelId: string): Promise<void>;
+}
+
 /**
  * One row per model — which analyses (from the static ANALYSIS_CATALOG) are enabled, and DCF's
  * own per-scenario WACC/terminal-growth assumptions. Required inputs that DO have a schema

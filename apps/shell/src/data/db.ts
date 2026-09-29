@@ -4,6 +4,7 @@ import type {
   AnalysisSettings,
   Company,
   ComputedResult,
+  LboCase,
   Mapping,
   Model,
   ModelImport,
@@ -65,10 +66,15 @@ export interface BasisDb extends DBSchema {
     value: AnalysisResult;
     indexes: { 'by-modelId': string };
   };
+  lboCases: {
+    key: string;
+    value: LboCase;
+    // No index — id === modelId, so a direct get() is always the lookup, same as analysisSettings.
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 18;
+const DB_VERSION = 19;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -275,6 +281,9 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         // template list is read, and models are re-imported.
         if (oldVersion >= 1 && oldVersion < 18) {
           for (const name of Array.from(db.objectStoreNames)) transaction.objectStore(name).clear();
+        }
+        if (oldVersion < 19) {
+          db.createObjectStore('lboCases', { keyPath: 'id' });
         }
       },
     });

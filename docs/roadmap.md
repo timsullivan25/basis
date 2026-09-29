@@ -55,7 +55,13 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
   seniority order (revolver first, then term tranches in schema order) for the cash-sweep logic. A
   downside-scenario recovery waterfall reuses that ordering directly rather than re-deriving
   capital structure.
-- **LBO returns (IRR/MOIC)**.
+- ~~**LBO returns (IRR/MOIC)**~~ **First pass done** — a standalone LboCase (own schema/timeline,
+  extended 5-7yr beyond the base model, seeded from its resolved Revenue/EBITDA/D&A/CapEx/NWC/tax
+  rate) with a full tranche editor (default Term Loan + Revolver, sized by leverage multiple) and
+  an "Ability to Pay" back-solve: fixes the financing package (leverage × entry EBITDA, independent
+  of price) and a target IRR, solves backward for the max entry multiple/EV, closed-form even with
+  "no multiple expansion" (see `lib/lbo.ts`). Not yet done: per-scenario LBO assumptions (today one
+  case serves every scenario), snapshotting an LBO case, and a value-creation bridge on top of it.
 - **Accretion/dilution analysis** — needs the M&A overlay first.
 - **Value-creation bridge** (growth vs. margin vs. multiple vs. deleveraging) — cheap once DCF/LBO
   outputs exist.
