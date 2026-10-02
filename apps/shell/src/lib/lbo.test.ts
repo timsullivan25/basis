@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLboEvaluationInputs, computeAbilityToPay, effectiveLboFinancing, seedLboCase, type SeedLboCaseParams } from './lbo';
+import { buildLboEvaluationInputs, computeAbilityToPay, computeLboOutput, effectiveLboFinancing, seedLboCase, type SeedLboCaseParams } from './lbo';
 import { createLboStatementSchema } from './lboStatementSchema';
 import { findSummaryLine } from './summaryLines';
 import { evaluateModel } from './engine/evaluate';
@@ -244,5 +244,39 @@ describe('computeAbilityToPay', () => {
     expect(rows.map((r) => r.targetIrr)).toEqual([0.15, 0.2, 0.25]);
     expect(rows[0].impliedEntryMultiple!).toBeGreaterThan(rows[1].impliedEntryMultiple!);
     expect(rows[1].impliedEntryMultiple!).toBeGreaterThan(rows[2].impliedEntryMultiple!);
+  });
+});
+
+describe('computeLboOutput', () => {
+  it('matches what buildLboEvaluationInputs + computeAbilityToPay would produce separately — one implementation, not two that could drift', () => {
+    const result = seed();
+    const output = computeLboOutput(result, 'base', baseSchema(), lineValues({
+      rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+    }), BASE_TIMELINE);
+
+    expect(output.projection).toHaveLength(result.timeline.length);
+    expect(output.projection[0].revenue).toBe(1100);
+    expect(output.projection[0].ebitda).toBe(440);
+    expect(output.abilityToPay).toHaveLength(result.financing.base.targetIrrs.length);
+    // Same self-consistency invariant as computeAbilityToPay's own tests: MOIC = (1+IRR)^n.
+    const periodsPerYear = 1;
+    const holdingYears = (result.timeline.length - 1) / periodsPerYear;
+    expect(output.abilityToPay[1].moic).toBeCloseTo(Math.pow(1.2, holdingYears), 6);
+  });
+
+  it('reflects a scenario override in both the projection and the ability-to-pay grid', () => {
+    const result = seed();
+    const base = computeLboOutput(result, 'base', baseSchema(), lineValues({
+      rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+    }), BASE_TIMELINE);
+    const withOverride: typeof result = { ...result, financing: { ...result.financing, upside: { ...result.financing.base, leverageMultiple: 6 } } };
+    const upside = computeLboOutput(withOverride, 'upside', baseSchema(), lineValues({
+      rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+    }), BASE_TIMELINE);
+
+    expect(upside.projection[0].totalDebt).toBeGreaterThan(base.projection[0].totalDebt!);
   });
 });

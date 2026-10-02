@@ -70,7 +70,7 @@ import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
-import { seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
+import { computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 import { effectiveLineKind } from '../lib/statementLineChildren';
@@ -389,6 +389,19 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, analysisSettings);
     void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'dcf', versionStamp, output));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings]);
+
+  // Same cache-not-source write-through as DCF's own above, for LBO — computeLboOutput is the
+  // exact same function LboPanel itself calls for display, so the cache can never show something
+  // different from what the panel does. The version stamp's 4th field is the LboCase's own
+  // updatedAt (bumped on any schema/financing edit — see IndexedDbLboCaseRepository.update)
+  // rather than AnalysisSettings, since that's where this analysis's own inputs actually live.
+  useEffect(() => {
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation || !analysisSettings || !lboCase) return;
+    if (!analysisSettings.enabledAnalysisIds.includes('lbo')) return;
+    const output = computeLboOutput(lboCase, activeScenarioId, schema, evaluation, model.timeline);
+    const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, lboCase);
+    void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'lbo', versionStamp, output));
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings, lboCase]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not

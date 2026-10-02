@@ -1,10 +1,11 @@
-import type { CreateLboCaseInput, LboCase, LboFinancingInputs, ScenarioKey, StatementSchema, Timeline, TimelinePeriod } from '../data';
+import type { CreateLboCaseInput, LboCase, LboFinancingInputs, LboOutput, ScenarioKey, StatementSchema, Timeline, TimelinePeriod } from '../data';
 import type { LineValues } from './computedCache';
 import { findSummaryLine, type SummaryConcept } from './summaryLines';
 import { createLboStatementSchema, findMinCashTargetDriverId } from './lboStatementSchema';
 import { extendTimeline } from './periodTimeline';
 import { periodsPerYearFor, regenerateDebtSchedule } from './debtSchedule';
 import { addChildLine, childrenOf } from './statementLineChildren';
+import { evaluateModel } from './engine/evaluate';
 
 export const DEFAULT_TARGET_IRRS = [0.15, 0.2, 0.25];
 export const DEFAULT_HORIZON_YEARS = 5;
@@ -224,13 +225,27 @@ export function buildLboEvaluationInputs(
   }
 
   const driverValues: Record<string, (number | null)[]> = {};
-  const revenueLine = findSummaryLine(schema, 'revenue');
-  const revenueGrowthDriverId = revenueLine ? findDriverIdForLine(schema, revenueLine.id) : undefined;
-  if (revenueGrowthDriverId) {
+  const seedProjectedPeriods = (driverId: string | undefined, value: number) => {
+    if (!driverId) return;
     const arr = nullArray();
-    for (let i = 1; i < periodCount; i++) arr[i] = impliedRevenueGrowth;
-    driverValues[revenueGrowthDriverId] = arr;
+    for (let i = 1; i < periodCount; i++) arr[i] = value;
+    driverValues[driverId] = arr;
+  };
+  const revenueLine = findSummaryLine(schema, 'revenue');
+  seedProjectedPeriods(revenueLine ? findDriverIdForLine(schema, revenueLine.id) : undefined, impliedRevenueGrowth);
+
+  // The tax-rate driver's own basis (Pretax Income) is null at period 0 — the entry period has no
+  // PRIOR period for the Term Loan's beginning balance, so Interest Expense (and everything
+  // downstream of it: Pretax Income, Net Income, Free Cash Flow) is genuinely unknown there, same
+  // as a real deal accrues no interest on debt that hasn't closed yet. evaluate.ts's own
+  // last-actual-implied-ratio default (which every OTHER percent-of driver here relies on) needs
+  // that basis value, so it would silently come back null for every projected period too — seeded
+  // explicitly instead, straight from the base model's own resolved tax rate, which has no such
+  // dependency on this case's own (necessarily incomplete) entry period.
+  if (taxRate !== null) {
+    seedProjectedPeriods(taxExpenseLine ? findDriverIdForLine(schema, taxExpenseLine.id) : undefined, taxRate);
   }
+
   const minCashTargetDriverId = findMinCashTargetDriverId(schema);
   if (minCashTargetDriverId) driverValues[minCashTargetDriverId] = nullArray().fill(0);
 
@@ -305,4 +320,47 @@ export function computeAbilityToPay(
     const moic = sponsorEquityCheck > 0 ? exitEquityValue / sponsorEquityCheck : null;
     return { targetIrr, impliedEntryMultiple, impliedEntryEnterpriseValue, sponsorEquityCheck, exitEquityValue, moic };
   });
+}
+
+/**
+ * The full computed LBO output for one (LboCase, scenario) pair — builds the live evaluation
+ * inputs (buildLboEvaluationInputs), evaluates them, and reads off both the per-period projection
+ * and the Ability to Pay grid. The one place both LboPanel (for display) and
+ * ModelWorkspaceScreen's own write-through cache (for AnalysisResult — see its own doc comment)
+ * compute an LboCase's output, so there is exactly one implementation of "what does this case's
+ * output look like" rather than the panel and the cache drifting apart over time.
+ */
+export function computeLboOutput(
+  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing'>,
+  scenarioId: ScenarioKey,
+  baseSchema: StatementSchema,
+  baseEvaluation: LineValues,
+  baseTimeline: Timeline,
+): LboOutput {
+  const built = buildLboEvaluationInputs(lboCase, scenarioId, baseSchema, baseEvaluation, baseTimeline);
+  const evaluation = evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues });
+  const financing = effectiveLboFinancing(lboCase.financing, scenarioId);
+
+  const revenueId = findSummaryLine(built.schema, 'revenue')?.id;
+  const ebitdaId = findSummaryLine(built.schema, 'ebitda')?.id;
+  const fcfId = findSummaryLine(built.schema, 'fcf')?.id;
+  const totalDebtId = findSummaryLine(built.schema, 'totalDebt')?.id;
+  const netDebtId = findSummaryLine(built.schema, 'netDebt')?.id;
+  const cashId = findSummaryLine(built.schema, 'cash')?.id;
+
+  const projection = built.timeline.map((_, periodIndex) => ({
+    periodIndex,
+    revenue: revenueId ? evaluation.getValue(revenueId, periodIndex) : null,
+    ebitda: ebitdaId ? evaluation.getValue(ebitdaId, periodIndex) : null,
+    fcf: fcfId ? evaluation.getValue(fcfId, periodIndex) : null,
+    totalDebt: totalDebtId ? evaluation.getValue(totalDebtId, periodIndex) : null,
+    netDebt: netDebtId ? evaluation.getValue(netDebtId, periodIndex) : null,
+  }));
+
+  const abilityToPay =
+    ebitdaId && totalDebtId && cashId
+      ? computeAbilityToPay(financing, built.timeline, evaluation, { ebitda: ebitdaId, totalDebt: totalDebtId, cash: cashId })
+      : [];
+
+  return { projection, abilityToPay };
 }

@@ -49,6 +49,7 @@ export type {
   LboCase,
   LboCaseRepository,
   LboFinancingInputs,
+  LboOutput,
   LineAggregation,
   LineMapping,
   LineNumberFormat,

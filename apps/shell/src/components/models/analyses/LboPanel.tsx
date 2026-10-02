@@ -6,8 +6,7 @@ import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
-import { buildLboEvaluationInputs, computeAbilityToPay, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
-import { evaluateModel } from '../../../lib/engine/evaluate';
+import { computeLboOutput, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 import type { LineValues } from '../../../lib/computedCache';
@@ -113,17 +112,14 @@ export function LboPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  // Rebuilt from the live base evaluation on every render (see buildLboEvaluationInputs' own doc
-  // comment) — computed unconditionally, ahead of the early return below, so hook order stays
-  // stable regardless of whether a case exists yet.
-  const built = useMemo(() => {
+  // Rebuilt from the live base evaluation on every render (see computeLboOutput's own doc
+  // comment — the same function ModelWorkspaceScreen's own AnalysisResult write-through cache
+  // calls, so the panel and the cache never drift apart) — computed unconditionally, ahead of the
+  // early return below, so hook order stays stable regardless of whether a case exists yet.
+  const output = useMemo(() => {
     const source = lboCase ?? { schema, timeline: model.timeline, entryPeriodIndex: model.timeline.length - 1, financing: {} };
-    return buildLboEvaluationInputs(source, activeScenarioId, schema, evaluation, model.timeline);
+    return computeLboOutput(source, activeScenarioId, schema, evaluation, model.timeline);
   }, [lboCase, activeScenarioId, schema, evaluation, model.timeline]);
-  const lboEvaluation = useMemo(
-    () => evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues }),
-    [built],
-  );
 
   if (!lboCase) {
     return (
@@ -211,15 +207,7 @@ export function LboPanel({
     );
   }
 
-  const lineIds = {
-    revenue: findSummaryLine(lboCase.schema, 'revenue')?.id,
-    ebitda: findSummaryLine(lboCase.schema, 'ebitda')?.id,
-    fcf: findSummaryLine(lboCase.schema, 'fcf')?.id,
-    totalDebt: findSummaryLine(lboCase.schema, 'totalDebt')?.id,
-    netDebt: findSummaryLine(lboCase.schema, 'netDebt')?.id,
-    cash: findSummaryLine(lboCase.schema, 'cash')?.id,
-  };
-
+  const totalDebtLine = findSummaryLine(lboCase.schema, 'totalDebt');
   const periodsPerYear = periodsPerYearFor(lboCase.timeline[0]?.type ?? 'FY');
   const financing = effectiveLboFinancing(lboCase.financing, activeScenarioId);
   const entryPeriodLabel = model.timeline[Math.min(lboCase.entryPeriodIndex, model.timeline.length - 1)]?.label ?? '—';
@@ -236,14 +224,14 @@ export function LboPanel({
     onUpdateLboCase({ financing: { ...lboCase!.financing, [activeScenarioId]: { ...current, ...patch } } });
   }
 
-  const tranches = lineIds.totalDebt ? childrenOf(lboCase.schema, lineIds.totalDebt) : [];
+  const tranches = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
   const leverageLinkedTranche = tranches.find((t) => t.debtProperties?.debtType !== 'revolver');
-  const liveEntryEbitda = lineIds.ebitda ? built.historicals[lineIds.ebitda]?.[0] ?? null : null;
+  const liveEntryEbitda = output.projection[0]?.ebitda ?? null;
   const liveTermLoanFaceValue = financing.leverageMultiple !== null && liveEntryEbitda !== null ? financing.leverageMultiple * liveEntryEbitda : null;
 
   function addTranche() {
-    if (!lineIds.totalDebt) return;
-    const { schema: withLine, lineId } = addChildLine(lboCase!.schema, { kind: 'line', parentLineId: lineIds.totalDebt }, 'New Tranche');
+    if (!totalDebtLine) return;
+    const { schema: withLine, lineId } = addChildLine(lboCase!.schema, { kind: 'line', parentLineId: totalDebtLine.id }, 'New Tranche');
     const patched: StatementSchema = {
       ...withLine,
       sections: withLine.sections.map((s) => ({
@@ -268,11 +256,6 @@ export function LboPanel({
     };
     regenerateAndUpdate(nextSchema);
   }
-
-  const abilityToPay =
-    lineIds.ebitda && lineIds.totalDebt && lineIds.cash
-      ? computeAbilityToPay(financing, lboCase.timeline, lboEvaluation, { ebitda: lineIds.ebitda, totalDebt: lineIds.totalDebt, cash: lineIds.cash })
-      : [];
 
   return (
     // Keyed on the active scenario so every per-scenario field below (NumberField/PercentField,
@@ -328,30 +311,27 @@ export function LboPanel({
         </div>
       </Card>
 
-      {lineIds.ebitda && lineIds.fcf && lineIds.totalDebt && lineIds.netDebt && lineIds.revenue ? (
-        <Card title="Projection" padding="none">
-          <DataTable
-            dense
-            stickyFirstColumn
-            columns={[
-              { key: 'name', label: 'Line', width: 160, render: (_: unknown, row: { label: string }) => row.label },
-              ...lboCase.timeline.map((period, i) => ({
-                key: `p${i}`,
-                label: period.label,
-                numeric: true,
-                width: 100,
-                render: (_: unknown, row: { key: string }) => {
-                  const id = lineIds[row.key as (typeof PROJECTION_ROWS)[number]];
-                  const value = id ? lboEvaluation.getValue(id, i) : null;
-                  return formatPeriodValue(value, 'number');
-                },
-              })),
-            ]}
-            rows={PROJECTION_ROWS.map((key) => ({ key, label: PROJECTION_LABELS[key] }))}
-            rowKey="key"
-          />
-        </Card>
-      ) : null}
+      <Card title="Projection" padding="none">
+        <DataTable
+          dense
+          stickyFirstColumn
+          columns={[
+            { key: 'name', label: 'Line', width: 160, render: (_: unknown, row: { label: string }) => row.label },
+            ...lboCase.timeline.map((period, i) => ({
+              key: `p${i}`,
+              label: period.label,
+              numeric: true,
+              width: 100,
+              render: (_: unknown, row: { key: string }) => {
+                const value = output.projection[i]?.[row.key as (typeof PROJECTION_ROWS)[number]] ?? null;
+                return formatPeriodValue(value, 'number');
+              },
+            })),
+          ]}
+          rows={PROJECTION_ROWS.map((key) => ({ key, label: PROJECTION_LABELS[key] }))}
+          rowKey="key"
+        />
+      </Card>
 
       <Card title="Ability to Pay" icon="target" padding="md">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
@@ -399,26 +379,26 @@ export function LboPanel({
               {
                 key: 'multiple', label: 'Implied Entry Multiple', numeric: true, width: 150,
                 render: (_: unknown, row: { rowIndex: number }) => {
-                  const v = abilityToPay[row.rowIndex]?.impliedEntryMultiple;
+                  const v = output.abilityToPay[row.rowIndex]?.impliedEntryMultiple;
                   return v != null ? `${v.toFixed(2)}x` : '—';
                 },
               },
               {
                 key: 'ev', label: 'Implied Entry EV', numeric: true, width: 140,
-                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(abilityToPay[row.rowIndex]?.impliedEntryEnterpriseValue ?? null, 'number'),
+                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(output.abilityToPay[row.rowIndex]?.impliedEntryEnterpriseValue ?? null, 'number'),
               },
               {
                 key: 'equity', label: 'Sponsor Equity Check', numeric: true, width: 150,
-                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(abilityToPay[row.rowIndex]?.sponsorEquityCheck ?? null, 'number'),
+                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(output.abilityToPay[row.rowIndex]?.sponsorEquityCheck ?? null, 'number'),
               },
               {
                 key: 'exitEquity', label: 'Exit Equity Value', numeric: true, width: 140,
-                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(abilityToPay[row.rowIndex]?.exitEquityValue ?? null, 'number'),
+                render: (_: unknown, row: { rowIndex: number }) => formatPeriodValue(output.abilityToPay[row.rowIndex]?.exitEquityValue ?? null, 'number'),
               },
               {
                 key: 'moic', label: 'MOIC', numeric: true, width: 90,
                 render: (_: unknown, row: { rowIndex: number }) => {
-                  const v = abilityToPay[row.rowIndex]?.moic;
+                  const v = output.abilityToPay[row.rowIndex]?.moic;
                   return v != null ? `${v.toFixed(2)}x` : '—';
                 },
               },
@@ -427,7 +407,7 @@ export function LboPanel({
             rowKey="key"
           />
 
-          {abilityToPay.length > 0 && abilityToPay.every((r) => r.impliedEntryMultiple === null) ? (
+          {output.abilityToPay.length > 0 && output.abilityToPay.every((r) => r.impliedEntryMultiple === null) ? (
             <Alert tone="caution" title="No priceable structure at these targets">
               Either the leverage/exit assumptions can't clear a target IRR from this cash flow path, or the exit period has no resolved EBITDA/debt yet.
             </Alert>
@@ -435,12 +415,10 @@ export function LboPanel({
         </div>
       </Card>
 
-      {lineIds.ebitda ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-5)' }}>
-          <MetricCard label="Entry EBITDA" value={formatPeriodValue(lboEvaluation.getValue(lineIds.ebitda, 0), 'number')} />
-          <MetricCard label="Entry Leverage" value={financing.leverageMultiple !== null ? `${financing.leverageMultiple.toFixed(2)}x` : '—'} />
-        </div>
-      ) : null}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-5)' }}>
+        <MetricCard label="Entry EBITDA" value={formatPeriodValue(liveEntryEbitda, 'number')} />
+        <MetricCard label="Entry Leverage" value={financing.leverageMultiple !== null ? `${financing.leverageMultiple.toFixed(2)}x` : '—'} />
+      </div>
     </div>
   );
 }

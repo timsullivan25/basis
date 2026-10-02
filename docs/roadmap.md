@@ -65,10 +65,11 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
   scenario via `financing: Record<ScenarioKey, LboFinancingInputs>`, same sparse-cascade-off-Base
   convention as DCF's WACC/terminal growth) — never a copy of Revenue/EBITDA/D&A/CapEx/NWC/tax
   rate or the Term Loan's own face value, all of which resolve live off the base model's current
-  evaluation for whichever scenario is active, every render (`buildLboEvaluationInputs`). No
-  analysis (LBO included) persists its own OUTPUTS yet — Ability to Pay is recomputed live, same
-  as DCF; if that changes later, the plan is to store either the base case's output or every
-  scenario's, not a single ambiguous snapshot, so cross-issuer/over-time comparison stays honest.
+  evaluation for whichever scenario is active, every render (`buildLboEvaluationInputs`). Both DCF
+  and LBO now also write a version-stamped `AnalysisResult` cache per (model, scenario) — one row
+  per scenario, never a single ambiguous snapshot — purely for a future cross-model/cross-issuer
+  reader; neither panel ever reads its own cache back, so a stale or missing row can never show a
+  wrong number live.
 - **Accretion/dilution analysis** — needs the M&A overlay first.
 - **Value-creation bridge** (growth vs. margin vs. multiple vs. deleveraging) — cheap once DCF/LBO
   outputs exist.

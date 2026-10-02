@@ -756,8 +756,7 @@ export interface AnalysisSettingsRepository {
 /** The full computed DCF output for one (model, scenario) pair — a plain-data mirror of
  *  lib/dcf.ts's working shapes (DcfUfcfRow/DcfOutputs/SensitivityGrid), same relationship
  *  ComputedResult's flattened values/errors already have to the live EvaluationResult they're
- *  materialized from. Deliberately DCF-shaped rather than generic: it's the only analysis today,
- *  and a second one would get its own typed payload here rather than forcing a premature union. */
+ *  materialized from. */
 export interface DcfOutput {
   ufcfRows: Array<{
     periodIndex: number;
@@ -783,25 +782,52 @@ export interface DcfOutput {
   };
 }
 
+/** The full computed LBO output for one (model, scenario) pair — a plain-data mirror of
+ *  lib/lbo.ts's own working shapes (AbilityToPayRow, plus the per-period projection
+ *  computeLboOutput reads off the live evaluation), same relationship DcfOutput already has to
+ *  lib/dcf.ts. `projection` is index-aligned to the LboCase's own timeline, not the base model's. */
+export interface LboOutput {
+  projection: Array<{
+    periodIndex: number;
+    revenue: number | null;
+    ebitda: number | null;
+    fcf: number | null;
+    totalDebt: number | null;
+    netDebt: number | null;
+  }>;
+  abilityToPay: Array<{
+    targetIrr: number;
+    impliedEntryMultiple: number | null;
+    impliedEntryEnterpriseValue: number | null;
+    sponsorEquityCheck: number | null;
+    exitEquityValue: number | null;
+    moic: number | null;
+  }>;
+}
+
 /** A SIBLING to ComputedResultVersionStamp, not a widening of it — computedCache.ts's existing
- *  3-field consumers stay untouched. The 4th field DCF needs beyond the other three: WACC/
- *  terminal-growth live in AnalysisSettings, whose own updatedAt must also match for the cache
- *  to be considered fresh. */
+ *  3-field consumers stay untouched. The 4th field is the one analysis-specific addition: every
+ *  analysis's own inputs live somewhere with its own updatedAt (AnalysisSettings for DCF's WACC/
+ *  terminal growth, LboCase for LBO's financing), and that record's updatedAt must also match for
+ *  the cache to be considered fresh — see lib/analysisCache.ts's computeAnalysisVersionStamp,
+ *  which takes whichever one applies rather than hardcoding AnalysisSettings. */
 export interface AnalysisResultVersionStamp {
   modelUpdatedAt: string;
   scenarioUpdatedAt: string | null;
   schemaUpdatedAt: string;
-  analysisSettingsUpdatedAt: string;
+  inputsUpdatedAt: string;
 }
 
 /**
  * A materialized cache of one analysis's output for one (model, scenario) pair — "computed state
  * is a cache, not a source" per the architecture contract, same pattern ComputedResult already
- * establishes. The payoff isn't that DCF math is slow (it isn't, same as evaluateModel at this
+ * establishes. The payoff isn't that this math is slow (it isn't, same as evaluateModel at this
  * schema's scale) — it's what lets a cross-model reader (the "fetch analysis outputs for an
  * arbitrary set of company/model/scenario/analysis tuples" access pattern this phase's plan asks
  * for) read a number without loading that company's full model/schema/scenario and recomputing
- * DCF live for each one.
+ * live for each one. Never read by the analysis's own live UI, which always recomputes fresh —
+ * see LboCase and DcfPanel's own doc comments for why neither trusts a stored copy of its inputs
+ * either; this cache exists purely for a reader that ISN'T the analysis's own panel.
  */
 export interface AnalysisResult {
   /** `${modelId}:${scenarioId}:${analysisId}` — also the natural primary key. */
@@ -809,7 +835,7 @@ export interface AnalysisResult {
   modelId: string;
   scenarioId: ScenarioKey;
   analysisId: string;
-  output: DcfOutput;
+  output: DcfOutput | LboOutput;
   versionStamp: AnalysisResultVersionStamp;
   computedAt: string;
 }
