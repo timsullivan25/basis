@@ -18,7 +18,7 @@ interface AnalysesPanelProps {
   onOpenStatementDefinitions: () => void;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) => void;
   onRemoveLboCase: () => void;
 }
 
@@ -84,6 +84,8 @@ export function AnalysesPanel({
         <LboPanel
           schema={schema}
           model={model}
+          evaluation={evaluation}
+          activeScenarioId={activeScenarioId}
           lboCase={lboCase}
           onCreateLboCase={onCreateLboCase}
           onUpdateLboCase={onUpdateLboCase}

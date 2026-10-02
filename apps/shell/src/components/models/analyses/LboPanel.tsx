@@ -1,22 +1,25 @@
 import { useMemo, useState } from 'react';
 import { Alert, Badge, Button, Card, DataTable, Field, Icon, IconButton, Input, MetricCard, Select, Switch } from '@basis/design-system';
-import { statementSchemaRepository, type LboCase, type LboFinancingInputs, type Model, type StatementSchema } from '../../../data';
+import { statementSchemaRepository, type LboCase, type LboFinancingInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
-import { applyLeverageMultiple, computeAbilityToPay, DEFAULT_HORIZON_YEARS, type SeedLboCaseParams } from '../../../lib/lbo';
+import { buildLboEvaluationInputs, computeAbilityToPay, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
 import { evaluateModel } from '../../../lib/engine/evaluate';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
+import type { LineValues } from '../../../lib/computedCache';
 
 interface LboPanelProps {
   schema: StatementSchema;
   model: Model;
+  evaluation: LineValues;
+  activeScenarioId: ScenarioKey;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) => void;
   onRemoveLboCase: () => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
@@ -77,13 +80,17 @@ const PROJECTION_LABELS: Record<(typeof PROJECTION_ROWS)[number], string> = {
 /**
  * LBO — a standalone, extended-horizon projection reusing this app's own schema/debt-schedule
  * engine on a purpose-built LboCase (see data/types.ts's own doc comment for why it's not a
- * second Model row) rather than the base model's own timeline. Setup is a one-time choice (entry
- * period + horizon); after that, only leverage, the financing package's own tranches, and the
- * Ability to Pay targets are meant to be touched — "should basically work when the analysis is
- * turned on," per this analysis's own design goal.
+ * second Model row, and for exactly what it does/doesn't store). Every number that comes from the
+ * base model (Revenue/EBITDA/D&A/CapEx/Net Working Capital/tax rate at the entry period, and the
+ * leverage-linked tranche's own face value) is re-resolved live against whichever scenario is
+ * active on every render via buildLboEvaluationInputs — never read back from storage — so
+ * switching scenarios or editing a base-model driver updates this panel with no re-seed step, the
+ * same way DCF already works. Setup (entry period + horizon) is a one-time choice; financing
+ * (leverage, target IRRs, exit assumptions) is per-scenario, same sparse-cascade-off-Base
+ * convention as DCF's own WACC/terminal growth.
  */
 export function LboPanel({
-  schema, model, lboCase, onCreateLboCase, onUpdateLboCase, onRemoveLboCase, onSchemaUpdated, onOpenStatementDefinitions,
+  schema, model, evaluation, activeScenarioId, lboCase, onCreateLboCase, onUpdateLboCase, onRemoveLboCase, onSchemaUpdated, onOpenStatementDefinitions,
 }: LboPanelProps) {
   const [entryPeriodIndex, setEntryPeriodIndex] = useState(model.timeline.length - 1);
   const [horizonYears, setHorizonYears] = useState(DEFAULT_HORIZON_YEARS);
@@ -106,13 +113,17 @@ export function LboPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  // Computed unconditionally, ahead of the early return below, so hook order stays stable
-  // regardless of whether a case exists yet — falls back to evaluating the base schema itself
-  // (a throwaway result, discarded immediately by that return) rather than skipping the hook.
-  const lboEvaluation = useMemo(() => {
-    const source = lboCase ?? { schema, timeline: model.timeline, historicals: {}, driverValues: {} };
-    return evaluateModel(source.schema, { timeline: source.timeline, historicals: source.historicals, driverValues: source.driverValues });
-  }, [lboCase, schema, model.timeline]);
+  // Rebuilt from the live base evaluation on every render (see buildLboEvaluationInputs' own doc
+  // comment) — computed unconditionally, ahead of the early return below, so hook order stays
+  // stable regardless of whether a case exists yet.
+  const built = useMemo(() => {
+    const source = lboCase ?? { schema, timeline: model.timeline, entryPeriodIndex: model.timeline.length - 1, financing: {} };
+    return buildLboEvaluationInputs(source, activeScenarioId, schema, evaluation, model.timeline);
+  }, [lboCase, activeScenarioId, schema, evaluation, model.timeline]);
+  const lboEvaluation = useMemo(
+    () => evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues }),
+    [built],
+  );
 
   if (!lboCase) {
     return (
@@ -168,8 +179,8 @@ export function LboPanel({
             ) : (
               <>
                 {missing.length > 0 ? (
-                  <Alert tone="caution" title="Some inputs are missing — the seeded case will show gaps for them">
-                    D&A, CapEx, Net Working Capital and the tax rate all improve the seed (see above) but aren't required to get started.
+                  <Alert tone="caution" title="Some inputs are missing — the case will show gaps for them">
+                    D&A, CapEx, Net Working Capital and the tax rate all improve the projection (see above) but aren't required to get started.
                   </Alert>
                 ) : null}
                 <div style={{ display: 'flex', gap: 'var(--space-6)' }}>
@@ -210,23 +221,25 @@ export function LboPanel({
   };
 
   const periodsPerYear = periodsPerYearFor(lboCase.timeline[0]?.type ?? 'FY');
+  const financing = effectiveLboFinancing(lboCase.financing, activeScenarioId);
+  const entryPeriodLabel = model.timeline[Math.min(lboCase.entryPeriodIndex, model.timeline.length - 1)]?.label ?? '—';
 
-  function regenerateAndUpdate(nextSchema: StatementSchema, historicals = lboCase!.historicals) {
-    const regenerated = regenerateDebtSchedule(nextSchema, periodsPerYear, false);
-    onUpdateLboCase({ schema: regenerated, historicals });
+  function regenerateAndUpdate(nextSchema: StatementSchema) {
+    onUpdateLboCase({ schema: regenerateDebtSchedule(nextSchema, periodsPerYear, false) });
   }
 
+  // Scenario-scoped: only the ACTIVE scenario's entry in `financing` is patched, sparse against
+  // 'base' for every other field — same per-field convention ModelWorkspaceScreen's own
+  // updateDcfInputs uses for WACC/terminal growth.
   function updateFinancing(patch: Partial<LboFinancingInputs>) {
-    onUpdateLboCase({ financing: { ...lboCase!.financing, ...patch } });
-  }
-
-  function commitLeverage(next: number | null) {
-    if (next === null || !lineIds.totalDebt || !lineIds.ebitda) return;
-    const resized = applyLeverageMultiple(lboCase!, lineIds.totalDebt, lineIds.ebitda, next);
-    onUpdateLboCase({ schema: resized.schema, historicals: resized.historicals, financing: { ...lboCase!.financing, leverageMultiple: next } });
+    const current = lboCase!.financing[activeScenarioId] ?? financing;
+    onUpdateLboCase({ financing: { ...lboCase!.financing, [activeScenarioId]: { ...current, ...patch } } });
   }
 
   const tranches = lineIds.totalDebt ? childrenOf(lboCase.schema, lineIds.totalDebt) : [];
+  const leverageLinkedTranche = tranches.find((t) => t.debtProperties?.debtType !== 'revolver');
+  const liveEntryEbitda = lineIds.ebitda ? built.historicals[lineIds.ebitda]?.[0] ?? null : null;
+  const liveTermLoanFaceValue = financing.leverageMultiple !== null && liveEntryEbitda !== null ? financing.leverageMultiple * liveEntryEbitda : null;
 
   function addTranche() {
     if (!lineIds.totalDebt) return;
@@ -238,8 +251,7 @@ export function LboPanel({
         lines: s.lines.map((l) => (l.id === lineId ? { ...l, debtProperties: { debtType: 'term', couponType: 'fixed', repayable: true } } : l)),
       })),
     };
-    const historicals = { ...lboCase!.historicals, [lineId]: lboCase!.timeline.map((_, i) => (i === 0 ? 0 : null)) };
-    regenerateAndUpdate(patched, historicals);
+    regenerateAndUpdate(patched);
   }
 
   function removeTranche(lineId: string) {
@@ -259,14 +271,18 @@ export function LboPanel({
 
   const abilityToPay =
     lineIds.ebitda && lineIds.totalDebt && lineIds.cash
-      ? computeAbilityToPay(lboCase, lboEvaluation, { ebitda: lineIds.ebitda, totalDebt: lineIds.totalDebt, cash: lineIds.cash })
+      ? computeAbilityToPay(financing, lboCase.timeline, lboEvaluation, { ebitda: lineIds.ebitda, totalDebt: lineIds.totalDebt, cash: lineIds.cash })
       : [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+    // Keyed on the active scenario so every per-scenario field below (NumberField/PercentField,
+    // each buffering its own local text state — see their own definitions) remounts fresh with
+    // the new scenario's value on switch, rather than keeping stale text from the one just left.
+    // Same fix DcfPanel's own WACC/terminal-growth fields already use for the identical reason.
+    <div key={activeScenarioId} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-          Entry: {lboCase.entryPeriodLabel} · {lboCase.timeline.length - 1}yr horizon
+          Entry: {entryPeriodLabel} · {lboCase.timeline.length - 1}yr horizon
         </span>
         {confirmRemove ? (
           <span style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
@@ -282,11 +298,11 @@ export function LboPanel({
       <Card title="Financing" icon="landmark" padding="md">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-6)' }}>
-            <Field label="Leverage" hint="× entry EBITDA — sizes the Term Loan">
-              <NumberField value={lboCase.financing.leverageMultiple} onCommit={commitLeverage} suffix="x" />
+            <Field label="Leverage" hint="× entry EBITDA — sizes the Term Loan, live">
+              <NumberField value={financing.leverageMultiple} onCommit={(v) => v !== null && updateFinancing({ leverageMultiple: v })} suffix="x" />
             </Field>
             <Field label="Transaction expenses" hint="% of entry EBITDA">
-              <PercentField value={lboCase.financing.transactionExpensesPct} onCommit={(v) => updateFinancing({ transactionExpensesPct: v })} />
+              <PercentField value={financing.transactionExpensesPct} onCommit={(v) => updateFinancing({ transactionExpensesPct: v })} />
             </Field>
           </div>
 
@@ -299,6 +315,8 @@ export function LboPanel({
                 key={tranche.id}
                 name={tranche.name}
                 properties={tranche.debtProperties ?? {}}
+                leverageLinked={tranche.id === leverageLinkedTranche?.id}
+                liveFaceValue={liveTermLoanFaceValue}
                 onChange={(patch) => updateTrancheProperties(tranche.id, patch)}
                 onRemove={() => removeTranche(tranche.id)}
               />
@@ -341,7 +359,7 @@ export function LboPanel({
             <Field label="Exit period">
               <Select
                 size="sm"
-                value={String(lboCase.financing.exitPeriodIndex ?? lboCase.timeline.length - 1)}
+                value={String(financing.exitPeriodIndex ?? lboCase.timeline.length - 1)}
                 options={lboCase.timeline.map((p, i) => ({ value: String(i), label: p.label }))}
                 onChange={(e) => updateFinancing({ exitPeriodIndex: Number(e.target.value) })}
               />
@@ -350,12 +368,12 @@ export function LboPanel({
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                 <Switch
                   size="sm"
-                  checked={lboCase.financing.exitMultiple === null}
-                  onChange={(sameAsEntry) => updateFinancing({ exitMultiple: sameAsEntry ? null : (lboCase.financing.exitMultiple ?? 8) })}
+                  checked={financing.exitMultiple === null}
+                  onChange={(sameAsEntry) => updateFinancing({ exitMultiple: sameAsEntry ? null : (financing.exitMultiple ?? 8) })}
                   label="No expansion"
                 />
-                {lboCase.financing.exitMultiple !== null ? (
-                  <NumberField value={lboCase.financing.exitMultiple} onCommit={(v) => updateFinancing({ exitMultiple: v })} suffix="x" />
+                {financing.exitMultiple !== null ? (
+                  <NumberField value={financing.exitMultiple} onCommit={(v) => updateFinancing({ exitMultiple: v })} suffix="x" />
                 ) : null}
               </div>
             </Field>
@@ -368,10 +386,10 @@ export function LboPanel({
                 key: 'targetIrr', label: 'Target IRR', width: 110,
                 render: (_: unknown, row: { rowIndex: number }) => (
                   <PercentField
-                    value={lboCase.financing.targetIrrs[row.rowIndex]}
+                    value={financing.targetIrrs[row.rowIndex]}
                     onCommit={(v) => {
                       if (v === null) return;
-                      const next = [...lboCase.financing.targetIrrs];
+                      const next = [...financing.targetIrrs];
                       next[row.rowIndex] = v;
                       updateFinancing({ targetIrrs: next });
                     }}
@@ -405,7 +423,7 @@ export function LboPanel({
                 },
               },
             ]}
-            rows={lboCase.financing.targetIrrs.map((_, rowIndex) => ({ key: `r${rowIndex}`, rowIndex }))}
+            rows={financing.targetIrrs.map((_, rowIndex) => ({ key: `r${rowIndex}`, rowIndex }))}
             rowKey="key"
           />
 
@@ -420,7 +438,7 @@ export function LboPanel({
       {lineIds.ebitda ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-5)' }}>
           <MetricCard label="Entry EBITDA" value={formatPeriodValue(lboEvaluation.getValue(lineIds.ebitda, 0), 'number')} />
-          <MetricCard label="Entry Leverage" value={lboCase.financing.leverageMultiple !== null ? `${lboCase.financing.leverageMultiple.toFixed(2)}x` : '—'} />
+          <MetricCard label="Entry Leverage" value={financing.leverageMultiple !== null ? `${financing.leverageMultiple.toFixed(2)}x` : '—'} />
         </div>
       ) : null}
     </div>
@@ -430,15 +448,24 @@ export function LboPanel({
 function TrancheRow({
   name,
   properties,
+  leverageLinked,
+  liveFaceValue,
   onChange,
   onRemove,
 }: {
   name: string;
   properties: NonNullable<import('../../../data').StatementLine['debtProperties']>;
+  /** True for the one tranche the panel's own "Leverage" input controls — its face value is
+   *  always shown live (leverageMultiple × this scenario's own entry EBITDA) and isn't editable
+   *  here; every other tranche's face value is a genuine, user-set deal term (see
+   *  lib/lbo.ts's buildLboEvaluationInputs). */
+  leverageLinked: boolean;
+  liveFaceValue: number | null;
   onChange: (patch: Partial<NonNullable<import('../../../data').StatementLine['debtProperties']>>) => void;
   onRemove: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const displayProperties = leverageLinked ? { ...properties, originalFaceValue: liveFaceValue ?? undefined } : properties;
   return (
     <div style={{ border: '1px solid var(--border-default)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-4)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -448,10 +475,23 @@ function TrancheRow({
         >
           <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)' }}>{name}</span>
           <Badge size="sm" tone="neutral">{properties.debtType === 'revolver' ? 'Revolver' : 'Term'}</Badge>
+          {leverageLinked ? <Badge size="sm" tone="info">Sized by leverage</Badge> : null}
         </button>
         <IconButton icon="trash-2" label={`Remove ${name}`} size="sm" variant="ghost" onClick={onRemove} />
       </div>
-      {expanded ? <DebtTranchePropertiesEditor instance={properties} onChange={onChange} /> : null}
+      {expanded ? (
+        <DebtTranchePropertiesEditor
+          instance={displayProperties}
+          onChange={(patch) => {
+            if (leverageLinked) {
+              const { originalFaceValue: _ignored, ...rest } = patch;
+              onChange(rest);
+            } else {
+              onChange(patch);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

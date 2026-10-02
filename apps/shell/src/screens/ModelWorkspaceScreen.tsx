@@ -731,7 +731,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     setLboCase(await lboCaseRepository.create(seed));
   }
 
-  async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>) {
+  async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) {
     if (!model) return;
     setLboCase(await lboCaseRepository.update(model.id, patch));
   }

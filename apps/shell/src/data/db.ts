@@ -74,7 +74,7 @@ export interface BasisDb extends DBSchema {
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 19;
+const DB_VERSION = 20;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -284,6 +284,13 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         }
         if (oldVersion < 19) {
           db.createObjectStore('lboCases', { keyPath: 'id' });
+        }
+        // LboCase dropped its own frozen historicals/driverValues/entryPeriodLabel in favor of
+        // resolving the base model's figures live on every evaluation, and financing became
+        // per-scenario — a v19 row doesn't satisfy the new shape, so (same pre-beta "wipe and
+        // re-seed" convention as v14->v18 above) a case just needs re-enabling, not migrating.
+        if (oldVersion >= 19 && oldVersion < 20) {
+          transaction.objectStore('lboCases').clear();
         }
       },
     });

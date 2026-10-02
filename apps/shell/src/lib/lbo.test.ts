@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDefaultTranches, computeAbilityToPay, seedLboCase, type SeedLboCaseParams } from './lbo';
+import { buildLboEvaluationInputs, computeAbilityToPay, effectiveLboFinancing, seedLboCase, type SeedLboCaseParams } from './lbo';
 import { createLboStatementSchema } from './lboStatementSchema';
 import { findSummaryLine } from './summaryLines';
 import { evaluateModel } from './engine/evaluate';
@@ -36,6 +36,10 @@ const BASE_TIMELINE: Timeline = [
   { id: 'p1', type: 'FY', endDate: '2024-12-31', label: 'FY24', kind: 'actual' },
 ];
 
+function allLines(schema: StatementSchema): StatementLine[] {
+  return schema.sections.flatMap((s) => s.lines);
+}
+
 describe('createLboStatementSchema', () => {
   it('builds a schema whose concept lines all resolve', () => {
     const { schema } = createLboStatementSchema(1);
@@ -48,49 +52,52 @@ describe('createLboStatementSchema', () => {
 
   it('EBIT resolves against the Income Statement\'s own D&A, not the Cash Flow Statement pull-through (no ambiguity error)', () => {
     const { schema, lineIds } = createLboStatementSchema(1);
-    const ebit = schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'EBIT')!;
+    const ebit = allLines(schema).find((l) => l.name === 'EBIT')!;
     expect(ebit.formula).toEqual({ kind: 'bin', op: '-', left: { kind: 'ref', lineId: lineIds.ebitda }, right: { kind: 'ref', lineId: lineIds.da } });
   });
 
   it('starts with zero tranches — Total Debt has no formula yet', () => {
     const { schema, lineIds } = createLboStatementSchema(1);
-    const totalDebt = schema.sections.flatMap((s) => s.lines).find((l) => l.id === lineIds.totalDebt)!;
+    const totalDebt = allLines(schema).find((l) => l.id === lineIds.totalDebt)!;
     expect(totalDebt.formula).toBeNull();
   });
 });
 
-describe('seedLboCase', () => {
-  function seed(overrides: Partial<SeedLboCaseParams> = {}) {
-    const schema = baseSchema();
-    const evaluation = lineValues({
-      rev: [1000, 1100],
-      ebitda: [400, 440],
-      da: [50, 55],
-      capex: [40, 44],
-      nwc: [100, 110],
-      taxRate: [0.25, 0.25],
-      ebit: [350, 385],
-      netDebt: [800, 800],
-    });
-    return seedLboCase({
-      modelId: 'model-1', baseSchema: schema, baseTimeline: BASE_TIMELINE, baseEvaluation: evaluation,
-      entryPeriodIndex: 1, horizonYears: 3, ...overrides,
-    });
-  }
+function seed(overrides: Partial<SeedLboCaseParams> = {}) {
+  const schema = baseSchema();
+  const evaluation = lineValues({
+    rev: [1000, 1100],
+    ebitda: [400, 440],
+    da: [50, 55],
+    capex: [40, 44],
+    nwc: [100, 110],
+    taxRate: [0.25, 0.25],
+    ebit: [350, 385],
+    netDebt: [800, 800],
+  });
+  return seedLboCase({
+    modelId: 'model-1', baseSchema: schema, baseTimeline: BASE_TIMELINE, baseEvaluation: evaluation,
+    entryPeriodIndex: 1, horizonYears: 3, ...overrides,
+  });
+}
 
-  it('seeds entry-period historicals from the base model\'s resolved concepts', () => {
+describe('seedLboCase', () => {
+  it('stores only structure — entry period, horizon, tranche schema, timeline shape, a base financing entry', () => {
     const result = seed();
-    expect(result.historicals[result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Revenue')!.id][0]).toBe(1100);
+    expect(result.entryPeriodIndex).toBe(1);
+    expect(result.horizonYears).toBe(3);
+    expect(result.timeline).toHaveLength(4);
+    expect(Object.keys(result.financing)).toEqual(['base']);
   });
 
-  it('sizes the default Term Loan at leverageMultiple × entry EBITDA, with the Revolver undrawn', () => {
+  it('sizes the starting leverage multiple off the company\'s own current Net Debt / EBITDA, and adds a Term Loan + Revolver', () => {
     const result = seed();
-    const termLoan = result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Term Loan')!;
-    const revolver = result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Revolver')!;
-    // existing Net Debt (800) / entry EBITDA (440) seeds leverageMultiple
-    expect(result.financing.leverageMultiple).toBeCloseTo(800 / 440);
-    expect(result.historicals[termLoan.id][0]).toBeCloseTo((800 / 440) * 440);
-    expect(result.historicals[revolver.id][0]).toBe(0);
+    expect(result.financing.base.leverageMultiple).toBeCloseTo(800 / 440);
+    const names = allLines(result.schema).filter((l) => l.parentLineId).map((l) => l.name);
+    expect(names).toEqual(['Term Loan', 'Revolver']);
+    // No originalFaceValue stored for the Term Loan — it's leverage-linked, derived live instead.
+    const termLoan = allLines(result.schema).find((l) => l.name === 'Term Loan')!;
+    expect(termLoan.debtProperties?.originalFaceValue).toBeUndefined();
   });
 
   it('extends the timeline horizonYears beyond the single entry period, all marked projected', () => {
@@ -99,12 +106,54 @@ describe('seedLboCase', () => {
     expect(result.timeline[0].kind).toBe('actual');
     expect(result.timeline.slice(1).every((p) => p.kind === 'projected')).toBe(true);
   });
+});
+
+describe('buildLboEvaluationInputs + evaluateModel (end to end)', () => {
+  function buildCase(overrides: Partial<SeedLboCaseParams> = {}): { lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing'>; baseSchema: StatementSchema; baseEvaluation: LineValues } {
+    const schema = baseSchema();
+    const evaluation = lineValues({
+      rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+    });
+    const created = seedLboCase({
+      modelId: 'model-1', baseSchema: schema, baseTimeline: BASE_TIMELINE, baseEvaluation: evaluation,
+      entryPeriodIndex: 1, horizonYears: 3, ...overrides,
+    });
+    return { lboCase: created, baseSchema: schema, baseEvaluation: evaluation };
+  }
+
+  it('resolves entry-period historicals live from the base evaluation for the active scenario', () => {
+    const { lboCase, baseSchema: bs, baseEvaluation } = buildCase();
+    const built = buildLboEvaluationInputs(lboCase, 'base', bs, baseEvaluation, BASE_TIMELINE);
+    const revenueId = findSummaryLine(built.schema, 'revenue')!.id;
+    expect(built.historicals[revenueId][0]).toBe(1100);
+  });
+
+  it('re-derives the leverage-linked Term Loan face value against a DIFFERENT scenario\'s own live EBITDA — no stored copy to go stale', () => {
+    const { lboCase, baseSchema: bs } = buildCase();
+    const upsideEvaluation = lineValues({
+      rev: [1000, 1300], ebitda: [400, 600], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 545], netDebt: [800, 800],
+    });
+    const builtBase = buildLboEvaluationInputs(lboCase, 'base', bs, lineValues({
+      rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+    }), BASE_TIMELINE);
+    const builtUpside = buildLboEvaluationInputs(lboCase, 'upside', bs, upsideEvaluation, BASE_TIMELINE);
+
+    const termLoanId = allLines(lboCase.schema).find((l) => l.name === 'Term Loan')!.id;
+    // Same leverage multiple (no scenario override), but the face value tracks each scenario's
+    // OWN live EBITDA: 800/440 * 440 = 800 under base, 800/440 * 600 under upside.
+    expect(builtBase.historicals[termLoanId][0]).toBeCloseTo((800 / 440) * 440);
+    expect(builtUpside.historicals[termLoanId][0]).toBeCloseTo((800 / 440) * 600);
+  });
 
   it('evaluates end to end: Revenue grows at the implied entry-period rate, and positive FCF sweeps the Term Loan down over time', () => {
-    const result = seed({ horizonYears: 3 });
-    const evaluation = evaluateModel(result.schema, { timeline: result.timeline, historicals: result.historicals, driverValues: result.driverValues });
-    const revenueId = result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Revenue')!.id;
-    const totalDebtId = result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Total Debt')!.id;
+    const { lboCase, baseSchema: bs, baseEvaluation } = buildCase();
+    const built = buildLboEvaluationInputs(lboCase, 'base', bs, baseEvaluation, BASE_TIMELINE);
+    const evaluation = evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues });
+    const revenueId = findSummaryLine(built.schema, 'revenue')!.id;
+    const totalDebtId = findSummaryLine(built.schema, 'totalDebt')!.id;
 
     // implied growth = 1100/1000 - 1 = 10%
     expect(evaluation.getValue(revenueId, 0)).toBe(1100);
@@ -115,33 +164,52 @@ describe('seedLboCase', () => {
     const laterDebt = evaluation.getValue(totalDebtId, 3)!;
     expect(laterDebt).toBeLessThan(entryDebt);
   });
+
+  it('a manually-added tranche keeps its own stored face value — never overridden live', () => {
+    const { lboCase: created, baseSchema: bs, baseEvaluation } = buildCase();
+    const totalDebtId = findSummaryLine(created.schema, 'totalDebt')!.id;
+    const withExtra: StatementLine = {
+      id: 'sub-notes', name: 'Subordinated Notes', role: 'optional', rowFormat: 'normal', numberFormat: 'number',
+      sign: 'absolute', aggregation: 'sum', formula: null, projection: null, aliases: [], parentLineId: totalDebtId,
+      debtProperties: { debtType: 'term', couponType: 'fixed', couponRate: 0.11, originalFaceValue: 150, repayable: true },
+    };
+    const schemaWithExtra: StatementSchema = {
+      ...created.schema,
+      sections: created.schema.sections.map((s) => (s.lines.some((l) => l.id === totalDebtId) ? { ...s, lines: [...s.lines, withExtra] } : s)),
+    };
+    const lboCase = { ...created, schema: schemaWithExtra };
+    const built = buildLboEvaluationInputs(lboCase, 'base', bs, baseEvaluation, BASE_TIMELINE);
+    expect(built.historicals['sub-notes'][0]).toBe(150);
+  });
 });
 
-describe('addDefaultTranches', () => {
-  it('is safe to call again with a different leverageMultiple — resizes the Term Loan face value', () => {
-    const { schema } = createLboStatementSchema(1);
-    const totalDebtId = schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Total Debt')!.id;
-    const result = addDefaultTranches({
-      schema, totalDebtLineId: totalDebtId, periodCount: 2, periodsPerYear: 1,
-      entryEbitda: 500, leverageMultiple: 5, historicals: {}, driverValues: {},
-    });
-    const termLoan = result.schema.sections.flatMap((s) => s.lines).find((l) => l.name === 'Term Loan')!;
-    expect(result.historicals[termLoan.id][0]).toBe(2500);
-    expect(termLoan.debtProperties?.originalFaceValue).toBe(2500);
+describe('effectiveLboFinancing', () => {
+  const financing: Record<string, LboFinancingInputs> = {
+    base: { leverageMultiple: 4, targetIrrs: [0.15, 0.2], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: 0.02 },
+    downside: { leverageMultiple: 3, targetIrrs: [], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: null },
+  };
+
+  it('base is ground truth', () => {
+    expect(effectiveLboFinancing(financing, 'base')).toEqual(financing.base);
+  });
+
+  it('a named scenario overrides only its own set fields, cascading the rest from base', () => {
+    const effective = effectiveLboFinancing(financing, 'downside');
+    expect(effective.leverageMultiple).toBe(3);
+    expect(effective.transactionExpensesPct).toBe(0.02); // cascaded from base, not downside's own null
+  });
+
+  it('a scenario with no entry at all cascades fully from base', () => {
+    expect(effectiveLboFinancing(financing, 'unmodeled')).toEqual(financing.base);
   });
 });
 
 describe('computeAbilityToPay', () => {
-  function lboCase(financing: Partial<LboFinancingInputs> = {}): LboCase {
-    return {
-      id: 'm1', modelId: 'm1', entryPeriodLabel: 'FY24',
-      schema: { id: 's', name: 'LBO', createdAt: '', updatedAt: '', sections: [], drivers: [] },
-      timeline: Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, type: 'FY' as const, endDate: `${2024 + i}-12-31`, label: `FY${24 + i}`, kind: i === 0 ? ('actual' as const) : ('projected' as const) })),
-      historicals: {}, driverValues: {},
-      financing: { leverageMultiple: 4, targetIrrs: [0.2], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: null, ...financing },
-      createdAt: '', updatedAt: '',
-    };
-  }
+  const timeline: Timeline = Array.from({ length: 6 }, (_, i) => ({
+    id: `p${i}`, type: 'FY' as const, endDate: `${2024 + i}-12-31`, label: `FY${24 + i}`,
+    kind: i === 0 ? ('actual' as const) : ('projected' as const),
+  }));
+  const financing: LboFinancingInputs = { leverageMultiple: 4, targetIrrs: [0.2], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: null };
 
   const evaluation = lineValues({
     ebitda: [100, null, null, null, null, 150],
@@ -152,14 +220,13 @@ describe('computeAbilityToPay', () => {
 
   it('MOIC always equals (1 + target IRR) ^ holding years — the solve is self-consistent by construction', () => {
     for (const exitMultiple of [null, 8, 10]) {
-      const rows = computeAbilityToPay(lboCase({ exitMultiple }), evaluation, lineIds);
+      const rows = computeAbilityToPay({ ...financing, exitMultiple }, timeline, evaluation, lineIds);
       expect(rows[0].moic).toBeCloseTo(Math.pow(1.2, 5), 6);
     }
   });
 
   it('matches a hand-computed entry multiple for an explicit (non-expanding-assumption) exit multiple', () => {
-    // exitEquity = 150*8 - (50-10) = 1160; entryTEV = 1160/1.2^5 + 400 - 0 = 866.16...; multiple = /100
-    const rows = computeAbilityToPay(lboCase({ exitMultiple: 8, transactionExpensesPct: null }), evaluation, lineIds);
+    const rows = computeAbilityToPay({ ...financing, exitMultiple: 8 }, timeline, evaluation, lineIds);
     const expectedEntryTev = 1160 / Math.pow(1.2, 5) + 400;
     expect(rows[0].impliedEntryEnterpriseValue).toBeCloseTo(expectedEntryTev, 6);
     expect(rows[0].impliedEntryMultiple).toBeCloseTo(expectedEntryTev / 100, 6);
@@ -167,15 +234,14 @@ describe('computeAbilityToPay', () => {
 
   it('propagates null, never a fabricated number, when the exit period has no resolved data', () => {
     const sparse = lineValues({ ebitda: [100], totalDebt: [400], cash: [0] });
-    const rows = computeAbilityToPay(lboCase(), sparse, lineIds);
+    const rows = computeAbilityToPay(financing, timeline, sparse, lineIds);
     expect(rows[0].impliedEntryMultiple).toBeNull();
     expect(rows[0].moic).toBeNull();
   });
 
   it('one row per target IRR, in the order given', () => {
-    const rows = computeAbilityToPay(lboCase({ targetIrrs: [0.15, 0.2, 0.25] }), evaluation, lineIds);
+    const rows = computeAbilityToPay({ ...financing, targetIrrs: [0.15, 0.2, 0.25] }, timeline, evaluation, lineIds);
     expect(rows.map((r) => r.targetIrr)).toEqual([0.15, 0.2, 0.25]);
-    // A higher bar for return means a lower price can be paid today.
     expect(rows[0].impliedEntryMultiple!).toBeGreaterThan(rows[1].impliedEntryMultiple!);
     expect(rows[1].impliedEntryMultiple!).toBeGreaterThan(rows[2].impliedEntryMultiple!);
   });

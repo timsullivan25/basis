@@ -616,14 +616,17 @@ export interface DcfInputs {
   terminalGrowth: number | null;
 }
 
-/** One LBO capital structure/return-target assumption set — see LboCase's own doc comment for
- *  why this lives on the case itself rather than cascading per-scenario like DcfInputs. */
+/** One LBO return-target/financing assumption set. Per-scenario, sparse-cascaded off 'base' —
+ *  same shape and reason as DcfInputs: "leverage multiple" and "target IRR" are judgment calls
+ *  with no schema analog, exactly like WACC/terminal growth, so they live here rather than being
+ *  derived. See AnalysisSettings.dcfInputs' own doc comment for why a whole-record fallback is
+ *  rejected in favor of per-field sparseness. */
 export interface LboFinancingInputs {
   /** Total entry debt as a multiple of entry-period EBITDA — the primary lever this analysis
-   *  exists to test (see lib/lbo.ts's seedLboCase). Editing this resizes the Term Loan tranche's
-   *  debtProperties.originalFaceValue; the Revolver is sized/edited independently and stays
-   *  undrawn at close. Seeded to the company's own current Net Debt / EBITDA so a freshly-enabled
-   *  case starts at a sensible number, never left null afterward. */
+   *  exists to test. Read live against whatever scenario is active (see lib/lbo.ts's
+   *  buildLboEvaluationInputs): editing this never touches the stored schema, it only resizes the
+   *  Term Loan's effective face value the next time that scenario is evaluated. `null` only before
+   *  a case's 'base' entry is first seeded. */
   leverageMultiple: number | null;
   /** Target sponsor IRRs the Ability to Pay grid solves against, e.g. [0.15, 0.2, 0.25]. */
   targetIrrs: number[];
@@ -632,8 +635,8 @@ export interface LboFinancingInputs {
   exitMultiple: number | null;
   /** Index into the LBO case's OWN timeline (not the base model's) — null defaults to its last period. */
   exitPeriodIndex: number | null;
-  /** % of entry transaction value paid out at close (financing + advisory fees) — a fixed use of
-   *  proceeds in the Ability to Pay math. `null` (not 0) means "not entered". */
+  /** % of entry EBITDA paid out at close (financing + advisory fees) — a fixed use of proceeds in
+   *  the Ability to Pay math. `null` (not 0) means "not entered". */
   transactionExpensesPct: number | null;
 }
 
@@ -641,51 +644,68 @@ export interface LboFinancingInputs {
  * A standalone LBO projection — deliberately NOT a second Model row (Model is a strict singleton
  * per company, "never a peer among several" — see its own doc comment). Everything below Model in
  * this data model (StatementSchema, evaluateModel, the debt schedule) only ever needs a
- * {schema, timeline, historicals, driverValues} bundle, never a persisted Model row — so an
- * LboCase embeds its own private schema fork (the same "deep copy, not an id reference"
- * convention Snapshot already uses, for the same reason: it must keep working after the live
- * model/schema changes) rather than registering one in StatementSchemaRepository, and runs
- * through evaluateModel exactly like the base model does.
+ * {schema, timeline, historicals, driverValues} bundle, never a persisted Model row, so an LboCase
+ * embeds its own private schema fork and runs through evaluateModel exactly like the base model
+ * does — but unlike Snapshot's own embedded schema (frozen on purpose, to outlive the live model),
+ * an LboCase is meant to track the live model going forward, so what it stores is deliberately
+ * narrow:
+ *
+ * - `schema` is ONLY the financing package's own structure (which tranches exist, their coupon/
+ *   amort/maturity/commitment terms) — the one thing here that's genuinely independent of the base
+ *   model, same status as a user-authored schema edit. It is NOT a source of truth for the
+ *   leverage-linked tranche's own face value (see debtProperties.originalFaceValue's own doc
+ *   comment) or for Revenue/EBITDA/D&A/CapEx/Net Working Capital/tax/cash at the entry period —
+ *   none of those are stored anywhere on this record.
+ * - `timeline` is just the PERIOD SHAPE (entry period + horizonYears of projected periods) —
+ *   independent of scenario, since scenarios never change how many periods exist or their dates.
+ * - `financing` is per-scenario (see LboFinancingInputs), same sparse-cascade-off-Base convention
+ *   AnalysisSettings.dcfInputs already uses.
+ *
+ * Every number that DOES come from the model (the entry period's Revenue/EBITDA/D&A/CapEx/Net
+ * Working Capital/tax rate, and therefore the leverage-linked tranche's own face value) is
+ * resolved FRESH, live, against whichever scenario is active, every time the case is evaluated —
+ * see lib/lbo.ts's buildLboEvaluationInputs. Nothing here is a frozen copy: edit a driver in the
+ * base model, or switch scenarios, and the LBO case picks it up on its next render with no re-seed
+ * step, the same way DCF's own UFCF build-up reads EBIT/D&A/CapEx/NWC live rather than storing a
+ * copy of them.
  *
  * One per model (like AnalysisSettings — this doubles as its own primary key), created the moment
- * 'lbo' is added to AnalysisSettings.enabledAnalysisIds by resolving Revenue/EBITDA/D&A/CapEx/Net
- * Working Capital/tax rate/existing Net Debt from the BASE model's own already-computed output at
- * one entry period — the same lib/summaryLines.ts concept resolution DCF already uses for its own
- * inputs, not a real mapping UI (see lib/lbo.ts's seedLboCase). Scenario-agnostic for now: unlike
- * DCF's per-ScenarioKey inputs, one LBO case serves every scenario — unifying its own driver
- * assumptions with the base model's Base-vs-scenario fork is a real modeling question left for a
- * later pass, not attempted here.
+ * 'lbo' is added to AnalysisSettings.enabledAnalysisIds. Per this analysis's own design goal
+ * ("should basically work when the analysis is turned on"), seedLboCase picks sensible STARTING
+ * numbers (leverage matching the company's own current Net Debt / EBITDA, a Term Loan + Revolver)
+ * from one live read at creation time — but that read is used only to choose defaults, never
+ * stored as the case's source of truth afterward.
  */
 export interface LboCase {
   /** == modelId — one LBO case per model, so this doubles as the primary key. */
   id: string;
   modelId: string;
-  /** The base model timeline period this case was seeded from, at the time it was created —
-   *  display only ("Entry: FY2027"); never re-resolved against the base model afterward, since
-   *  the base model's own periods can shift (re-map, horizon change) without disturbing a case
-   *  already running on its own independent timeline. */
-  entryPeriodLabel: string;
-  /** A full private StatementSchema — see this interface's own doc comment for why it's embedded
-   *  rather than a StatementSchemaRepository id. Mutated directly (tranches added/edited/removed
+  /** Index into the BASE model's OWN timeline — re-resolved live against it on every evaluation
+   *  (see lib/lbo.ts's buildLboEvaluationInputs), never a frozen snapshot of what that period's
+   *  values were at creation time. If the base model's timeline later shrinks below this index,
+   *  callers clamp defensively, same convention comparePeriodIndex already uses. */
+  entryPeriodIndex: number;
+  horizonYears: number;
+  /** The financing package's own structure only — see this interface's own doc comment for
+   *  exactly what is and isn't trusted from here. Mutated directly (tranches added/edited/removed
    *  via the same lib/statementLineChildren.ts helpers a model's own schema fork uses) as the
    *  financing package is edited. */
   schema: StatementSchema;
   timeline: Timeline;
-  historicals: Record<string, (number | null)[]>;
-  driverValues: Record<string, (number | null)[]>;
-  financing: LboFinancingInputs;
+  /** Per-scenario — 'base' is ground truth and never cascades further; a named scenario's entry
+   *  is sparse against it, same semantics as AnalysisSettings.dcfInputs. */
+  financing: Record<ScenarioKey, LboFinancingInputs>;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateLboCaseInput {
   modelId: string;
-  entryPeriodLabel: string;
+  entryPeriodIndex: number;
+  horizonYears: number;
   schema: StatementSchema;
   timeline: Timeline;
-  historicals: Record<string, (number | null)[]>;
-  driverValues: Record<string, (number | null)[]>;
-  financing: LboFinancingInputs;
+  financing: Record<ScenarioKey, LboFinancingInputs>;
 }
 
 export interface LboCaseRepository {
@@ -696,7 +716,7 @@ export interface LboCaseRepository {
    *  starts clean, same as toggling DCF back on doesn't restore old WACC/terminal-growth values
    *  either — see AnalysisSettingsRepository.create). */
   create(input: CreateLboCaseInput): Promise<LboCase>;
-  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'historicals' | 'driverValues' | 'financing'>>): Promise<LboCase>;
+  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing'>>): Promise<LboCase>;
   remove(modelId: string): Promise<void>;
 }
 
