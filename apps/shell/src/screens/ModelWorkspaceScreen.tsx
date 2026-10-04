@@ -744,7 +744,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     setLboCase(await lboCaseRepository.create(seed));
   }
 
-  async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) {
+  async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) {
     if (!model) return;
     setLboCase(await lboCaseRepository.update(model.id, patch));
   }
@@ -752,6 +752,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   async function removeLboCase() {
     if (!model) return;
     await lboCaseRepository.remove(model.id);
+    // Without this, the write-through cache's own rows for 'lbo' would sit unreadable as stale
+    // forever — nothing re-computes them to trigger a version-stamp check once the case itself is
+    // gone (see AnalysisResultRepository.removeForAnalysis's own doc comment).
+    await analysisResultRepository.removeForAnalysis(model.id, 'lbo');
     setLboCase(null);
   }
 

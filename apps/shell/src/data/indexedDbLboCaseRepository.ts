@@ -15,7 +15,7 @@ export class IndexedDbLboCaseRepository implements LboCaseRepository {
     return lboCase;
   }
 
-  async update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing'>>): Promise<LboCase> {
+  async update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase> {
     const db = await openBasisDb();
     const existing = await db.get('lboCases', modelId);
     if (!existing) throw new Error(`LboCase not found for model: ${modelId}`);

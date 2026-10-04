@@ -30,6 +30,14 @@ function findDriverIdForLine(schema: StatementSchema, targetLineId: string): str
   return (schema.drivers ?? []).find((d) => d.targetLineId === targetLineId)?.id;
 }
 
+/** The one formula for what the leverage-linked tranche's face value IS — used both when
+ *  buildLboEvaluationInputs bakes it into the schema it evaluates and wherever the UI shows it
+ *  (e.g. LboPanel's own tranche row), so the two can never read different numbers for the same
+ *  scenario. `null` whenever either input is unknown — never a fabricated size. */
+export function computeLeverageLinkedFaceValue(leverageMultiple: number | null, entryEbitda: number | null): number | null {
+  return leverageMultiple !== null && entryEbitda !== null ? leverageMultiple * entryEbitda : null;
+}
+
 const DEFAULT_FINANCING: LboFinancingInputs = {
   leverageMultiple: null, targetIrrs: DEFAULT_TARGET_IRRS, exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: null,
 };
@@ -75,7 +83,7 @@ export function seedLboCase(params: SeedLboCaseParams): CreateLboCaseInput {
   const existingNetDebt = readConcept(baseSchema, baseEvaluation, 'netDebt', entryPeriodIndex);
   const leverageMultiple =
     existingNetDebt !== null && ebitda !== null && ebitda > 0 ? Math.max(existingNetDebt / ebitda, 0) : DEFAULT_LEVERAGE_MULTIPLE;
-  const revolverCommitment = ebitda !== null ? DEFAULT_REVOLVER_COMMITMENT_MULTIPLE * ebitda : 0;
+  const revolverCommitment = ebitda !== null ? Math.max(DEFAULT_REVOLVER_COMMITMENT_MULTIPLE * ebitda, 0) : 0;
 
   const { schema: builtSchema, lineIds } = createLboStatementSchema(periodsPerYear);
   const entryTimelinePeriod: TimelinePeriod = { ...entryPeriod, kind: 'actual' };
@@ -120,7 +128,11 @@ export function seedLboCase(params: SeedLboCaseParams): CreateLboCaseInput {
     leverageMultiple, targetIrrs: DEFAULT_TARGET_IRRS, exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: 0.02,
   };
 
-  return { modelId, entryPeriodIndex, horizonYears, schema, timeline, financing: { base: financing } };
+  return {
+    modelId, entryPeriodIndex, horizonYears, schema, timeline,
+    leverageLinkedTrancheId: withTermLoan.lineId,
+    financing: { base: financing },
+  };
 }
 
 export interface LboEvaluationInputs {
@@ -147,13 +159,13 @@ export interface LboEvaluationInputs {
  * CapEx/NWC live rather than storing them.
  *
  * Every OTHER tranche (added via the panel's own tranche editor) keeps its own stored
- * debtProperties.originalFaceValue as a genuine, user-set deal term — only the first non-revolver
- * tranche (the one `leverageMultiple` controls) is treated as derived rather than stored; every
- * revolver always draws 0 at entry (undrawn at close, a structural certainty with nothing to look
- * up).
+ * debtProperties.originalFaceValue as a genuine, user-set deal term — only the tranche identified
+ * by `lboCase.leverageLinkedTrancheId` (the one `leverageMultiple` controls) is treated as derived
+ * rather than stored; every revolver always draws 0 at entry (undrawn at close, a structural
+ * certainty with nothing to look up).
  */
 export function buildLboEvaluationInputs(
-  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing'>,
+  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing' | 'leverageLinkedTrancheId'>,
   scenarioId: ScenarioKey,
   baseSchema: StatementSchema,
   baseEvaluation: LineValues,
@@ -174,8 +186,8 @@ export function buildLboEvaluationInputs(
 
   const totalDebtLine = findSummaryLine(lboCase.schema, 'totalDebt');
   const children = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
-  const termTranche = children.find((l) => l.debtProperties?.debtType !== 'revolver');
-  const termLoanFaceValue = ebitda !== null && financing.leverageMultiple !== null ? financing.leverageMultiple * ebitda : null;
+  const termTranche = children.find((l) => l.id === lboCase.leverageLinkedTrancheId);
+  const termLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, ebitda);
 
   let schema = lboCase.schema;
   if (termTranche && termLoanFaceValue !== null) {
@@ -331,7 +343,7 @@ export function computeAbilityToPay(
  * output look like" rather than the panel and the cache drifting apart over time.
  */
 export function computeLboOutput(
-  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing'>,
+  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing' | 'leverageLinkedTrancheId'>,
   scenarioId: ScenarioKey,
   baseSchema: StatementSchema,
   baseEvaluation: LineValues,

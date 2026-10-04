@@ -69,7 +69,15 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
   and LBO now also write a version-stamped `AnalysisResult` cache per (model, scenario) — one row
   per scenario, never a single ambiguous snapshot — purely for a future cross-model/cross-issuer
   reader; neither panel ever reads its own cache back, so a stale or missing row can never show a
-  wrong number live.
+  wrong number live. The leverage-linked tranche (the one `leverageMultiple` resizes) is tracked by
+  a stable `leverageLinkedTrancheId`, not positionally inferred ("first non-revolver tranche") —
+  deleting and re-adding tranches can't silently relink the wrong one. Deleting an LboCase also
+  clears its own `AnalysisResult` cache rows (`removeForAnalysis`), and re-mapping or removing a
+  model's file now cascades through `lboCases` the same way it already did for scenarios/computed
+  results/analysis settings — previously the only store a model re-upload could orphan. Creating a
+  case hard-blocks on every required concept (not just Revenue/EBITDA) since a gap in D&A/CapEx/NWC/
+  tax rate silently nulls Free Cash Flow and the whole debt-schedule sweep rather than just
+  degrading gracefully.
 - **Accretion/dilution analysis** — needs the M&A overlay first.
 - **Value-creation bridge** (growth vs. margin vs. multiple vs. deleveraging) — cheap once DCF/LBO
   outputs exist.

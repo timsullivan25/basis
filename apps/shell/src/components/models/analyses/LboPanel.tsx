@@ -6,7 +6,7 @@ import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
-import { computeLboOutput, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
+import { computeLboOutput, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 import type { LineValues } from '../../../lib/computedCache';
@@ -18,7 +18,7 @@ interface LboPanelProps {
   activeScenarioId: ScenarioKey;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) => void;
   onRemoveLboCase: () => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
@@ -115,10 +115,12 @@ export function LboPanel({
   // Rebuilt from the live base evaluation on every render (see computeLboOutput's own doc
   // comment — the same function ModelWorkspaceScreen's own AnalysisResult write-through cache
   // calls, so the panel and the cache never drift apart) — computed unconditionally, ahead of the
-  // early return below, so hook order stays stable regardless of whether a case exists yet.
+  // early return below, so hook order stays stable regardless of whether a case exists yet. No
+  // case yet means nothing to compute: an empty result, not a wasted call against a fabricated
+  // stand-in case.
   const output = useMemo(() => {
-    const source = lboCase ?? { schema, timeline: model.timeline, entryPeriodIndex: model.timeline.length - 1, financing: {} };
-    return computeLboOutput(source, activeScenarioId, schema, evaluation, model.timeline);
+    if (!lboCase) return { projection: [], abilityToPay: [] };
+    return computeLboOutput(lboCase, activeScenarioId, schema, evaluation, model.timeline);
   }, [lboCase, activeScenarioId, schema, evaluation, model.timeline]);
 
   if (!lboCase) {
@@ -168,17 +170,12 @@ export function LboPanel({
 
         <Card title="LBO" icon="landmark" padding="md">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-            {missing.includes('revenue') || missing.includes('ebitda') ? (
-              <Alert tone="negative" title="Revenue and EBITDA must resolve before an LBO case can be seeded">
-                Assign or add lines matching Revenue/EBITDA above first.
+            {missing.length > 0 ? (
+              <Alert tone="negative" title="All required lines must resolve before an LBO case can be seeded">
+                A gap in any one of these — not just Revenue/EBITDA — nulls Net Income, Free Cash Flow and the whole debt-schedule sweep. Assign or add lines matching each one above first.
               </Alert>
             ) : (
               <>
-                {missing.length > 0 ? (
-                  <Alert tone="caution" title="Some inputs are missing — the case will show gaps for them">
-                    D&A, CapEx, Net Working Capital and the tax rate all improve the projection (see above) but aren't required to get started.
-                  </Alert>
-                ) : null}
                 <div style={{ display: 'flex', gap: 'var(--space-6)' }}>
                   <Field label="Entry period" hint="LTM figures at close — new debt is drawn the period after">
                     <Select
@@ -212,8 +209,8 @@ export function LboPanel({
   const financing = effectiveLboFinancing(lboCase.financing, activeScenarioId);
   const entryPeriodLabel = model.timeline[Math.min(lboCase.entryPeriodIndex, model.timeline.length - 1)]?.label ?? '—';
 
-  function regenerateAndUpdate(nextSchema: StatementSchema) {
-    onUpdateLboCase({ schema: regenerateDebtSchedule(nextSchema, periodsPerYear, false) });
+  function regenerateAndUpdate(nextSchema: StatementSchema, extraPatch?: Partial<Pick<LboCase, 'leverageLinkedTrancheId'>>) {
+    onUpdateLboCase({ schema: regenerateDebtSchedule(nextSchema, periodsPerYear, false), ...extraPatch });
   }
 
   // Scenario-scoped: only the ACTIVE scenario's entry in `financing` is patched, sparse against
@@ -225,9 +222,9 @@ export function LboPanel({
   }
 
   const tranches = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
-  const leverageLinkedTranche = tranches.find((t) => t.debtProperties?.debtType !== 'revolver');
+  const leverageLinkedTranche = tranches.find((t) => t.id === lboCase.leverageLinkedTrancheId);
   const liveEntryEbitda = output.projection[0]?.ebitda ?? null;
-  const liveTermLoanFaceValue = financing.leverageMultiple !== null && liveEntryEbitda !== null ? financing.leverageMultiple * liveEntryEbitda : null;
+  const liveTermLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, liveEntryEbitda);
 
   function addTranche() {
     if (!totalDebtLine) return;
@@ -239,11 +236,17 @@ export function LboPanel({
         lines: s.lines.map((l) => (l.id === lineId ? { ...l, debtProperties: { debtType: 'term', couponType: 'fixed', repayable: true } } : l)),
       })),
     };
-    regenerateAndUpdate(patched);
+    // If the leverage-linked tranche was removed earlier and never replaced, this new tranche
+    // becomes the one the "Leverage" input controls — same as seedLboCase's own first choice —
+    // rather than leaving leverageMultiple permanently disconnected from every tranche's face
+    // value. Folded into the same update as the schema patch (rather than a second, separate
+    // onUpdateLboCase call) so the two can't race against each other's read-merge-write.
+    regenerateAndUpdate(patched, leverageLinkedTranche ? undefined : { leverageLinkedTrancheId: lineId });
   }
 
   function removeTranche(lineId: string) {
-    regenerateAndUpdate(removeChildLine(lboCase!.schema, lineId));
+    const nextSchema = removeChildLine(lboCase!.schema, lineId);
+    regenerateAndUpdate(nextSchema, lineId === lboCase!.leverageLinkedTrancheId ? { leverageLinkedTrancheId: null } : undefined);
   }
 
   function updateTrancheProperties(lineId: string, patch: Partial<NonNullable<(typeof tranches)[number]['debtProperties']>>) {

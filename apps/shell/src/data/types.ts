@@ -692,6 +692,16 @@ export interface LboCase {
    *  financing package is edited. */
   schema: StatementSchema;
   timeline: Timeline;
+  /** Which child of "Total Debt" the panel's own "Leverage" input controls — buildLboEvaluationInputs
+   *  overwrites THIS tranche's face value with leverageMultiple × that scenario's own entry EBITDA
+   *  every evaluation, and the panel blocks editing its face value directly for the same reason.
+   *  A stable id, not "whichever non-revolver tranche comes first in schema order": tranches can be
+   *  added and removed, and re-deriving this positionally would silently reassign it — and overwrite
+   *  whatever face value the user had just set — onto an unrelated tranche the moment the original
+   *  one is removed. `null` means no tranche is currently linked (the seeded one was deleted and
+   *  nothing has taken its place) — the Leverage input then has nothing to resize until the user
+   *  adds a tranche, which becomes the new link (see lib/lbo.ts's addTranche handling). */
+  leverageLinkedTrancheId: string | null;
   /** Per-scenario — 'base' is ground truth and never cascades further; a named scenario's entry
    *  is sparse against it, same semantics as AnalysisSettings.dcfInputs. */
   financing: Record<ScenarioKey, LboFinancingInputs>;
@@ -705,6 +715,7 @@ export interface CreateLboCaseInput {
   horizonYears: number;
   schema: StatementSchema;
   timeline: Timeline;
+  leverageLinkedTrancheId: string | null;
   financing: Record<ScenarioKey, LboFinancingInputs>;
 }
 
@@ -716,7 +727,7 @@ export interface LboCaseRepository {
    *  starts clean, same as toggling DCF back on doesn't restore old WACC/terminal-growth values
    *  either — see AnalysisSettingsRepository.create). */
   create(input: CreateLboCaseInput): Promise<LboCase>;
-  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing'>>): Promise<LboCase>;
+  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase>;
   remove(modelId: string): Promise<void>;
 }
 
@@ -849,4 +860,11 @@ export interface AnalysisResultRepository {
    *  cross-issuer comparison view) decides what to do with a miss. Tuples not found are simply
    *  omitted from the result, not represented as undefined placeholders. */
   getMany(tuples: Array<{ modelId: string; scenarioId: ScenarioKey; analysisId: string }>): Promise<AnalysisResult[]>;
+  /** Removes every scenario's cached row for one (model, analysis) pair — the model itself isn't
+   *  gone (ModelRepository's own cascade-delete already covers that case), just this one
+   *  analysis's own source of truth (e.g. an LboCase being deleted via "Delete LBO case"). Without
+   *  this, a cache entry for an analysis instance that no longer exists would sit unreadable as
+   *  stale forever — nothing re-computes it to trigger the version-stamp check, since the thing
+   *  that would trigger a recompute is gone. */
+  removeForAnalysis(modelId: string, analysisId: string): Promise<void>;
 }

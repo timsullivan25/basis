@@ -18,7 +18,7 @@ interface AnalysesPanelProps {
   onOpenStatementDefinitions: () => void;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) => void;
   onRemoveLboCase: () => void;
 }
 

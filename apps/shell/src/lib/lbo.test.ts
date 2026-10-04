@@ -106,10 +106,32 @@ describe('seedLboCase', () => {
     expect(result.timeline[0].kind).toBe('actual');
     expect(result.timeline.slice(1).every((p) => p.kind === 'projected')).toBe(true);
   });
+
+  it('clamps the Revolver commitment to zero rather than going negative off a negative entry EBITDA', () => {
+    const schema = baseSchema();
+    const evaluation = lineValues({
+      rev: [1000, 1100], ebitda: [-50, -40], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+      taxRate: [0.25, 0.25], ebit: [-100, -95], netDebt: [800, 800],
+    });
+    const result = seedLboCase({
+      modelId: 'model-1', baseSchema: schema, baseTimeline: BASE_TIMELINE, baseEvaluation: evaluation,
+      entryPeriodIndex: 1, horizonYears: 3,
+    });
+    const revolver = allLines(result.schema).find((l) => l.name === 'Revolver')!;
+    expect(revolver.debtProperties?.commitmentAmount).toBe(0);
+  });
+
+  it('marks the Term Loan as the leverage-linked tranche', () => {
+    const result = seed();
+    const termLoan = allLines(result.schema).find((l) => l.name === 'Term Loan')!;
+    expect(result.leverageLinkedTrancheId).toBe(termLoan.id);
+  });
 });
 
 describe('buildLboEvaluationInputs + evaluateModel (end to end)', () => {
-  function buildCase(overrides: Partial<SeedLboCaseParams> = {}): { lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing'>; baseSchema: StatementSchema; baseEvaluation: LineValues } {
+  function buildCase(
+    overrides: Partial<SeedLboCaseParams> = {},
+  ): { lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing' | 'leverageLinkedTrancheId'>; baseSchema: StatementSchema; baseEvaluation: LineValues } {
     const schema = baseSchema();
     const evaluation = lineValues({
       rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
@@ -180,6 +202,31 @@ describe('buildLboEvaluationInputs + evaluateModel (end to end)', () => {
     const lboCase = { ...created, schema: schemaWithExtra };
     const built = buildLboEvaluationInputs(lboCase, 'base', bs, baseEvaluation, BASE_TIMELINE);
     expect(built.historicals['sub-notes'][0]).toBe(150);
+  });
+
+  it('identifies the leverage-linked tranche by its stable id, not by "first non-revolver tranche" position', () => {
+    const { lboCase: created, baseSchema: bs, baseEvaluation } = buildCase();
+    const totalDebtId = findSummaryLine(created.schema, 'totalDebt')!.id;
+    const termLoanId = allLines(created.schema).find((l) => l.name === 'Term Loan')!.id;
+    expect(created.leverageLinkedTrancheId).toBe(termLoanId);
+
+    // A second, manually-added TERM tranche inserted BEFORE the leverage-linked Term Loan in
+    // section order. If buildLboEvaluationInputs ever fell back to positional inference ("first
+    // non-revolver tranche"), it would patch THIS tranche's face value live instead, losing the
+    // user's own stored originalFaceValue for it.
+    const extraTermTranche: StatementLine = {
+      id: 'extra-term', name: 'Second Lien', role: 'optional', rowFormat: 'normal', numberFormat: 'number',
+      sign: 'absolute', aggregation: 'sum', formula: null, projection: null, aliases: [], parentLineId: totalDebtId,
+      debtProperties: { debtType: 'term', couponType: 'fixed', couponRate: 0.12, originalFaceValue: 200, repayable: true },
+    };
+    const schemaWithExtra: StatementSchema = {
+      ...created.schema,
+      sections: created.schema.sections.map((s) => (s.lines.some((l) => l.id === totalDebtId) ? { ...s, lines: [extraTermTranche, ...s.lines] } : s)),
+    };
+    const lboCase = { ...created, schema: schemaWithExtra };
+    const built = buildLboEvaluationInputs(lboCase, 'base', bs, baseEvaluation, BASE_TIMELINE);
+    expect(built.historicals['extra-term'][0]).toBe(200);
+    expect(built.historicals[termLoanId][0]).toBeCloseTo((800 / 440) * 440);
   });
 });
 
