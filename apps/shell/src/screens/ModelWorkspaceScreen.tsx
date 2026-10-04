@@ -52,6 +52,7 @@ import { formatPeriodValue } from '../components/models/mapping/mappingFormattin
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { SensitivityPanel } from '../components/models/sensitivity/SensitivityPanel';
+import { lboParamsFor, readableAnalysisIds, type AnalysisContext } from '../lib/sensitivityAnalyses';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
@@ -74,6 +75,7 @@ import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
 import { applyLboFinancingPatch, computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
+import { effectiveRecoveryInputs } from '../lib/recoveryWaterfall';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 import { effectiveLineKind } from '../lib/statementLineChildren';
@@ -413,6 +415,26 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, lboCase);
     void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'lbo', versionStamp, output));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings, lboCase]);
+
+  // What the Sensitivity tab needs to read analysis results and shift analysis assumptions: the
+  // enabled analyses and the active scenario's effective inputs for each.
+  const sensitivityAnalysis = useMemo((): AnalysisContext | null => {
+    if (!schema || !evaluatedInput || !analysisSettings) return null;
+    const enabledIds = readableAnalysisIds(schema, analysisSettings.enabledAnalysisIds);
+    if (enabledIds.length === 0) return null;
+    return {
+      schema,
+      timeline: evaluatedInput.timeline,
+      scenarioId: activeScenarioId,
+      enabledIds,
+      lboCase,
+      base: {
+        dcf: enabledIds.includes('dcf') ? effectiveDcfInputs(analysisSettings, activeScenarioId) : null,
+        lbo: enabledIds.includes('lbo') ? lboParamsFor(lboCase, activeScenarioId) : null,
+        recovery: enabledIds.includes('recoveryWaterfall') ? effectiveRecoveryInputs(analysisSettings, activeScenarioId) : null,
+      },
+    };
+  }, [schema, evaluatedInput, analysisSettings, activeScenarioId, lboCase]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not
@@ -1505,6 +1527,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             schema={schema}
             model={evaluatedInput}
             baseline={evaluation}
+            analysis={sensitivityAnalysis}
             scenarioName={activeScenario?.name ?? 'Base case'}
           />
         ) : null

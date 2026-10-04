@@ -86,18 +86,35 @@ engine changes are needed to get started.
   exit multiple, leverage, target IRR) be sensitized alongside model drivers. They're already
   stored per scenario, so the same override layering applies.
 
-**First slice (built):** a Sensitivity tab on the model workspace runs one-at-a-time sweeps over
-every driver and draws a tornado for any model line at any period (`lib/sensitivity.ts`,
-`components/models/sensitivity/`). Defaults taken there, open to revisit:
+**Built (on branch, not yet merged):** a Sensitivity tab on the model workspace
+(`lib/sensitivity.ts`, `lib/sensitivityAnalyses.ts`, `components/models/sensitivity/`) with
+three views over the same inputs and outputs:
 
-- Runs are ad hoc and live: nothing is saved, and the sweep re-runs on every range edit.
-- A shift applies to every projected period, to the driver's effective value (so a blank cell
+- **One at a time:** a tornado for any output.
+- **Two-way grid:** two inputs varied together, the classic data table. It defaults to the two
+  inputs that move the output most.
+- **Monte Carlo:** every input drawn at once (triangular, uniform or normal over its range). It
+  shows a histogram, the mean, P5/P50/P95 and the chance of ending above or below a threshold.
+
+Inputs are model drivers plus the assumptions of enabled analyses (DCF WACC and terminal growth,
+LBO leverage and exit multiple, Recovery multiple or distributable value). Outputs are any model
+line at any period plus analysis results (DCF EV and equity value, LBO entry multiple and ability
+to pay at each target IRR, Recovery to equity and recovery % per tranche). Analysis results come
+from each analysis's own pure compute function, so step 1 and step 2 below are both in.
+
+Defaults taken, open to revisit:
+
+- Runs are ad hoc. Nothing is saved or cached. The tornado and grid re-run live; Monte Carlo runs
+  on demand with a seed so a run can be reproduced.
+- A driver shift applies to every projected period, to the driver's effective value (a blank cell
   shifts from the engine's own default). Rates and ratios move ±2 points, days-of ±5 days,
-  hardcoded amounts ±10%. No per-period window yet.
-- The starting case is the active scenario. Each input gets 5 evaluations across its range; only
-  the ends feed the tornado, the rest are kept for a later spider chart.
-- Outputs are model lines only; suggested ones (EBITDA, FCF, net leverage, cash, net debt,
-  revenue) resolve by concept, at the last period.
+  hardcoded amounts ±10%, WACC ±1 point, terminal growth ±0.5 point, multiples ±0.5x to ±1x. There
+  is no per-period window yet.
+- The starting case is the active scenario.
+- Performance: one evaluation of the bundled template takes about 0.5 ms, and 1,000 Monte Carlo
+  trials with LBO results ran in about 0.5 s in the browser. That's synchronous on the main
+  thread, with no Web Worker yet.
+- Inputs are sampled independently. Correlated inputs are not in v1.
 
 **Open questions:**
 

@@ -1,15 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateModel } from './engine/evaluate';
 import {
+  basePoint,
+  evaluateCase,
+  gridShifts,
+  inputOptions,
+  probabilityBeyond,
+  readOutput,
+  runGrid,
+  runMonteCarlo,
   runOneAtATime,
+  sampleShift,
+  seededRandom,
   sensitizableDrivers,
   shiftDriverValues,
   stepShifts,
-  suggestedInputs,
   suggestedOutputs,
   suggestedShift,
+  summarizeDistribution,
   tornadoRows,
+  type SensitivityContext,
+  type SensitivityInput,
 } from './sensitivity';
+import { analysisInputId, availableAnalysisMetrics, NO_ANALYSIS_PARAMS, type AnalysisContext } from './sensitivityAnalyses';
 import type { DriverDefinition, Model, ProjectionMethod, ResolvedFormula, StatementLine, StatementSchema, TimelinePeriod } from '../data';
 
 function line(id: string, formula: ResolvedFormula | null = null, extra: Partial<StatementLine> = {}): StatementLine {
@@ -19,6 +32,7 @@ function line(id: string, formula: ResolvedFormula | null = null, extra: Partial
   };
 }
 const ref = (lineId: string): ResolvedFormula => ({ kind: 'ref', lineId });
+const num = (value: number): ResolvedFormula => ({ kind: 'num', value });
 const driverRef = (driverId: string): ResolvedFormula => ({ kind: 'driverRef', driverId });
 const bin = (op: '+' | '-' | '*' | '/', left: ResolvedFormula, right: ResolvedFormula): ResolvedFormula => ({ kind: 'bin', op, left, right });
 const prior = (arg: ResolvedFormula): ResolvedFormula => ({ kind: 'call', fn: 'priorPeriod', args: [arg] });
@@ -27,18 +41,24 @@ function driver(id: string, method: ProjectionMethod, targetLineId: string, basi
   return { id, name: id, unit: method === 'days-of' ? 'days' : '%', targetLineId, method, basisLineId };
 }
 
-/** Revenue grows by `g`; EBITDA is `m` of revenue; Capex is a hardcoded amount; Cash is EBITDA
- *  less Capex. Two actual periods, two projected. */
+/** Revenue grows by `g`; EBITDA is `m` of revenue; Capex is a hardcoded amount; Cash Flow is
+ *  EBITDA less Capex. The DCF lines (EBIT = EBITDA, no D&A, no tax, flat NWC) make UFCF equal
+ *  Cash Flow. Two actual periods, two projected. */
 function fixture(driverValues: Record<string, (number | null)[]> = {}) {
   const schema: StatementSchema = {
     id: 's', name: 'Test', createdAt: '', updatedAt: '',
     sections: [{
       id: 'sec', name: 'Section',
       lines: [
-        line('Revenue', bin('*', prior(ref('Revenue')), bin('+', { kind: 'num', value: 1 }, driverRef('g')))),
+        line('Revenue', bin('*', prior(ref('Revenue')), bin('+', num(1), driverRef('g')))),
         line('EBITDA', bin('*', ref('Revenue'), driverRef('m'))),
         line('Capex', driverRef('c')),
         line('Cash Flow', bin('-', ref('EBITDA'), ref('Capex')), { role: 'calculated' }),
+        line('EBIT', ref('EBITDA'), { role: 'calculated' }),
+        line('D&A', num(0), { role: 'calculated' }),
+        line('Net Working Capital', num(0), { role: 'calculated' }),
+        line('Tax Rate', num(0), { role: 'calculated' }),
+        line('Net Debt', num(50), { role: 'calculated' }),
       ],
     }],
     drivers: [driver('g', 'growth', 'Revenue'), driver('m', 'percent-of', 'EBITDA', 'Revenue'), driver('c', 'hardcode', 'Capex')],
@@ -53,8 +73,22 @@ function fixture(driverValues: Record<string, (number | null)[]> = {}) {
     driverValues: { g: [null, null, 0.1, 0.1], c: [null, null, 6, 6], ...driverValues },
     createdAt: '', updatedAt: '',
   };
-  return { schema, model, baseline: evaluateModel(schema, model) };
+  const baseline = evaluateModel(schema, model);
+  const ctx: SensitivityContext = { schema, model, baseline, analysis: null };
+  return { schema, model, baseline, ctx };
 }
+
+function withDcf(ctx: SensitivityContext): SensitivityContext {
+  const analysis: AnalysisContext = {
+    schema: ctx.schema, timeline: ctx.model.timeline, scenarioId: 'base', enabledIds: ['dcf'], lboCase: null,
+    base: { ...NO_ANALYSIS_PARAMS, dcf: { wacc: 0.1, terminalGrowth: 0.02 } },
+  };
+  return { ...ctx, analysis };
+}
+
+const input = (id: string, low: number, high: number, extra: Partial<SensitivityInput> = {}): SensitivityInput => ({
+  id, kind: 'absolute', low, high, distribution: 'uniform', ...extra,
+});
 
 describe('suggestedShift', () => {
   it('moves rates by 2 points, days by 5 and hardcoded amounts by 10%', () => {
@@ -64,14 +98,19 @@ describe('suggestedShift', () => {
   });
 });
 
-describe('stepShifts', () => {
-  it('spaces steps evenly across the range, ends included, without repeating the baseline', () => {
+describe('stepShifts / gridShifts', () => {
+  it('spaces steps evenly across the range, ends exact, without repeating the baseline', () => {
     const shifts = stepShifts(-0.02, 0.02, 5);
     expect(shifts).toHaveLength(4);
     [-0.02, -0.01, 0.01, 0.02].forEach((expected, i) => expect(shifts[i]).toBeCloseTo(expected));
     expect(shifts[0]).toBe(-0.02);
     expect(shifts[3]).toBe(0.02);
-    expect(stepShifts(-1, 1, 2)).toEqual([-1, 1]);
+  });
+
+  it('grid steps always include the starting case', () => {
+    expect(gridShifts(-1, 1, 5)).toEqual([-1, -0.5, 0, 0.5, 1]);
+    expect(gridShifts(-1, 1, 4)).toHaveLength(5);
+    expect(gridShifts(-1, 1, 4)).toContain(0);
   });
 });
 
@@ -93,16 +132,24 @@ describe('shiftDriverValues', () => {
   });
 });
 
-describe('suggestedInputs / sensitizableDrivers', () => {
+describe('inputOptions / sensitizableDrivers', () => {
   it('skips a hardcode driver with nothing entered', () => {
     const { schema, model, baseline } = fixture({ c: [null, null, null, null] });
     expect(sensitizableDrivers(schema, model.timeline, baseline).map((d) => d.id)).toEqual(['g', 'm']);
   });
 
   it('skips a driver whose target line sums sub-lines', () => {
-    const { schema, model, baseline } = fixture();
-    schema.sections[0].lines.push(line('Revenue A', null, { parentLineId: 'Revenue' }));
-    expect(suggestedInputs(schema, model.timeline, baseline).map((i) => i.driverId)).toEqual(['m', 'c']);
+    const { ctx } = fixture();
+    ctx.schema.sections[0].lines.push(line('Revenue A', null, { parentLineId: 'Revenue' }));
+    expect(inputOptions(ctx).map((o) => o.id)).toEqual(['m', 'c']);
+  });
+
+  it('adds assumptions of enabled analyses after the drivers', () => {
+    const options = inputOptions(withDcf(fixture().ctx));
+    expect(options.map((o) => o.id)).toEqual(['g', 'm', 'c', analysisInputId('dcf.wacc'), analysisInputId('dcf.terminalGrowth')]);
+    const wacc = options[3];
+    expect(wacc).toMatchObject({ group: 'DCF', baseValue: 0.1, shiftUnit: 'pp', suggested: { low: -0.01, high: 0.01 } });
+    expect(options[2].shiftUnit).toBe('%');
   });
 });
 
@@ -110,22 +157,23 @@ describe('suggestedOutputs', () => {
   it('resolves headline concepts at the last period', () => {
     const { schema, model } = fixture();
     expect(suggestedOutputs(schema, model.timeline)).toEqual([
-      { lineId: 'EBITDA', periodIndex: 3 },
-      { lineId: 'Revenue', periodIndex: 3 },
+      { kind: 'line', lineId: 'EBITDA', periodIndex: 3 },
+      { kind: 'line', lineId: 'Net Debt', periodIndex: 3 },
+      { kind: 'line', lineId: 'Revenue', periodIndex: 3 },
     ]);
   });
 });
 
-describe('runOneAtATime + tornadoRows', () => {
+describe('one at a time + tornado', () => {
   it('moves only the swept driver and ranks inputs by output swing', () => {
-    const { schema, model, baseline } = fixture();
-    const inputs = suggestedInputs(schema, model.timeline, baseline);
-    const sweeps = runOneAtATime(schema, model, baseline, inputs, 3);
+    const { ctx } = fixture();
+    const inputs = inputOptions(ctx).map((o) => o.suggested);
+    const sweeps = runOneAtATime(ctx, inputs, 3);
     // Base cash flow at the last period: revenue 121, EBITDA 24.2, capex 6 → 18.2.
-    expect(baseline.getValue('Cash Flow', 3)).toBeCloseTo(18.2);
+    expect(ctx.baseline.getValue('Cash Flow', 3)).toBeCloseTo(18.2);
 
-    const rows = tornadoRows(sweeps, baseline, { lineId: 'Cash Flow', periodIndex: 3 });
-    expect(rows.map((r) => r.driverId)).toEqual(['m', 'g', 'c']);
+    const rows = tornadoRows(ctx, sweeps, { kind: 'line', lineId: 'Cash Flow', periodIndex: 3 });
+    expect(rows.map((r) => r.inputId)).toEqual(['m', 'g', 'c']);
 
     const margin = rows[0];
     expect(margin.atLow).toBeCloseTo(121 * 0.18 - 6);
@@ -144,14 +192,125 @@ describe('runOneAtATime + tornadoRows', () => {
   });
 
   it('includes the baseline in min/max, and gives a never-resolving output zero swing', () => {
-    const { schema, model, baseline } = fixture();
-    const sweeps = runOneAtATime(schema, model, baseline, [{ driverId: 'c', kind: 'absolute', low: 0, high: 1 }], 2);
-    const [row] = tornadoRows(sweeps, baseline, { lineId: 'Cash Flow', periodIndex: 3 });
+    const { ctx } = fixture();
+    const sweeps = runOneAtATime(ctx, [input('c', 0, 1)], 2);
+    const [row] = tornadoRows(ctx, sweeps, { kind: 'line', lineId: 'Cash Flow', periodIndex: 3 });
     expect(row.max).toBeCloseTo(18.2);
     expect(row.min).toBeCloseTo(17.2);
 
-    const [missing] = tornadoRows(sweeps, baseline, { lineId: 'Nope', periodIndex: 3 });
+    const [missing] = tornadoRows(ctx, sweeps, { kind: 'line', lineId: 'Nope', periodIndex: 3 });
     expect(missing.swing).toBe(0);
     expect(missing.min).toBeNull();
+  });
+});
+
+describe('analysis inputs and outputs', () => {
+  const ev = { kind: 'analysis', metricId: 'dcf.enterpriseValue' } as const;
+
+  it('reads DCF results off a point, and moving WACC moves EV without re-evaluating the model', () => {
+    const ctx = withDcf(fixture().ctx);
+    expect(availableAnalysisMetrics(ctx.analysis).map((m) => m.id)).toEqual(['dcf.enterpriseValue', 'dcf.equityValue']);
+    const base = readOutput(ctx, basePoint(ctx), ev)!;
+    expect(base).toBeGreaterThan(0);
+    expect(readOutput(ctx, basePoint(ctx), { kind: 'analysis', metricId: 'dcf.equityValue' })).toBeCloseTo(base - 50);
+
+    const higherWacc = evaluateCase(ctx, [input(analysisInputId('dcf.wacc'), -0.01, 0.01)], [0.01]);
+    expect(higherWacc.evaluation).toBe(ctx.baseline);
+    expect(higherWacc.params.dcf?.wacc).toBeCloseTo(0.11);
+    expect(readOutput(ctx, higherWacc, ev)!).toBeLessThan(base);
+  });
+
+  it('keeps analysis results separate for points that share params but not evaluations', () => {
+    const ctx = withDcf(fixture().ctx);
+    const higherMargin = evaluateCase(ctx, [input('m', -0.02, 0.02)], [0.02]);
+    expect(higherMargin.params).toBe(ctx.analysis!.base);
+    expect(readOutput(ctx, higherMargin, ev)!).toBeGreaterThan(readOutput(ctx, basePoint(ctx), ev)!);
+  });
+
+  it('ranks WACC alongside drivers in a tornado of EV', () => {
+    const ctx = withDcf(fixture().ctx);
+    const inputs = inputOptions(ctx).map((o) => o.suggested);
+    const rows = tornadoRows(ctx, runOneAtATime(ctx, inputs, 2), ev);
+    expect(rows.map((r) => r.inputId)).toContain(analysisInputId('dcf.wacc'));
+    const wacc = rows.find((r) => r.inputId === analysisInputId('dcf.wacc'))!;
+    expect(wacc.atLow!).toBeGreaterThan(wacc.atHigh!);
+  });
+});
+
+describe('Recovery Waterfall as an analysis', () => {
+  it('shifts the distributable value and reads each tranche recovery rate', () => {
+    const { ctx } = fixture();
+    ctx.schema.sections[0].lines.push(line('Term Loan', num(100), { role: 'calculated', lineKind: 'debt', debtProperties: {} }));
+    const analysis: AnalysisContext = {
+      schema: ctx.schema, timeline: ctx.model.timeline, scenarioId: 'base', enabledIds: ['recoveryWaterfall'], lboCase: null,
+      base: { ...NO_ANALYSIS_PARAMS, recovery: { method: 'direct', multiple: null, periodIndex: null, directValue: 80, adminCosts: null } },
+    };
+    const rctx = { ...ctx, baseline: evaluateModel(ctx.schema, ctx.model), analysis };
+    const pct = { kind: 'analysis', metricId: 'recovery.pct.Term Loan' } as const;
+    expect(inputOptions(rctx).map((o) => o.id)).toContain(analysisInputId('recovery.directValue'));
+    expect(readOutput(rctx, basePoint(rctx), pct)).toBeCloseTo(0.8);
+    const lower = evaluateCase(rctx, [input(analysisInputId('recovery.directValue'), -0.2, 0.2, { kind: 'relative' })], [-0.2]);
+    expect(readOutput(rctx, lower, pct)).toBeCloseTo(0.64);
+  });
+});
+
+describe('runGrid', () => {
+  it('evaluates every combination, with the starting case in the middle', () => {
+    const { ctx } = fixture();
+    const grid = runGrid(ctx, input('m', -0.02, 0.02), input('c', -1, 1), 3);
+    expect(grid.rowShifts).toEqual([-0.02, 0, 0.02]);
+    expect(grid.colShifts).toEqual([-1, 0, 1]);
+    const value = (r: number, c: number) => grid.cells[r][c].evaluation.getValue('Cash Flow', 3);
+    expect(value(1, 1)).toBeCloseTo(18.2);
+    expect(value(2, 0)).toBeCloseTo(121 * 0.22 - 5);
+    expect(value(0, 2)).toBeCloseTo(121 * 0.18 - 7);
+  });
+});
+
+describe('Monte Carlo', () => {
+  it('draws within range for uniform and triangular, centred for normal', () => {
+    const random = seededRandom(42);
+    for (let i = 0; i < 500; i++) {
+      const u = sampleShift({ low: -1, high: 2, distribution: 'uniform' }, random);
+      const t = sampleShift({ low: -1, high: 2, distribution: 'triangular' }, random);
+      expect(u).toBeGreaterThanOrEqual(-1);
+      expect(u).toBeLessThanOrEqual(2);
+      expect(t).toBeGreaterThanOrEqual(-1);
+      expect(t).toBeLessThanOrEqual(2);
+    }
+    const normals = Array.from({ length: 4000 }, () => sampleShift({ low: -2, high: 2, distribution: 'normal' }, random));
+    const mean = normals.reduce((a, b) => a + b, 0) / normals.length;
+    const sd = Math.sqrt(normals.reduce((a, b) => a + (b - mean) ** 2, 0) / normals.length);
+    expect(mean).toBeCloseTo(0, 1);
+    expect(sd).toBeCloseTo(1, 1);
+  });
+
+  it('is reproducible for a seed and moves every input at once', () => {
+    const { ctx } = fixture();
+    const inputs = [input('m', -0.02, 0.02), input('c', -1, 1)];
+    const a = runMonteCarlo(ctx, inputs, 20, 7);
+    const b = runMonteCarlo(ctx, inputs, 20, 7);
+    const values = (points: typeof a) => points.map((p) => p.evaluation.getValue('Cash Flow', 3));
+    expect(values(a)).toEqual(values(b));
+    expect(Object.keys(a[0].shifts)).toEqual(['m', 'c']);
+    for (const v of values(a)) {
+      expect(v!).toBeGreaterThanOrEqual(121 * 0.18 - 7 - 1e-9);
+      expect(v!).toBeLessThanOrEqual(121 * 0.22 - 5 + 1e-9);
+    }
+  });
+
+  it('summarizes a distribution and threshold probabilities', () => {
+    const values = [...Array.from({ length: 100 }, (_, i) => i + 1), null];
+    const summary = summarizeDistribution(values, 10)!;
+    expect(summary.count).toBe(100);
+    expect(summary.unresolved).toBe(1);
+    expect(summary.mean).toBeCloseTo(50.5);
+    expect(summary.p50).toBeCloseTo(50.5);
+    expect(summary.p5).toBeCloseTo(5.95);
+    expect(summary.p95).toBeCloseTo(95.05);
+    expect(summary.bins.reduce((a, b) => a + b.count, 0)).toBe(100);
+    expect(probabilityBeyond(values, 10.5, 'below')).toBeCloseTo(0.1);
+    expect(probabilityBeyond(values, 90, 'above')).toBeCloseTo(0.1);
+    expect(summarizeDistribution([null])).toBeNull();
   });
 });

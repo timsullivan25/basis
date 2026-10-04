@@ -64,7 +64,7 @@ export function TornadoChart({ rows, base, numberFormat }: { rows: TornadoChartR
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
         {rows.map((row) => (
-          <div key={row.driverId} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+          <div key={row.inputId} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <div style={{ width: LABEL_WIDTH, flex: '0 0 auto', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-medium)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {row.label}
