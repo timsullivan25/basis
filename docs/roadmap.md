@@ -19,9 +19,17 @@ The model used to "balance" by construction, not by real linkage. Fixed:
 - ~~**Generic "Checks" mechanism.**~~ **Done** (`69409bb`) — check line type with tolerance, flagged
   in the grid. Every future overlay (an M&A/refi's sources & uses, in particular) gets a check for
   free: one more formula line, no new plumbing.
-- **Convergence indicator for circular calcs — partly done.** The engine records a per-line
-  "didn't converge" error (`lib/engine/evaluate.ts`) instead of silently showing a stale number.
-  Still to confirm: whether that error is actually surfaced visibly in the workspace UI.
+- ~~**Convergence indicator for circular calcs.**~~ **Done.** The engine records a per-line "didn't
+  converge" error (`lib/engine/evaluate.ts`), and it's surfaced in the workspace grid — a red
+  alert-triangle icon with the error as its tooltip (`ModelWorkspaceScreen.tsx`).
+- **Net PP&E doesn't exist as a real line — Capex and D&A are disconnected.** Decided
+  2026-09-27: add a `Net PP&E` Balance Sheet line with the roll-forward formula
+  `priorPeriod(Net PP&E) + Cash Flow Statement.Capital Expenditures - Income Statement.Depreciation
+  & Amortization` — same convention as the Retained Earnings roll-forward above — and fold it into
+  Total Assets. **Not** a Tier 1 overlay: no variable cardinality and no cross-line waterfall like
+  debt's shared cash pool, so it's a plain schema addition, not generated code. If per-asset-class
+  breakdown (buildings/machinery/land) is ever needed, that's the existing sub-lines mechanism, not
+  new architecture. The existing Balance Sheet Check validates it for free, same as equity.
 
 ## Tier 1 — the overlay pattern, generalized
 
@@ -31,10 +39,8 @@ evaluation engine do the rest — no special-cased engine logic (see `lib/debtSc
 these is the same shape: an eligibility rule + a `regenerateX(schema, ...)` function + a role tag +
 a toggle in the UI. Not new architecture — the same pattern, run a few more times.
 
-- **PP&E / Capex roll-forward** (Beginning + Capex − D&A = Ending). **Next up.** Highest priority of
-  this group — most universally needed, and D&A/Capex today are just disconnected flat
-  %-of-revenue lines. Tier 0 checks now exist to verify it ties to the balance sheet.
-- **Refinancing overlay** — payoff existing debt, issue new, fees/OID/breakage costs. Naturally
+- **Refinancing overlay** — payoff existing debt, issue new, fees/OID/breakage costs. **Next up** in
+  this tier (PP&E moved to Tier 0 above — it's a schema addition, not an overlay). Naturally
   "sources & uses" shaped, pairs with the Tier 0 Checks mechanism.
 - **Recapitalization overlay** — issue debt to fund a shareholder dividend. Same shape as
   refinancing.
@@ -51,10 +57,20 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
 
 ## Tier 2 — standalone analyses (mostly downstream of Tier 1)
 
-- **Recovery waterfall** — worth building specifically because the Debt Schedule already encodes
-  seniority order (revolver first, then term tranches in schema order) for the cash-sweep logic. A
-  downside-scenario recovery waterfall reuses that ordering directly rather than re-deriving
-  capital structure.
+Focus after Tier 0's PP&E addition, ahead of Tier 1's overlays — decided 2026-09-27. DCF already
+exists and works but needs refinement (not yet scoped in detail here). Sensitivity analysis comes
+after this tier; design TBD, to be discussed when we get there.
+
+- ~~**Recovery waterfall**~~ **Done** — worth building specifically because the Debt Schedule
+  already encodes seniority order (revolver first, then term tranches in schema order) for the
+  cash-sweep logic. A downside-scenario recovery waterfall reuses that ordering directly rather
+  than re-deriving capital structure: `orderedSeniorityTiers` groups tranches into pari passu tiers
+  by parent line (legal seniority, not cash-sweep order), `computeDistributableValue` derives
+  enterprise value from an EBITDA/Revenue multiple or a direct entry, and
+  `computeRecoveryWaterfall` distributes it senior-to-junior, pro rata within a tier, with the same
+  null-propagation discipline as the rest of this tier (a missing input leaves recovery null rather
+  than defaulting to 0). Identifies the fulcrum security (the most senior impaired claim) and shows
+  a ±20% valuation sensitivity range per claim.
 - ~~**LBO returns (IRR/MOIC)**~~ **Done** — a standalone LboCase (own schema/timeline, extended
   5-7yr beyond the base model) with a full tranche editor (default Term Loan + Revolver, sized by
   leverage multiple) and an "Ability to Pay" back-solve: fixes the financing package (leverage ×
@@ -84,6 +100,7 @@ a toggle in the UI. Not new architecture — the same pattern, run a few more ti
 - **Trading comps / precedent transactions** — different category of problem from everything above:
   needs external market-data ingestion, not just more schema plumbing. Keep sequenced separately,
   don't bundle with the rest of this tier.
+- **Sensitivity analysis** — next after this tier's analyses. Design TBD.
 
 ## Tier 3 — workflow quality-of-life (low priority, revisit opportunistically)
 

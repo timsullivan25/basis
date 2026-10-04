@@ -39,6 +39,7 @@ import {
   type Model,
   type ModelImport,
   type ProjectionMethod,
+  type RecoveryInputs,
   type Scenario,
   type ScenarioKey,
   type Snapshot,
@@ -759,6 +760,14 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     setLboCase(null);
   }
 
+  async function updateRecoveryInputs(scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) {
+    if (!model) return;
+    const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
+    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    const recoveryInputs = { ...settings.recoveryInputs, [scenarioId]: { ...current, ...patch } };
+    setAnalysisSettings(await analysisSettingsRepository.update(model.id, { recoveryInputs }));
+  }
+
   if (model === undefined) {
     return <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>Loading…</span>;
   }
@@ -1461,6 +1470,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             activeScenarioId={activeScenarioId}
             onToggleAnalysis={toggleAnalysis}
             onUpdateDcfInputs={updateDcfInputs}
+            onUpdateRecoveryInputs={updateRecoveryInputs}
             onSchemaUpdated={setSchema}
             onOpenStatementDefinitions={onOpenStatementDefinitions}
             lboCase={lboCase}

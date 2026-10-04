@@ -71,6 +71,7 @@ export type {
   PeriodKind,
   PeriodType,
   ProjectionMethod,
+  RecoveryInputs,
   ResolvedFormula,
   Scenario,
   ScenarioKey,
