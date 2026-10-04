@@ -616,13 +616,34 @@ export interface DcfInputs {
   terminalGrowth: number | null;
 }
 
+/** How the Recovery Waterfall's distributable value is derived — always a manual assumption
+ *  (unlike DCF, this never reads a computed valuation; see the modeling roadmap's own note on
+ *  why hooking it up to DCF/LBO/Comps output is deliberately deferred). 'ebitdaMultiple'/
+ *  'revenueMultiple' apply `multiple` against the resolved EBITDA/Revenue concept line's value at
+ *  `periodIndex` (null falls back to the last actual period, same convention DCF's own Net Debt
+ *  lookup uses); 'direct' ignores both and uses `directValue` as-is. Only the fields the active
+ *  method reads are ever populated; the others are left null rather than stale. */
+export interface RecoveryInputs {
+  method: 'ebitdaMultiple' | 'revenueMultiple' | 'direct' | null;
+  multiple: number | null;
+  periodIndex: number | null;
+  directValue: number | null;
+  /** Administrative & priority claims (DIP financing, professional fees, wind-down costs) —
+   *  a flat dollar amount paid out of distributableValue BEFORE any secured tranche, per the
+   *  standard priority sequence. `null` (not 0) means "not entered" — treated as $0 by
+   *  computeRecoveryWaterfall, same "optional, off by default" semantics as the rest of this
+   *  analysis's inputs. */
+  adminCosts: number | null;
+}
+
 /**
- * One row per model — which analyses (from the static ANALYSIS_CATALOG) are enabled, and DCF's
- * own per-scenario WACC/terminal-growth assumptions. Required inputs that DO have a schema
- * analog (EBIT, D&A, CapEx, Net Working Capital, tax rate) are deliberately NOT stored here —
- * they resolve from the schema's own lines/aliases via lib/summaryLines.ts's findSummaryLine,
- * the same mechanism mapping already uses, so resolving one is a real improvement to the
- * schema's own definition rather than a DCF-local override.
+ * One row per model — which analyses (from the static ANALYSIS_CATALOG) are enabled, and each
+ * analysis's own per-scenario assumptions (DCF's WACC/terminal growth, Recovery Waterfall's
+ * valuation inputs). Required inputs that DO have a schema analog (EBIT, D&A, CapEx, Net Working
+ * Capital, tax rate, EBITDA, Revenue) are deliberately NOT stored here — they resolve from the
+ * schema's own lines/aliases via lib/summaryLines.ts's findSummaryLine, the same mechanism
+ * mapping already uses, so resolving one is a real improvement to the schema's own definition
+ * rather than an analysis-local override.
  */
 export interface AnalysisSettings {
   /** == modelId — one settings row per model, so this doubles as the primary key. */
@@ -637,6 +658,9 @@ export interface AnalysisSettings {
    *  other field the instant only one field is first overridden, silently freezing it at that
    *  moment even as Base's own assumption keeps evolving. */
   dcfInputs: Record<ScenarioKey, DcfInputs>;
+  /** Per-scenario Recovery Waterfall valuation assumptions — same sparse-per-field cascade off
+   *  'base' as dcfInputs, for the same reason. */
+  recoveryInputs: Record<ScenarioKey, RecoveryInputs>;
   createdAt: string;
   updatedAt: string;
 }
@@ -644,9 +668,14 @@ export interface AnalysisSettings {
 export interface AnalysisSettingsRepository {
   get(modelId: string): Promise<AnalysisSettings | undefined>;
   /** Seeds a fresh row: enabledAnalysisIds from the catalog's defaultEnabled entries,
-   *  dcfInputs: { base: { wacc: null, terminalGrowth: null } }. */
+   *  dcfInputs: { base: { wacc: null, terminalGrowth: null } },
+   *  recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null,
+   *  adminCosts: null } }. */
   create(modelId: string): Promise<AnalysisSettings>;
-  update(modelId: string, patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs'>>): Promise<AnalysisSettings>;
+  update(
+    modelId: string,
+    patch: Partial<Pick<AnalysisSettings, 'enabledAnalysisIds' | 'dcfInputs' | 'recoveryInputs'>>,
+  ): Promise<AnalysisSettings>;
 }
 
 /** The full computed DCF output for one (model, scenario) pair — a plain-data mirror of
