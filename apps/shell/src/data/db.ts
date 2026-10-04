@@ -4,6 +4,7 @@ import type {
   AnalysisSettings,
   Company,
   ComputedResult,
+  LboCase,
   Mapping,
   Model,
   ModelImport,
@@ -65,10 +66,15 @@ export interface BasisDb extends DBSchema {
     value: AnalysisResult;
     indexes: { 'by-modelId': string };
   };
+  lboCases: {
+    key: string;
+    value: LboCase;
+    // No index — id === modelId, so a direct get() is always the lookup, same as analysisSettings.
+  };
 }
 
 const DB_NAME = 'basis';
-const DB_VERSION = 18;
+const DB_VERSION = 21;
 
 /** The single key statementSchema was stored under before it became a keyPath store (versions 2-3). */
 const LEGACY_STATEMENT_SCHEMA_KEY = 'default';
@@ -275,6 +281,21 @@ export function openBasisDb(): Promise<IDBPDatabase<BasisDb>> {
         // template list is read, and models are re-imported.
         if (oldVersion >= 1 && oldVersion < 18) {
           for (const name of Array.from(db.objectStoreNames)) transaction.objectStore(name).clear();
+        }
+        if (oldVersion < 19) {
+          db.createObjectStore('lboCases', { keyPath: 'id' });
+        }
+        // LboCase dropped its own frozen historicals/driverValues/entryPeriodLabel in favor of
+        // resolving the base model's figures live on every evaluation, and financing became
+        // per-scenario — a v19 row doesn't satisfy the new shape, so (same pre-beta "wipe and
+        // re-seed" convention as v14->v18 above) a case just needs re-enabling, not migrating.
+        if (oldVersion >= 19 && oldVersion < 20) {
+          transaction.objectStore('lboCases').clear();
+        }
+        // LboCase gained leverageLinkedTrancheId (a stable reference, not re-derived positionally
+        // — see its own doc comment) — same "pre-beta, wipe and re-seed" treatment as v19 -> v20.
+        if (oldVersion >= 1 && oldVersion < 21) {
+          transaction.objectStore('lboCases').clear();
         }
       },
     });

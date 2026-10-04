@@ -2,6 +2,7 @@ import { IndexedDbAnalysisResultRepository } from './indexedDbAnalysisResultRepo
 import { IndexedDbAnalysisSettingsRepository } from './indexedDbAnalysisSettingsRepository';
 import { IndexedDbCompanyRepository } from './indexedDbCompanyRepository';
 import { IndexedDbComputedResultRepository } from './indexedDbComputedResultRepository';
+import { IndexedDbLboCaseRepository } from './indexedDbLboCaseRepository';
 import { IndexedDbMappingRepository } from './indexedDbMappingRepository';
 import { IndexedDbModelImportRepository } from './indexedDbModelImportRepository';
 import { IndexedDbModelRepository } from './indexedDbModelRepository';
@@ -13,6 +14,7 @@ import type {
   AnalysisSettingsRepository,
   ComputedResultRepository,
   CompanyRepository,
+  LboCaseRepository,
   MappingRepository,
   ModelImportRepository,
   ModelRepository,
@@ -33,6 +35,7 @@ export type {
   ComputedResultRepository,
   ComputedResultVersionStamp,
   CreateCompanyInput,
+  CreateLboCaseInput,
   CreateMappingInput,
   CreateModelImportInput,
   CreateModelInput,
@@ -43,6 +46,10 @@ export type {
   DebtScheduleRole,
   DebtTrancheProperties,
   DriverDefinition,
+  LboCase,
+  LboCaseRepository,
+  LboFinancingInputs,
+  LboOutput,
   LineAggregation,
   LineMapping,
   LineNumberFormat,
@@ -90,5 +97,6 @@ export const modelRepository: ModelRepository = new IndexedDbModelRepository();
 export const scenarioRepository: ScenarioRepository = new IndexedDbScenarioRepository();
 export const computedResultRepository: ComputedResultRepository = new IndexedDbComputedResultRepository();
 export const snapshotRepository: SnapshotRepository = new IndexedDbSnapshotRepository();
+export const lboCaseRepository: LboCaseRepository = new IndexedDbLboCaseRepository();
 export const analysisSettingsRepository: AnalysisSettingsRepository = new IndexedDbAnalysisSettingsRepository();
 export const analysisResultRepository: AnalysisResultRepository = new IndexedDbAnalysisResultRepository();

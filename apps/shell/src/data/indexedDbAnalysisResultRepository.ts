@@ -19,4 +19,10 @@ export class IndexedDbAnalysisResultRepository implements AnalysisResultReposito
     );
     return results.filter((r): r is AnalysisResult => r !== undefined);
   }
+
+  async removeForAnalysis(modelId: string, analysisId: string): Promise<void> {
+    const db = await openBasisDb();
+    const rows = await db.getAllFromIndex('analysisResults', 'by-modelId', modelId);
+    await Promise.all(rows.filter((r) => r.analysisId === analysisId).map((r) => db.delete('analysisResults', r.id)));
+  }
 }

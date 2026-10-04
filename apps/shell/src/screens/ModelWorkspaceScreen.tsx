@@ -23,6 +23,7 @@ import { SyncedHScroll } from '../components/common/SyncedHScroll';
 import {
   analysisResultRepository,
   analysisSettingsRepository,
+  lboCaseRepository,
   mappingRepository,
   modelImportRepository,
   modelRepository,
@@ -33,6 +34,7 @@ import {
   type Company,
   type DcfInputs,
   type DcfOutput,
+  type LboCase,
   type Mapping,
   type Model,
   type ModelImport,
@@ -69,6 +71,7 @@ import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
+import { computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 import { effectiveLineKind } from '../lib/statementLineChildren';
@@ -280,6 +283,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [compareLineId, setCompareLineId] = useState<string | null>(null);
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
+  const [lboCase, setLboCase] = useState<LboCase | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,6 +295,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       const existingMapping = existingModel ? await mappingRepository.get(existingModel.mappingId) : null;
       const existingModelImport = existingModel ? await modelImportRepository.get(existingModel.modelImportId) : null;
       const existingAnalysisSettings = existingModel ? await analysisSettingsRepository.get(existingModel.id) : undefined;
+      const existingLboCase = existingModel ? await lboCaseRepository.get(existingModel.id) : undefined;
       if (cancelled) return;
       setModel(existingModel ?? null);
       setSchema(existingSchema ?? null);
@@ -298,6 +303,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       setMapping(existingMapping ?? null);
       setModelImport(existingModelImport ?? null);
       setAnalysisSettings(existingAnalysisSettings ?? null);
+      setLboCase(existingLboCase ?? null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -384,6 +390,19 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, analysisSettings);
     void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'dcf', versionStamp, output));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings]);
+
+  // Same cache-not-source write-through as DCF's own above, for LBO — computeLboOutput is the
+  // exact same function LboPanel itself calls for display, so the cache can never show something
+  // different from what the panel does. The version stamp's 4th field is the LboCase's own
+  // updatedAt (bumped on any schema/financing edit — see IndexedDbLboCaseRepository.update)
+  // rather than AnalysisSettings, since that's where this analysis's own inputs actually live.
+  useEffect(() => {
+    if (recalcMode !== 'auto' || !schema || !model || !evaluation || !analysisSettings || !lboCase) return;
+    if (!analysisSettings.enabledAnalysisIds.includes('lbo')) return;
+    const output = computeLboOutput(lboCase, activeScenarioId, schema, evaluation, model.timeline);
+    const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, lboCase);
+    void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'lbo', versionStamp, output));
+  }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings, lboCase]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not
@@ -718,6 +737,27 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const current = settings.dcfInputs[scenarioId] ?? { wacc: null, terminalGrowth: null };
     const dcfInputs = { ...settings.dcfInputs, [scenarioId]: { ...current, ...patch } };
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { dcfInputs }));
+  }
+
+  async function createLboCase(params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) {
+    if (!schema || !model || !evaluation) return;
+    const seed = seedLboCase({ ...params, baseSchema: schema, baseTimeline: model.timeline, baseEvaluation: evaluation });
+    setLboCase(await lboCaseRepository.create(seed));
+  }
+
+  async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) {
+    if (!model) return;
+    setLboCase(await lboCaseRepository.update(model.id, patch));
+  }
+
+  async function removeLboCase() {
+    if (!model) return;
+    await lboCaseRepository.remove(model.id);
+    // Without this, the write-through cache's own rows for 'lbo' would sit unreadable as stale
+    // forever — nothing re-computes them to trigger a version-stamp check once the case itself is
+    // gone (see AnalysisResultRepository.removeForAnalysis's own doc comment).
+    await analysisResultRepository.removeForAnalysis(model.id, 'lbo');
+    setLboCase(null);
   }
 
   async function updateRecoveryInputs(scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) {
@@ -1433,6 +1473,10 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             onUpdateRecoveryInputs={updateRecoveryInputs}
             onSchemaUpdated={setSchema}
             onOpenStatementDefinitions={onOpenStatementDefinitions}
+            lboCase={lboCase}
+            onCreateLboCase={createLboCase}
+            onUpdateLboCase={updateLboCase}
+            onRemoveLboCase={removeLboCase}
           />
         ) : null
       ) : tab === 'compare' ? (

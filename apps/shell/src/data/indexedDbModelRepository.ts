@@ -17,6 +17,7 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
+      await this.removeLboCase(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       // Every model owns a private schema fork (see ModelMappingScreen/cloneStatementSchemaStructure)
@@ -47,6 +48,7 @@ export class IndexedDbModelRepository implements ModelRepository {
       await this.removeComputedResults(existing.id);
       await this.removeAnalysisSettings(existing.id);
       await this.removeAnalysisResults(existing.id);
+      await this.removeLboCase(existing.id);
       await db.delete('mappings', existing.mappingId);
       await db.delete('modelImports', existing.modelImportId);
       await db.delete('statementSchema', existing.statementSchemaId);
@@ -83,5 +85,12 @@ export class IndexedDbModelRepository implements ModelRepository {
     const db = await openBasisDb();
     const results = await db.getAllFromIndex('analysisResults', 'by-modelId', modelId);
     await Promise.all(results.map((r) => db.delete('analysisResults', r.id)));
+  }
+
+  /** Same from-day-one invariant, at an LboCase's own primary key (id === modelId, no index scan
+   *  needed) — same shape as removeAnalysisSettings. */
+  private async removeLboCase(modelId: string): Promise<void> {
+    const db = await openBasisDb();
+    await db.delete('lboCases', modelId);
   }
 }

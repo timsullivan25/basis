@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Accordion, Card, Switch } from '@basis/design-system';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
-import type { AnalysisSettings, DcfInputs, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
+import type { AnalysisSettings, DcfInputs, LboCase, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
+import type { SeedLboCaseParams } from '../../../lib/lbo';
 import { DcfPanel } from './DcfPanel';
+import { LboPanel } from './LboPanel';
 import { RecoveryWaterfallPanel } from './RecoveryWaterfallPanel';
 
 interface AnalysesPanelProps {
@@ -17,6 +19,10 @@ interface AnalysesPanelProps {
   onUpdateRecoveryInputs: (scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
+  lboCase: LboCase | null;
+  onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) => void;
+  onRemoveLboCase: () => void;
 }
 
 /** Always starts from the full catalog (today, just DCF) with an enable/disable toggle per entry
@@ -33,6 +39,10 @@ export function AnalysesPanel({
   onUpdateRecoveryInputs,
   onSchemaUpdated,
   onOpenStatementDefinitions,
+  lboCase,
+  onCreateLboCase,
+  onUpdateLboCase,
+  onRemoveLboCase,
 }: AnalysesPanelProps) {
   const enabledIds = analysisSettings?.enabledAnalysisIds ?? [];
 
@@ -67,6 +77,20 @@ export function AnalysesPanel({
         analysisSettings={analysisSettings}
         activeScenarioId={activeScenarioId}
         onUpdateRecoveryInputs={onUpdateRecoveryInputs}
+        onSchemaUpdated={onSchemaUpdated}
+        onOpenStatementDefinitions={onOpenStatementDefinitions}
+      />
+    ),
+    lbo: (
+      <LboPanel
+        schema={schema}
+        model={model}
+        evaluation={evaluation}
+        activeScenarioId={activeScenarioId}
+        lboCase={lboCase}
+        onCreateLboCase={onCreateLboCase}
+        onUpdateLboCase={onUpdateLboCase}
+        onRemoveLboCase={onRemoveLboCase}
         onSchemaUpdated={onSchemaUpdated}
         onOpenStatementDefinitions={onOpenStatementDefinitions}
       />

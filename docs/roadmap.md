@@ -61,11 +61,39 @@ Focus after Tier 0's PP&E addition, ahead of Tier 1's overlays — decided 2026-
 exists and works but needs refinement (not yet scoped in detail here). Sensitivity analysis comes
 after this tier; design TBD, to be discussed when we get there.
 
-- **Recovery waterfall — in progress**, started 2026-09-27. Worth building specifically because the
-  Debt Schedule already encodes seniority order (revolver first, then term tranches in schema
-  order) for the cash-sweep logic. A downside-scenario recovery waterfall reuses that ordering
-  directly rather than re-deriving capital structure.
-- **LBO returns (IRR/MOIC)**.
+- ~~**Recovery waterfall**~~ **Done** — worth building specifically because the Debt Schedule
+  already encodes seniority order (revolver first, then term tranches in schema order) for the
+  cash-sweep logic. A downside-scenario recovery waterfall reuses that ordering directly rather
+  than re-deriving capital structure: `orderedSeniorityTiers` groups tranches into pari passu tiers
+  by parent line (legal seniority, not cash-sweep order), `computeDistributableValue` derives
+  enterprise value from an EBITDA/Revenue multiple or a direct entry, and
+  `computeRecoveryWaterfall` distributes it senior-to-junior, pro rata within a tier, with the same
+  null-propagation discipline as the rest of this tier (a missing input leaves recovery null rather
+  than defaulting to 0). Identifies the fulcrum security (the most senior impaired claim) and shows
+  a ±20% valuation sensitivity range per claim.
+- ~~**LBO returns (IRR/MOIC)**~~ **Done** — a standalone LboCase (own schema/timeline, extended
+  5-7yr beyond the base model) with a full tranche editor (default Term Loan + Revolver, sized by
+  leverage multiple) and an "Ability to Pay" back-solve: fixes the financing package (leverage ×
+  entry EBITDA, independent of price) and a target IRR, solves backward for the max entry
+  multiple/EV, closed-form even with "no multiple expansion" (see `lib/lbo.ts`). Consistent with
+  every other analysis's own linking contract: an LboCase stores only its OWN inputs (the
+  financing package's tranches/terms, structural; leverage/target IRR/exit assumptions, per-
+  scenario via `financing: Record<ScenarioKey, LboFinancingInputs>`, same sparse-cascade-off-Base
+  convention as DCF's WACC/terminal growth) — never a copy of Revenue/EBITDA/D&A/CapEx/NWC/tax
+  rate or the Term Loan's own face value, all of which resolve live off the base model's current
+  evaluation for whichever scenario is active, every render (`buildLboEvaluationInputs`). Both DCF
+  and LBO now also write a version-stamped `AnalysisResult` cache per (model, scenario) — one row
+  per scenario, never a single ambiguous snapshot — purely for a future cross-model/cross-issuer
+  reader; neither panel ever reads its own cache back, so a stale or missing row can never show a
+  wrong number live. The leverage-linked tranche (the one `leverageMultiple` resizes) is tracked by
+  a stable `leverageLinkedTrancheId`, not positionally inferred ("first non-revolver tranche") —
+  deleting and re-adding tranches can't silently relink the wrong one. Deleting an LboCase also
+  clears its own `AnalysisResult` cache rows (`removeForAnalysis`), and re-mapping or removing a
+  model's file now cascades through `lboCases` the same way it already did for scenarios/computed
+  results/analysis settings — previously the only store a model re-upload could orphan. Creating a
+  case hard-blocks on every required concept (not just Revenue/EBITDA) since a gap in D&A/CapEx/NWC/
+  tax rate silently nulls Free Cash Flow and the whole debt-schedule sweep rather than just
+  degrading gracefully.
 - **Accretion/dilution analysis** — needs the M&A overlay first.
 - **Value-creation bridge** (growth vs. margin vs. multiple vs. deleveraging) — cheap once DCF/LBO
   outputs exist.

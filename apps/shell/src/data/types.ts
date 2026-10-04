@@ -616,6 +616,121 @@ export interface DcfInputs {
   terminalGrowth: number | null;
 }
 
+/** One LBO return-target/financing assumption set. Per-scenario, sparse-cascaded off 'base' —
+ *  same shape and reason as DcfInputs: "leverage multiple" and "target IRR" are judgment calls
+ *  with no schema analog, exactly like WACC/terminal growth, so they live here rather than being
+ *  derived. See AnalysisSettings.dcfInputs' own doc comment for why a whole-record fallback is
+ *  rejected in favor of per-field sparseness. */
+export interface LboFinancingInputs {
+  /** Total entry debt as a multiple of entry-period EBITDA — the primary lever this analysis
+   *  exists to test. Read live against whatever scenario is active (see lib/lbo.ts's
+   *  buildLboEvaluationInputs): editing this never touches the stored schema, it only resizes the
+   *  Term Loan's effective face value the next time that scenario is evaluated. `null` only before
+   *  a case's 'base' entry is first seeded. */
+  leverageMultiple: number | null;
+  /** Target sponsor IRRs the Ability to Pay grid solves against, e.g. [0.15, 0.2, 0.25]. */
+  targetIrrs: number[];
+  /** `null` means "same as the implied entry multiple" (no multiple expansion) — computeAbilityToPay's
+   *  own default, per this analysis's usual convention (see lib/lbo.ts). */
+  exitMultiple: number | null;
+  /** Index into the LBO case's OWN timeline (not the base model's) — null defaults to its last period. */
+  exitPeriodIndex: number | null;
+  /** % of entry EBITDA paid out at close (financing + advisory fees) — a fixed use of proceeds in
+   *  the Ability to Pay math. `null` (not 0) means "not entered". */
+  transactionExpensesPct: number | null;
+}
+
+/**
+ * A standalone LBO projection — deliberately NOT a second Model row (Model is a strict singleton
+ * per company, "never a peer among several" — see its own doc comment). Everything below Model in
+ * this data model (StatementSchema, evaluateModel, the debt schedule) only ever needs a
+ * {schema, timeline, historicals, driverValues} bundle, never a persisted Model row, so an LboCase
+ * embeds its own private schema fork and runs through evaluateModel exactly like the base model
+ * does — but unlike Snapshot's own embedded schema (frozen on purpose, to outlive the live model),
+ * an LboCase is meant to track the live model going forward, so what it stores is deliberately
+ * narrow:
+ *
+ * - `schema` is ONLY the financing package's own structure (which tranches exist, their coupon/
+ *   amort/maturity/commitment terms) — the one thing here that's genuinely independent of the base
+ *   model, same status as a user-authored schema edit. It is NOT a source of truth for the
+ *   leverage-linked tranche's own face value (see debtProperties.originalFaceValue's own doc
+ *   comment) or for Revenue/EBITDA/D&A/CapEx/Net Working Capital/tax/cash at the entry period —
+ *   none of those are stored anywhere on this record.
+ * - `timeline` is just the PERIOD SHAPE (entry period + horizonYears of projected periods) —
+ *   independent of scenario, since scenarios never change how many periods exist or their dates.
+ * - `financing` is per-scenario (see LboFinancingInputs), same sparse-cascade-off-Base convention
+ *   AnalysisSettings.dcfInputs already uses.
+ *
+ * Every number that DOES come from the model (the entry period's Revenue/EBITDA/D&A/CapEx/Net
+ * Working Capital/tax rate, and therefore the leverage-linked tranche's own face value) is
+ * resolved FRESH, live, against whichever scenario is active, every time the case is evaluated —
+ * see lib/lbo.ts's buildLboEvaluationInputs. Nothing here is a frozen copy: edit a driver in the
+ * base model, or switch scenarios, and the LBO case picks it up on its next render with no re-seed
+ * step, the same way DCF's own UFCF build-up reads EBIT/D&A/CapEx/NWC live rather than storing a
+ * copy of them.
+ *
+ * One per model (like AnalysisSettings — this doubles as its own primary key), created the moment
+ * 'lbo' is added to AnalysisSettings.enabledAnalysisIds. Per this analysis's own design goal
+ * ("should basically work when the analysis is turned on"), seedLboCase picks sensible STARTING
+ * numbers (leverage matching the company's own current Net Debt / EBITDA, a Term Loan + Revolver)
+ * from one live read at creation time — but that read is used only to choose defaults, never
+ * stored as the case's source of truth afterward.
+ */
+export interface LboCase {
+  /** == modelId — one LBO case per model, so this doubles as the primary key. */
+  id: string;
+  modelId: string;
+  /** Index into the BASE model's OWN timeline — re-resolved live against it on every evaluation
+   *  (see lib/lbo.ts's buildLboEvaluationInputs), never a frozen snapshot of what that period's
+   *  values were at creation time. If the base model's timeline later shrinks below this index,
+   *  callers clamp defensively, same convention comparePeriodIndex already uses. */
+  entryPeriodIndex: number;
+  horizonYears: number;
+  /** The financing package's own structure only — see this interface's own doc comment for
+   *  exactly what is and isn't trusted from here. Mutated directly (tranches added/edited/removed
+   *  via the same lib/statementLineChildren.ts helpers a model's own schema fork uses) as the
+   *  financing package is edited. */
+  schema: StatementSchema;
+  timeline: Timeline;
+  /** Which child of "Total Debt" the panel's own "Leverage" input controls — buildLboEvaluationInputs
+   *  overwrites THIS tranche's face value with leverageMultiple × that scenario's own entry EBITDA
+   *  every evaluation, and the panel blocks editing its face value directly for the same reason.
+   *  A stable id, not "whichever non-revolver tranche comes first in schema order": tranches can be
+   *  added and removed, and re-deriving this positionally would silently reassign it — and overwrite
+   *  whatever face value the user had just set — onto an unrelated tranche the moment the original
+   *  one is removed. `null` means no tranche is currently linked (the seeded one was deleted and
+   *  nothing has taken its place) — the Leverage input then has nothing to resize until the user
+   *  adds a tranche, which becomes the new link (see lib/lbo.ts's addTranche handling). */
+  leverageLinkedTrancheId: string | null;
+  /** Per-scenario — 'base' is ground truth and never cascades further; a named scenario's entry
+   *  is sparse against it, same semantics as AnalysisSettings.dcfInputs. */
+  financing: Record<ScenarioKey, LboFinancingInputs>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateLboCaseInput {
+  modelId: string;
+  entryPeriodIndex: number;
+  horizonYears: number;
+  schema: StatementSchema;
+  timeline: Timeline;
+  leverageLinkedTrancheId: string | null;
+  financing: Record<ScenarioKey, LboFinancingInputs>;
+}
+
+export interface LboCaseRepository {
+  get(modelId: string): Promise<LboCase | undefined>;
+  /** Persists a case built by lib/lbo.ts's seedLboCase — the repository itself does no seeding
+   *  math, same division of labor as ModelRepository.create taking an already-resolved
+   *  CreateModelInput. Replaces any existing case for the model (re-enabling after a Remove
+   *  starts clean, same as toggling DCF back on doesn't restore old WACC/terminal-growth values
+   *  either — see AnalysisSettingsRepository.create). */
+  create(input: CreateLboCaseInput): Promise<LboCase>;
+  update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase>;
+  remove(modelId: string): Promise<void>;
+}
+
 /** How the Recovery Waterfall's distributable value is derived — always a manual assumption
  *  (unlike DCF, this never reads a computed valuation; see the modeling roadmap's own note on
  *  why hooking it up to DCF/LBO/Comps output is deliberately deferred). 'ebitdaMultiple'/
@@ -681,8 +796,7 @@ export interface AnalysisSettingsRepository {
 /** The full computed DCF output for one (model, scenario) pair — a plain-data mirror of
  *  lib/dcf.ts's working shapes (DcfUfcfRow/DcfOutputs/SensitivityGrid), same relationship
  *  ComputedResult's flattened values/errors already have to the live EvaluationResult they're
- *  materialized from. Deliberately DCF-shaped rather than generic: it's the only analysis today,
- *  and a second one would get its own typed payload here rather than forcing a premature union. */
+ *  materialized from. */
 export interface DcfOutput {
   ufcfRows: Array<{
     periodIndex: number;
@@ -708,25 +822,52 @@ export interface DcfOutput {
   };
 }
 
+/** The full computed LBO output for one (model, scenario) pair — a plain-data mirror of
+ *  lib/lbo.ts's own working shapes (AbilityToPayRow, plus the per-period projection
+ *  computeLboOutput reads off the live evaluation), same relationship DcfOutput already has to
+ *  lib/dcf.ts. `projection` is index-aligned to the LboCase's own timeline, not the base model's. */
+export interface LboOutput {
+  projection: Array<{
+    periodIndex: number;
+    revenue: number | null;
+    ebitda: number | null;
+    fcf: number | null;
+    totalDebt: number | null;
+    netDebt: number | null;
+  }>;
+  abilityToPay: Array<{
+    targetIrr: number;
+    impliedEntryMultiple: number | null;
+    impliedEntryEnterpriseValue: number | null;
+    sponsorEquityCheck: number | null;
+    exitEquityValue: number | null;
+    moic: number | null;
+  }>;
+}
+
 /** A SIBLING to ComputedResultVersionStamp, not a widening of it — computedCache.ts's existing
- *  3-field consumers stay untouched. The 4th field DCF needs beyond the other three: WACC/
- *  terminal-growth live in AnalysisSettings, whose own updatedAt must also match for the cache
- *  to be considered fresh. */
+ *  3-field consumers stay untouched. The 4th field is the one analysis-specific addition: every
+ *  analysis's own inputs live somewhere with its own updatedAt (AnalysisSettings for DCF's WACC/
+ *  terminal growth, LboCase for LBO's financing), and that record's updatedAt must also match for
+ *  the cache to be considered fresh — see lib/analysisCache.ts's computeAnalysisVersionStamp,
+ *  which takes whichever one applies rather than hardcoding AnalysisSettings. */
 export interface AnalysisResultVersionStamp {
   modelUpdatedAt: string;
   scenarioUpdatedAt: string | null;
   schemaUpdatedAt: string;
-  analysisSettingsUpdatedAt: string;
+  inputsUpdatedAt: string;
 }
 
 /**
  * A materialized cache of one analysis's output for one (model, scenario) pair — "computed state
  * is a cache, not a source" per the architecture contract, same pattern ComputedResult already
- * establishes. The payoff isn't that DCF math is slow (it isn't, same as evaluateModel at this
+ * establishes. The payoff isn't that this math is slow (it isn't, same as evaluateModel at this
  * schema's scale) — it's what lets a cross-model reader (the "fetch analysis outputs for an
  * arbitrary set of company/model/scenario/analysis tuples" access pattern this phase's plan asks
  * for) read a number without loading that company's full model/schema/scenario and recomputing
- * DCF live for each one.
+ * live for each one. Never read by the analysis's own live UI, which always recomputes fresh —
+ * see LboCase and DcfPanel's own doc comments for why neither trusts a stored copy of its inputs
+ * either; this cache exists purely for a reader that ISN'T the analysis's own panel.
  */
 export interface AnalysisResult {
   /** `${modelId}:${scenarioId}:${analysisId}` — also the natural primary key. */
@@ -734,7 +875,7 @@ export interface AnalysisResult {
   modelId: string;
   scenarioId: ScenarioKey;
   analysisId: string;
-  output: DcfOutput;
+  output: DcfOutput | LboOutput;
   versionStamp: AnalysisResultVersionStamp;
   computedAt: string;
 }
@@ -748,4 +889,11 @@ export interface AnalysisResultRepository {
    *  cross-issuer comparison view) decides what to do with a miss. Tuples not found are simply
    *  omitted from the result, not represented as undefined placeholders. */
   getMany(tuples: Array<{ modelId: string; scenarioId: ScenarioKey; analysisId: string }>): Promise<AnalysisResult[]>;
+  /** Removes every scenario's cached row for one (model, analysis) pair — the model itself isn't
+   *  gone (ModelRepository's own cascade-delete already covers that case), just this one
+   *  analysis's own source of truth (e.g. an LboCase being deleted via "Delete LBO case"). Without
+   *  this, a cache entry for an analysis instance that no longer exists would sit unreadable as
+   *  stale forever — nothing re-computes it to trigger the version-stamp check, since the thing
+   *  that would trigger a recompute is gone. */
+  removeForAnalysis(modelId: string, analysisId: string): Promise<void>;
 }
