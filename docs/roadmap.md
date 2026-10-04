@@ -86,6 +86,19 @@ engine changes are needed to get started.
   exit multiple, leverage, target IRR) be sensitized alongside model drivers. They're already
   stored per scenario, so the same override layering applies.
 
+**First slice (built):** a Sensitivity tab on the model workspace runs one-at-a-time sweeps over
+every driver and draws a tornado for any model line at any period (`lib/sensitivity.ts`,
+`components/models/sensitivity/`). Defaults taken there, open to revisit:
+
+- Runs are ad hoc and live: nothing is saved, and the sweep re-runs on every range edit.
+- A shift applies to every projected period, to the driver's effective value (so a blank cell
+  shifts from the engine's own default). Rates and ratios move ±2 points, days-of ±5 days,
+  hardcoded amounts ±10%. No per-period window yet.
+- The starting case is the active scenario. Each input gets 5 evaluations across its range; only
+  the ends feed the tornado, the rest are kept for a later spider chart.
+- Outputs are model lines only; suggested ones (EBITDA, FCF, net leverage, cash, net debt,
+  revenue) resolve by concept, at the last period.
+
 **Open questions:**
 
 - Where a run lives: a saved "sensitivity case" per model (like an LboCase) vs. ad hoc.

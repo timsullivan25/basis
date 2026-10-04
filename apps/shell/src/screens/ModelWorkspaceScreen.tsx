@@ -51,6 +51,7 @@ import { getCheckStatus, getLineRowStyle } from '../components/statements/statem
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
+import { SensitivityPanel } from '../components/models/sensitivity/SensitivityPanel';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
@@ -338,15 +339,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is already a real
   // StatementLine living directly in `schema` (see lib/statementLineChildren.ts) — one plain
   // evaluation, no separate splice step.
-  const evaluation = useMemo(() => {
-    if (!schema || !evaluatedModel) return null;
-    // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
-    // layered on top via the same merge helper the compare view will batch-evaluate with.
-    const driverValues = activeScenario
+  // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
+  // layered on top via the same merge helper the compare view will batch-evaluate with. Kept as
+  // its own memo so the Sensitivity tab can start its sweeps from exactly what's evaluated here.
+  const effectiveDriverValues = useMemo(() => {
+    if (!evaluatedModel) return null;
+    return activeScenario
       ? mergeScenarioDriverValues(evaluatedModel.driverValues ?? {}, activeScenario.driverValues)
       : (evaluatedModel.driverValues ?? {});
-    return evaluateModel(schema, { ...evaluatedModel, driverValues });
-  }, [schema, evaluatedModel, activeScenario]);
+  }, [evaluatedModel, activeScenario]);
+  const evaluatedInput = useMemo(
+    () => (evaluatedModel && effectiveDriverValues ? { timeline: evaluatedModel.timeline, historicals: evaluatedModel.historicals, driverValues: effectiveDriverValues } : null),
+    [evaluatedModel, effectiveDriverValues],
+  );
+  const evaluation = useMemo(() => {
+    if (!schema || !evaluatedInput) return null;
+    return evaluateModel(schema, evaluatedInput);
+  }, [schema, evaluatedInput]);
 
   // Persists the active scenario's live evaluation as a ComputedResult — "computed state is a
   // cache, not a source" from the architecture contract. Auto mode only: manual mode's frozen
@@ -790,6 +799,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     { value: 'financials', label: 'Financials' },
     { value: 'summary', label: 'Summary' },
     { value: 'analyses', label: 'Analyses' },
+    { value: 'sensitivity', label: 'Sensitivity' },
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
   ];
   const topNavValue = isFinancialsTab ? 'financials' : tab;
@@ -1486,6 +1496,16 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             onUpdateLboCase={updateLboCase}
             onUpdateLboFinancing={updateLboFinancing}
             onRemoveLboCase={removeLboCase}
+          />
+        ) : null
+      ) : tab === 'sensitivity' ? (
+        evaluatedInput ? (
+          <SensitivityPanel
+            key={model.id}
+            schema={schema}
+            model={evaluatedInput}
+            baseline={evaluation}
+            scenarioName={activeScenario?.name ?? 'Base case'}
           />
         ) : null
       ) : tab === 'compare' ? (
