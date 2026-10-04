@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Accordion, Card, Switch } from '@basis/design-system';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
-import type { AnalysisSettings, DcfInputs, LboCase, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
+import type { AnalysisSettings, DcfInputs, LboCase, LboFinancingInputs, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
 import type { SeedLboCaseParams } from '../../../lib/lbo';
 import { DcfPanel } from './DcfPanel';
@@ -21,7 +21,8 @@ interface AnalysesPanelProps {
   onOpenStatementDefinitions: () => void;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'leverageLinkedTrancheId'>>) => void;
+  onUpdateLboFinancing: (scenarioId: ScenarioKey, patch: Partial<LboFinancingInputs>) => void;
   onRemoveLboCase: () => void;
 }
 
@@ -42,6 +43,7 @@ export function AnalysesPanel({
   lboCase,
   onCreateLboCase,
   onUpdateLboCase,
+  onUpdateLboFinancing,
   onRemoveLboCase,
 }: AnalysesPanelProps) {
   const enabledIds = analysisSettings?.enabledAnalysisIds ?? [];
@@ -90,6 +92,7 @@ export function AnalysesPanel({
         lboCase={lboCase}
         onCreateLboCase={onCreateLboCase}
         onUpdateLboCase={onUpdateLboCase}
+        onUpdateLboFinancing={onUpdateLboFinancing}
         onRemoveLboCase={onRemoveLboCase}
         onSchemaUpdated={onSchemaUpdated}
         onOpenStatementDefinitions={onOpenStatementDefinitions}

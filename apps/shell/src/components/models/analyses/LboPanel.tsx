@@ -6,7 +6,7 @@ import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
-import { computeLboOutput, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
+import { computeEntryLtmEbitda, computeLboOutput, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 import type { LineValues } from '../../../lib/computedCache';
@@ -18,7 +18,10 @@ interface LboPanelProps {
   activeScenarioId: ScenarioKey;
   lboCase: LboCase | null;
   onCreateLboCase: (params: Omit<SeedLboCaseParams, 'baseSchema' | 'baseTimeline' | 'baseEvaluation'>) => void;
-  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) => void;
+  onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'leverageLinkedTrancheId'>>) => void;
+  /** Merged into the stored case's financing for that scenario (see lib/lbo.ts's
+   *  applyLboFinancingPatch) — never a whole financing record built from this render's props. */
+  onUpdateLboFinancing: (scenarioId: ScenarioKey, patch: Partial<LboFinancingInputs>) => void;
   onRemoveLboCase: () => void;
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
@@ -44,14 +47,20 @@ function parsePercent(text: string): number | null {
   return n === null ? null : n / 100;
 }
 
+// Both fields commit only when the parsed value actually changed — focusing and leaving a field
+// must not write anything, or it would pin a scenario's value and cut it off from Base.
 function NumberField({ value, onCommit, suffix }: { value: number | null; onCommit: (next: number | null) => void; suffix?: string }) {
   const [text, setText] = useState(() => (value === null ? '' : String(value)));
+  const commit = () => {
+    const next = parseNumber(text);
+    if (next !== value) onCommit(next);
+  };
   return (
     <Input
       size="sm" mono type="number" selectOnFocus value={text}
       onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') onCommit(parseNumber(text)); }}
-      onBlur={() => onCommit(parseNumber(text))}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
+      onBlur={commit}
       suffix={suffix}
       style={{ width: 110 }}
     />
@@ -60,12 +69,18 @@ function NumberField({ value, onCommit, suffix }: { value: number | null; onComm
 
 function PercentField({ value, onCommit }: { value: number | null; onCommit: (next: number | null) => void }) {
   const [text, setText] = useState(() => (value === null ? '' : String(value * 100)));
+  const commit = () => {
+    const next = parsePercent(text);
+    // Compared through the same text round-trip the field displays, so float noise (0.07 * 100)
+    // doesn't read as an edit.
+    if (next === null ? value !== null : value === null || parsePercent(String(value * 100)) !== next) onCommit(next);
+  };
   return (
     <Input
       size="sm" mono type="number" selectOnFocus value={text}
       onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => { if (e.key === 'Enter') onCommit(parsePercent(text)); }}
-      onBlur={() => onCommit(parsePercent(text))}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
+      onBlur={commit}
       style={{ width: 90 }}
     />
   );
@@ -89,7 +104,7 @@ const PROJECTION_LABELS: Record<(typeof PROJECTION_ROWS)[number], string> = {
  * convention as DCF's own WACC/terminal growth.
  */
 export function LboPanel({
-  schema, model, evaluation, activeScenarioId, lboCase, onCreateLboCase, onUpdateLboCase, onRemoveLboCase, onSchemaUpdated, onOpenStatementDefinitions,
+  schema, model, evaluation, activeScenarioId, lboCase, onCreateLboCase, onUpdateLboCase, onUpdateLboFinancing, onRemoveLboCase, onSchemaUpdated, onOpenStatementDefinitions,
 }: LboPanelProps) {
   const [entryPeriodIndex, setEntryPeriodIndex] = useState(model.timeline.length - 1);
   const [horizonYears, setHorizonYears] = useState(DEFAULT_HORIZON_YEARS);
@@ -213,17 +228,17 @@ export function LboPanel({
     onUpdateLboCase({ schema: regenerateDebtSchedule(nextSchema, periodsPerYear, false), ...extraPatch });
   }
 
-  // Scenario-scoped: only the ACTIVE scenario's entry in `financing` is patched, sparse against
-  // 'base' for every other field — same per-field convention ModelWorkspaceScreen's own
-  // updateDcfInputs uses for WACC/terminal growth.
+  // Scenario-scoped: only the fields edited are stored on the ACTIVE scenario's entry, so every
+  // other field keeps cascading from Base (see lib/lbo.ts's applyLboFinancingPatch).
   function updateFinancing(patch: Partial<LboFinancingInputs>) {
-    const current = lboCase!.financing[activeScenarioId] ?? financing;
-    onUpdateLboCase({ financing: { ...lboCase!.financing, [activeScenarioId]: { ...current, ...patch } } });
+    onUpdateLboFinancing(activeScenarioId, patch);
   }
 
   const tranches = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
   const leverageLinkedTranche = tranches.find((t) => t.id === lboCase.leverageLinkedTrancheId);
-  const liveEntryEbitda = output.projection[0]?.ebitda ?? null;
+  const liveEntryEbitda = computeEntryLtmEbitda(schema, evaluation, model.timeline, lboCase.entryPeriodIndex);
+  const entryTotalDebt = output.projection[0]?.totalDebt ?? null;
+  const caseHorizonYears = (lboCase.timeline.length - 1) / periodsPerYear;
   const liveTermLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, liveEntryEbitda);
 
   function addTranche() {
@@ -268,12 +283,12 @@ export function LboPanel({
     <div key={activeScenarioId} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-          Entry: {entryPeriodLabel} · {lboCase.timeline.length - 1}yr horizon
+          Entry: {entryPeriodLabel} · {Number(caseHorizonYears.toFixed(2))}yr horizon
         </span>
         {confirmRemove ? (
           <span style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
             <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>Delete this LBO case?</span>
-            <Button size="sm" variant="danger" onClick={onRemoveLboCase}>Delete</Button>
+            <Button size="sm" variant="danger" onClick={() => { setConfirmRemove(false); onRemoveLboCase(); }}>Delete</Button>
             <Button size="sm" variant="secondary" onClick={() => setConfirmRemove(false)}>Cancel</Button>
           </span>
         ) : (
@@ -284,10 +299,10 @@ export function LboPanel({
       <Card title="Financing" icon="landmark" padding="md">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-6)' }}>
-            <Field label="Leverage" hint="× entry EBITDA — sizes the Term Loan, live">
+            <Field label="Leverage" hint="× LTM entry EBITDA — sizes the Term Loan, live">
               <NumberField value={financing.leverageMultiple} onCommit={(v) => v !== null && updateFinancing({ leverageMultiple: v })} suffix="x" />
             </Field>
-            <Field label="Transaction expenses" hint="% of entry EBITDA">
+            <Field label="Transaction expenses" hint="% of LTM entry EBITDA">
               <PercentField value={financing.transactionExpensesPct} onCommit={(v) => updateFinancing({ transactionExpensesPct: v })} />
             </Field>
           </div>
@@ -419,8 +434,11 @@ export function LboPanel({
       </Card>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-5)' }}>
-        <MetricCard label="Entry EBITDA" value={formatPeriodValue(liveEntryEbitda, 'number')} />
-        <MetricCard label="Entry Leverage" value={financing.leverageMultiple !== null ? `${financing.leverageMultiple.toFixed(2)}x` : '—'} />
+        <MetricCard label="Entry EBITDA (LTM)" value={formatPeriodValue(liveEntryEbitda, 'number')} />
+        <MetricCard
+          label="Entry Leverage"
+          value={entryTotalDebt !== null && liveEntryEbitda !== null && liveEntryEbitda > 0 ? `${(entryTotalDebt / liveEntryEbitda).toFixed(2)}x` : '—'}
+        />
       </div>
     </div>
   );

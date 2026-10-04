@@ -16,11 +16,22 @@ export class IndexedDbLboCaseRepository implements LboCaseRepository {
   }
 
   async update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase> {
+    return this.updateWith(modelId, () => patch);
+  }
+
+  async updateWith(
+    modelId: string,
+    buildPatch: (existing: LboCase) => Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>,
+  ): Promise<LboCase> {
     const db = await openBasisDb();
-    const existing = await db.get('lboCases', modelId);
+    // One readwrite transaction for the read and the write, so IndexedDB serializes concurrent
+    // updates instead of letting them interleave.
+    const tx = db.transaction('lboCases', 'readwrite');
+    const existing = await tx.store.get(modelId);
     if (!existing) throw new Error(`LboCase not found for model: ${modelId}`);
-    const updated: LboCase = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-    await db.put('lboCases', updated);
+    const updated: LboCase = { ...existing, ...buildPatch(existing), updatedAt: new Date().toISOString() };
+    await tx.store.put(updated);
+    await tx.done;
     return updated;
   }
 

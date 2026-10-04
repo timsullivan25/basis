@@ -1,4 +1,4 @@
-import type { CreateLboCaseInput, LboCase, LboFinancingInputs, LboOutput, ScenarioKey, StatementSchema, Timeline, TimelinePeriod } from '../data';
+import type { CreateLboCaseInput, LboCase, LboFinancingByScenario, LboFinancingInputs, LboOutput, PeriodType, ScenarioKey, StatementSchema, Timeline, TimelinePeriod } from '../data';
 import type { LineValues } from './computedCache';
 import { findSummaryLine, type SummaryConcept } from './summaryLines';
 import { createLboStatementSchema, findMinCashTargetDriverId } from './lboStatementSchema';
@@ -43,18 +43,81 @@ const DEFAULT_FINANCING: LboFinancingInputs = {
 };
 
 /** A scenario's effective financing inputs — 'base' is ground truth, a named scenario's entry is
- *  sparse against it per-field, same shape and reason as lib/dcf.ts's own effectiveDcfInputs. */
-export function effectiveLboFinancing(financing: Record<ScenarioKey, LboFinancingInputs>, scenarioId: ScenarioKey): LboFinancingInputs {
+ *  sparse against it per-field. Unlike lib/dcf.ts's effectiveDcfInputs, a field is overridden by
+ *  being PRESENT, not by being non-null: several of these fields give `null` a real meaning ("No
+ *  expansion" for exitMultiple, "no transaction expenses" for transactionExpensesPct), so a
+ *  scenario has to be able to set null over a non-null Base value. */
+export function effectiveLboFinancing(financing: LboFinancingByScenario, scenarioId: ScenarioKey): LboFinancingInputs {
   const base = financing.base ?? DEFAULT_FINANCING;
   if (scenarioId === 'base') return base;
-  const override = financing[scenarioId];
+  const override = financing[scenarioId] ?? {};
+  const pick = <K extends keyof LboFinancingInputs>(key: K): LboFinancingInputs[K] =>
+    override[key] !== undefined ? (override[key] as LboFinancingInputs[K]) : base[key];
   return {
-    leverageMultiple: override?.leverageMultiple ?? base.leverageMultiple,
-    targetIrrs: override?.targetIrrs ?? base.targetIrrs,
-    exitMultiple: override?.exitMultiple ?? base.exitMultiple,
-    exitPeriodIndex: override?.exitPeriodIndex ?? base.exitPeriodIndex,
-    transactionExpensesPct: override?.transactionExpensesPct ?? base.transactionExpensesPct,
+    leverageMultiple: pick('leverageMultiple'),
+    targetIrrs: pick('targetIrrs'),
+    exitMultiple: pick('exitMultiple'),
+    exitPeriodIndex: pick('exitPeriodIndex'),
+    transactionExpensesPct: pick('transactionExpensesPct'),
   };
+}
+
+/** Applies one financing edit to one scenario. 'base' stays a complete record; any other scenario
+ *  stores only the fields actually edited, so later Base edits keep cascading into every field the
+ *  scenario never touched. Pure, so the repository can run it against the STORED record inside
+ *  one transaction (see LboCaseRepository.updateWith) — two quick edits then never overwrite each
+ *  other the way a read-from-props-then-write would. */
+export function applyLboFinancingPatch(
+  financing: LboFinancingByScenario,
+  scenarioId: ScenarioKey,
+  patch: Partial<LboFinancingInputs>,
+): LboFinancingByScenario {
+  if (scenarioId === 'base') return { ...financing, base: { ...(financing.base ?? DEFAULT_FINANCING), ...patch } };
+  return { ...financing, [scenarioId]: { ...(financing[scenarioId] ?? {}), ...patch } };
+}
+
+export interface FlowPoint {
+  value: number | null;
+  type: PeriodType;
+}
+
+/** Last-twelve-months total of a flow (EBITDA), given its periods oldest → newest ending at the
+ *  period of interest. On an annual model that is just the last period; on a quarterly one it is
+ *  the last four quarters summed — every multiple here (leverage, entry, exit, transaction
+ *  expenses) is quoted against LTM, never against a single quarter. Only trailing periods of the
+ *  same type as the last one count. With fewer than a full year of them (e.g. the second quarter
+ *  of a model's history), it annualizes what is there — a run-rate — rather than going null.
+ *  Null if any period in the window is unresolved. */
+export function lastTwelveMonths(points: FlowPoint[]): number | null {
+  const last = points[points.length - 1];
+  if (!last) return null;
+  const periodsPerYear = periodsPerYearFor(last.type);
+  let sum = 0;
+  let count = 0;
+  for (let i = points.length - 1; i >= 0 && count < periodsPerYear && points[i].type === last.type; i--) {
+    const value = points[i].value;
+    if (value === null) return null;
+    sum += value;
+    count++;
+  }
+  return (sum * periodsPerYear) / count;
+}
+
+/** The base model's EBITDA for up to a year of periods ending at (and including) the entry period. */
+function baseEbitdaPoints(baseSchema: StatementSchema, baseEvaluation: LineValues, baseTimeline: Timeline, entryIndex: number): FlowPoint[] {
+  const ebitdaLine = findSummaryLine(baseSchema, 'ebitda');
+  const points: FlowPoint[] = [];
+  for (let i = Math.max(0, entryIndex - 3); i <= entryIndex && i < baseTimeline.length; i++) {
+    points.push({ value: ebitdaLine ? baseEvaluation.getValue(ebitdaLine.id, i) : null, type: baseTimeline[i].type });
+  }
+  return points;
+}
+
+/** LTM EBITDA at the entry period — what leverage, transaction expenses and the entry multiple are
+ *  all quoted against. Exported so LboPanel shows the same number the math uses. */
+export function computeEntryLtmEbitda(baseSchema: StatementSchema, baseEvaluation: LineValues, baseTimeline: Timeline, entryPeriodIndex: number): number | null {
+  const entryIndex = Math.min(entryPeriodIndex, baseTimeline.length - 1);
+  return lastTwelveMonths(baseEbitdaPoints(baseSchema, baseEvaluation, baseTimeline, entryIndex));
 }
 
 export interface SeedLboCaseParams {
@@ -79,7 +142,7 @@ export function seedLboCase(params: SeedLboCaseParams): CreateLboCaseInput {
   const entryPeriod = baseTimeline[entryPeriodIndex];
   const periodsPerYear = periodsPerYearFor(entryPeriod.type);
 
-  const ebitda = readConcept(baseSchema, baseEvaluation, 'ebitda', entryPeriodIndex);
+  const ebitda = computeEntryLtmEbitda(baseSchema, baseEvaluation, baseTimeline, entryPeriodIndex);
   const existingNetDebt = readConcept(baseSchema, baseEvaluation, 'netDebt', entryPeriodIndex);
   const leverageMultiple =
     existingNetDebt !== null && ebitda !== null && ebitda > 0 ? Math.max(existingNetDebt / ebitda, 0) : DEFAULT_LEVERAGE_MULTIPLE;
@@ -176,6 +239,7 @@ export function buildLboEvaluationInputs(
 
   const revenue = readConcept(baseSchema, baseEvaluation, 'revenue', entryIndex);
   const ebitda = readConcept(baseSchema, baseEvaluation, 'ebitda', entryIndex);
+  const ltmEbitda = computeEntryLtmEbitda(baseSchema, baseEvaluation, baseTimeline, entryIndex);
   const da = readConcept(baseSchema, baseEvaluation, 'da', entryIndex);
   const capex = readConcept(baseSchema, baseEvaluation, 'capex', entryIndex);
   const nwc = readConcept(baseSchema, baseEvaluation, 'nwc', entryIndex);
@@ -187,7 +251,7 @@ export function buildLboEvaluationInputs(
   const totalDebtLine = findSummaryLine(lboCase.schema, 'totalDebt');
   const children = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
   const termTranche = children.find((l) => l.id === lboCase.leverageLinkedTrancheId);
-  const termLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, ebitda);
+  const termLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, ltmEbitda);
 
   let schema = lboCase.schema;
   if (termTranche && termLoanFaceValue !== null) {
@@ -295,15 +359,24 @@ export function computeAbilityToPay(
   timeline: Timeline,
   evaluation: LineValues,
   lineIds: { ebitda: string; totalDebt: string; cash: string },
+  /** The base model's EBITDA for the periods just before entry (oldest → newest), so an exit
+   *  inside the first year can still read a full LTM window. Empty is fine on an annual model. */
+  priorEbitda: FlowPoint[] = [],
 ): AbilityToPayRow[] {
   const periodsPerYear = periodsPerYearFor(timeline[0]?.type ?? 'FY');
-  const entryEbitda = evaluation.getValue(lineIds.ebitda, 0);
   const exitIndex = financing.exitPeriodIndex ?? timeline.length - 1;
-  const exitEbitda = evaluation.getValue(lineIds.ebitda, exitIndex);
+  const lboEbitda: FlowPoint[] = timeline
+    .slice(0, exitIndex + 1)
+    .map((p, i) => ({ value: evaluation.getValue(lineIds.ebitda, i), type: p.type }));
+  const entryEbitda = lastTwelveMonths([...priorEbitda, ...lboEbitda.slice(0, 1)]);
+  const exitEbitda = lastTwelveMonths([...priorEbitda, ...lboEbitda]);
   const exitTotalDebt = evaluation.getValue(lineIds.totalDebt, exitIndex);
   const exitCash = evaluation.getValue(lineIds.cash, exitIndex);
   const exitNetDebt = exitTotalDebt !== null && exitCash !== null ? exitTotalDebt - exitCash : null;
-  const debtRaised = entryEbitda !== null && financing.leverageMultiple !== null ? financing.leverageMultiple * entryEbitda : null;
+  // Every tranche's balance at close, not just the leverage-sized one: a tranche the user added
+  // counts here exactly as it counts in exit debt, and with no leverage-linked tranche at all,
+  // leverageMultiple funds nothing.
+  const debtRaised = evaluation.getValue(lineIds.totalDebt, 0);
   const transactionExpenses = financing.transactionExpensesPct !== null && entryEbitda !== null ? financing.transactionExpensesPct * entryEbitda : 0;
   const holdingPeriodYears = exitIndex / periodsPerYear;
 
@@ -350,6 +423,8 @@ export function computeLboOutput(
   baseTimeline: Timeline,
 ): LboOutput {
   const built = buildLboEvaluationInputs(lboCase, scenarioId, baseSchema, baseEvaluation, baseTimeline);
+  const entryIndex = Math.min(lboCase.entryPeriodIndex, baseTimeline.length - 1);
+  const priorEbitda = baseEbitdaPoints(baseSchema, baseEvaluation, baseTimeline, entryIndex).slice(0, -1);
   const evaluation = evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues });
   const financing = effectiveLboFinancing(lboCase.financing, scenarioId);
 
@@ -371,7 +446,7 @@ export function computeLboOutput(
 
   const abilityToPay =
     ebitdaId && totalDebtId && cashId
-      ? computeAbilityToPay(financing, built.timeline, evaluation, { ebitda: ebitdaId, totalDebt: totalDebtId, cash: cashId })
+      ? computeAbilityToPay(financing, built.timeline, evaluation, { ebitda: ebitdaId, totalDebt: totalDebtId, cash: cashId }, priorEbitda)
       : [];
 
   return { projection, abilityToPay };

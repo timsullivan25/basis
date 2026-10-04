@@ -640,6 +640,11 @@ export interface LboFinancingInputs {
   transactionExpensesPct: number | null;
 }
 
+/** Per-scenario financing: 'base' is a complete record; every other scenario holds only the fields
+ *  it overrides. A field is overridden by being present — an explicit `null` overrides too (see
+ *  lib/lbo.ts's effectiveLboFinancing). */
+export type LboFinancingByScenario = { base: LboFinancingInputs } & Record<ScenarioKey, Partial<LboFinancingInputs>>;
+
 /**
  * A standalone LBO projection — deliberately NOT a second Model row (Model is a strict singleton
  * per company, "never a peer among several" — see its own doc comment). Everything below Model in
@@ -704,7 +709,7 @@ export interface LboCase {
   leverageLinkedTrancheId: string | null;
   /** Per-scenario — 'base' is ground truth and never cascades further; a named scenario's entry
    *  is sparse against it, same semantics as AnalysisSettings.dcfInputs. */
-  financing: Record<ScenarioKey, LboFinancingInputs>;
+  financing: LboFinancingByScenario;
   createdAt: string;
   updatedAt: string;
 }
@@ -716,7 +721,7 @@ export interface CreateLboCaseInput {
   schema: StatementSchema;
   timeline: Timeline;
   leverageLinkedTrancheId: string | null;
-  financing: Record<ScenarioKey, LboFinancingInputs>;
+  financing: LboFinancingByScenario;
 }
 
 export interface LboCaseRepository {
@@ -728,6 +733,10 @@ export interface LboCaseRepository {
    *  either — see AnalysisSettingsRepository.create). */
   create(input: CreateLboCaseInput): Promise<LboCase>;
   update(modelId: string, patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase>;
+  /** Like update, but the patch is computed from the STORED record inside the same transaction —
+   *  for edits that merge into existing state (financing), so two quick edits can't each read the
+   *  same stale copy and overwrite one another. */
+  updateWith(modelId: string, buildPatch: (existing: LboCase) => Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>): Promise<LboCase>;
   remove(modelId: string): Promise<void>;
 }
 
