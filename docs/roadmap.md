@@ -1,154 +1,203 @@
-# Modeling feature roadmap
+# Roadmap
 
-Status: **running list of ideas, not a committed plan.** Unlike `backend-storage-design.md`, nothing
-here is sequenced beyond the rough tiers below, and nothing is agreed in detail — this is where we
-park ideas as we have them, and pull from when scoping the next phase. Edit freely; add new ideas
-at the bottom of whichever section fits, and move things between tiers as priorities shift.
+Status: **the plan of record, in order.** Revised 2026-10-04 from a loose idea list into a sequenced
+plan. Each phase says what it is, why it comes where it does, and what's still open. Details below
+a phase's first paragraph are working notes, not commitments; edit freely as a phase gets scoped.
 
-Started 2026-09-15, after the statement-editing convergence work (shared editing core, Edit
-schema/Edit mapping toggle) and a first pass at auditing what a "comprehensive" model still needs.
+Started 2026-09-15, after the statement-editing convergence work and a first audit of what a
+"comprehensive" model still needs.
 
-## Tier 0 — correctness (mostly done)
+## Where we are
 
-The model used to "balance" by construction, not by real linkage. Fixed:
+The core model and a first set of standalone analyses are in place, enough to be useful today:
 
-- ~~**Equity is a plug, not a roll-forward.**~~ **Done** (`3507938`) — equity is now a genuine
-  roll-forward.
-- ~~**No Change-in-NWC line in the Cash Flow Statement.**~~ **Done** (`3507938`) — real Change in
-  NWC line.
-- ~~**Generic "Checks" mechanism.**~~ **Done** (`69409bb`) — check line type with tolerance, flagged
-  in the grid. Every future overlay (an M&A/refi's sources & uses, in particular) gets a check for
-  free: one more formula line, no new plumbing.
-- ~~**Convergence indicator for circular calcs.**~~ **Done.** The engine records a per-line "didn't
-  converge" error (`lib/engine/evaluate.ts`), and it's surfaced in the workspace grid — a red
-  alert-triangle icon with the error as its tooltip (`ModelWorkspaceScreen.tsx`).
-- **Net PP&E doesn't exist as a real line — Capex and D&A are disconnected.** Decided
-  2026-09-27: add a `Net PP&E` Balance Sheet line with the roll-forward formula
-  `priorPeriod(Net PP&E) + Cash Flow Statement.Capital Expenditures - Income Statement.Depreciation
-  & Amortization` — same convention as the Retained Earnings roll-forward above — and fold it into
-  Total Assets. **Not** a Tier 1 overlay: no variable cardinality and no cross-line waterfall like
-  debt's shared cash pool, so it's a plain schema addition, not generated code. If per-asset-class
-  breakdown (buildings/machinery/land) is ever needed, that's the existing sub-lines mechanism, not
-  new architecture. The existing Balance Sheet Check validates it for free, same as equity.
+- **Model core.** Schema-driven statements, real linkage (equity roll-forward, Change in NWC,
+  generic Checks, convergence flags for circular calcs), scenarios with per-line driver overrides,
+  driver charts, and a generated Debt Schedule.
+- **Standalone analyses.** DCF, Recovery Waterfall (fulcrum security, valuation sensitivity) and
+  LBO (tranche editor, Ability-to-Pay solve). All three link live to the base model for the active
+  scenario rather than storing copies. DCF and LBO also write a versioned `AnalysisResult` cache
+  per (model, scenario) for future cross-model readers.
 
-## Tier 1 — the overlay pattern, generalized
+Expect plenty of refinement to the analyses, especially their workflow. That happens alongside the
+phases below rather than as its own phase (see [Ongoing](#ongoing-refinement)).
 
-The Debt Schedule already *is* this pattern, shipped (`9d64332`): scan the schema for eligibility, generate
-real `StatementLine`s tagged with a role, wire them with ordinary formulas, let the existing
-evaluation engine do the rest — no special-cased engine logic (see `lib/debtSchedule.ts`). Each of
-these is the same shape: an eligibility rule + a `regenerateX(schema, ...)` function + a role tag +
-a toggle in the UI. Not new architecture — the same pattern, run a few more times.
+## Sequence
 
-- **Refinancing overlay** — payoff existing debt, issue new, fees/OID/breakage costs. **Next up** in
-  this tier (PP&E moved to Tier 0 above — it's a schema addition, not an overlay). Naturally
-  "sources & uses" shaped, pairs with the Tier 0 Checks mechanism.
-- **Recapitalization overlay** — issue debt to fund a shareholder dividend. Same shape as
-  refinancing.
-- **M&A / acquisition overlay** — goodwill, purchase price allocation, pro forma combination,
-  synergies, transaction costs. Bigger lift than the others in this tier.
-- **Divestiture overlay** — carve-out / discontinued-operations treatment.
-- **NOL / tax carryforward overlay** — an alternative to building this into the core tax line;
-  frame it as an optional module a distressed/early-stage company toggles on, since it's
-  irrelevant for stable profitable names.
-- **Share count / dilution roll-forward** (buybacks, issuance, treasury method) — needed the
-  moment EPS or per-share value output matters.
-- **Lease accounting (ROU asset/liability)** — only worth it if real-estate/retail-heavy companies
-  are actually in scope. Lower priority than the rest of this tier; revisit if that changes.
+1. [Sensitivity analysis](#1-sensitivity-analysis): next.
+2. [Overlays](#2-overlays): templated sections and lines added to an existing model.
+3. [Data-dependent analyses](#3-data-dependent-analyses): public comps, relative value, PIT/PF
+   capital structure.
+4. [AI-assisted modeling](#4-ai-assisted-modeling): generated side analyses and model edits that
+   plug into existing inputs.
+5. [Portfolio-level shocks](#5-portfolio-level-shocks): one macro shock applied across every
+   company's base case.
 
-## Tier 2 — standalone analyses (mostly downstream of Tier 1)
+[Platform capabilities](#platform-capabilities-parallel-track) (Relative Value, Swap Finder,
+Holdings, etc.) run as a parallel track that can start whenever the modeling side is useful enough
+to merge into.
 
-Focus after Tier 0's PP&E addition, ahead of Tier 1's overlays — decided 2026-09-27. DCF already
-exists and works but needs refinement (not yet scoped in detail here). Sensitivity analysis comes
-after this tier; design TBD, to be discussed when we get there.
+## Principle: schedules are schema, not generated code
 
-- ~~**Recovery waterfall**~~ **Done** — worth building specifically because the Debt Schedule
-  already encodes seniority order (revolver first, then term tranches in schema order) for the
-  cash-sweep logic. A downside-scenario recovery waterfall reuses that ordering directly rather
-  than re-deriving capital structure: `orderedSeniorityTiers` groups tranches into pari passu tiers
-  by parent line (legal seniority, not cash-sweep order), `computeDistributableValue` derives
-  enterprise value from an EBITDA/Revenue multiple or a direct entry, and
-  `computeRecoveryWaterfall` distributes it senior-to-junior, pro rata within a tier, with the same
-  null-propagation discipline as the rest of this tier (a missing input leaves recovery null rather
-  than defaulting to 0). Identifies the fulcrum security (the most senior impaired claim) and shows
-  a ±20% valuation sensitivity range per claim.
-- ~~**LBO returns (IRR/MOIC)**~~ **Done** — a standalone LboCase (own schema/timeline, extended
-  5-7yr beyond the base model) with a full tranche editor (default Term Loan + Revolver, sized by
-  leverage multiple) and an "Ability to Pay" back-solve: fixes the financing package (leverage ×
-  entry EBITDA, independent of price) and a target IRR, solves backward for the max entry
-  multiple/EV, closed-form even with "no multiple expansion" (see `lib/lbo.ts`). Consistent with
-  every other analysis's own linking contract: an LboCase stores only its OWN inputs (the
-  financing package's tranches/terms, structural; leverage/target IRR/exit assumptions, per-
-  scenario via `financing: Record<ScenarioKey, LboFinancingInputs>`, same sparse-cascade-off-Base
-  convention as DCF's WACC/terminal growth) — never a copy of Revenue/EBITDA/D&A/CapEx/NWC/tax
-  rate or the Term Loan's own face value, all of which resolve live off the base model's current
-  evaluation for whichever scenario is active, every render (`buildLboEvaluationInputs`). Both DCF
-  and LBO now also write a version-stamped `AnalysisResult` cache per (model, scenario) — one row
-  per scenario, never a single ambiguous snapshot — purely for a future cross-model/cross-issuer
-  reader; neither panel ever reads its own cache back, so a stale or missing row can never show a
-  wrong number live. The leverage-linked tranche (the one `leverageMultiple` resizes) is tracked by
-  a stable `leverageLinkedTrancheId`, not positionally inferred ("first non-revolver tranche") —
-  deleting and re-adding tranches can't silently relink the wrong one. Deleting an LboCase also
-  clears its own `AnalysisResult` cache rows (`removeForAnalysis`), and re-mapping or removing a
-  model's file now cascades through `lboCases` the same way it already did for scenarios/computed
-  results/analysis settings — previously the only store a model re-upload could orphan. Creating a
-  case hard-blocks on every required concept (not just Revenue/EBITDA) since a gap in D&A/CapEx/NWC/
-  tax rate silently nulls Free Cash Flow and the whole debt-schedule sweep rather than just
-  degrading gracefully.
-- **Accretion/dilution analysis** — needs the M&A overlay first.
-- **Value-creation bridge** (growth vs. margin vs. multiple vs. deleveraging) — cheap once DCF/LBO
-  outputs exist.
-- **Trading comps / precedent transactions** — different category of problem from everything above:
-  needs external market-data ingestion, not just more schema plumbing. Keep sequenced separately,
-  don't bundle with the rest of this tier.
-- **Sensitivity analysis** — next after this tier's analyses. Design TBD.
+Supporting schedules with a predictable shape (PP&E, NWC, opex build-ups and the like) are built by
+extending the model schema, not by an automated generator. Generation is reserved for structures
+whose **number of lines is unpredictable**, which so far means the Debt Schedule (any number of
+tranches with a shared cash-sweep waterfall).
 
-## Tier 3 — workflow quality-of-life (low priority, revisit opportunistically)
+So the Net PP&E roll-forward is a schema addition: a Balance Sheet line
+`priorPeriod(Net PP&E) + Cash Flow Statement.Capital Expenditures - Income Statement.Depreciation &
+Amortization`, folded into Total Assets, validated by the existing Balance Sheet Check. Per-class
+breakdowns use the existing sub-lines mechanism. It's small enough to land alongside any phase.
+Not yet built; the default schema has Capex and D&A but no Net PP&E line.
 
-- **Step-through review in mapping** — auto-advance to the next flagged line after approving one, as
-  a lighter alternative to true bulk-approve (which probably isn't worth building — clicking a line
-  and hitting Approve isn't meaningfully slower than a bulk UI would be for most cases).
-- **Cross-company alias/mapping memory** — today, learned mapping only carries forward for the
-  *same* company's next import; a new portfolio company mapped against the same template starts
-  cold except for exact matches and the schema's own static aliases. Low priority on its own since
-  Financial Statement Definitions' aliases already cover most of this — but worth revisiting
-  alongside AI-assisted matching (below), where a cross-company "this source name has meant X
-  before" memory would compound in value.
+## 1. Sensitivity analysis
 
-## Done since this list started
+Being able to sensitize the model is a key capability. Reference points: Oracle Crystal Ball (the
+Excel add-in) and Tim's earlier [SimulationSandbox](https://github.com/timsullivan25/SimulationSandbox).
 
-- Driver charts (drag-to-edit, mockup mechanic 1a) — merged to main (`6516706`, `77018c3`).
-- Scenario driver overrides are per-line, all-or-nothing (`557b8de`).
-- Debt Schedule engine, capital structure, per-model private schemas.
+**Why it's feasible now:** `evaluateModel(schema, { timeline, historicals, driverValues })` is pure,
+and scenarios already work by layering driver overrides onto `driverValues` (`lib/scenario.ts`). A
+sensitivity run is the same move repeated: perturb some driver values, evaluate, read outputs. No
+engine changes are needed to get started.
 
-## Already planned (restated here so this doc is the single source of truth going forward)
+**Shape:**
 
-- Code review of the modeling feature, then a UI/UX pass. The pass covers: two-tier workspace nav
-  (Financials | Summary | Scenarios | DCF | Recovery, with Financials' own statement sub-nav), the
-  persistent "Live output" rail from the mockup (never built), mockup 1b's driver-first workspace
-  (depends on the two-tier nav), and showing a driver's value inline in the financials grid.
-- Known rough edge: `FormulaInput` silently discards an invalid formula if the row is collapsed
-  before blur.
-- Quarterly/semi-annual modeling with annual aggregation, expand/collapse.
-- AI-assisted parsing of a generic (non-template) financial upload. In progress on
-  `feature/ai-import`; first pass is **historicals only**, extracted into the Basis Template shape
-  and fed through the existing mapping flow. Deferred from that first pass, to revisit:
-  - **Sub-lines for debt tranches and segments.** A real model breaks these out (e.g. per-tranche
-    debt, per-segment revenue); the importer will likely need to *propose schema additions* as part
-    of the mapping phase, not just map onto the existing schema.
-  - **Projections.** Real models carry them (with scenario cases); import them in a later pass.
-  - **Post-mapping AI passes** (nice to have): flag likely errors in mapped lines, and suggest
-    fits for unmapped lines with a confidence level.
-  - **Confirming where the financials are** when the workbook layout is ambiguous.
+- **Inputs to sensitize.** The user picks drivers (with in-app suggested defaults: revenue growth,
+  margins, capex %, rates, exit multiple and so on). For each, a range and/or a function: low/high
+  bounds and step count, ± percent around base, or a distribution (uniform, normal, triangular) for
+  sampling. Decide whether a shift applies to every projected period or a chosen window.
+- **Outputs to monitor.** Model lines at a period (EBITDA, FCF, leverage, ending cash, min
+  liquidity) and analysis outputs (DCF value, LBO IRR/MOIC, recovery %), again with suggested
+  defaults.
+- **One at a time.** Step each input through its range with everything else at base, record the
+  outputs, and rank inputs by output swing in a **tornado / butterfly chart**.
+- **All together.** Vary every input at once to see the full range of outcomes, including
+  interactions: a deterministic grid (feasible for 2-3 inputs, also gives the classic two-way data
+  table) or Monte Carlo sampling (distribution / histogram of outputs, percentiles, probability of
+  breaching a threshold such as a leverage covenant).
+
+**Running on top of analyses:**
+
+- **Step 1: outputs only.** Because DCF, LBO and Recovery all resolve live off the model's
+  evaluation, a sensitivity run can capture analysis outputs as model inputs move, with the
+  linking doing the work. Each iteration has to call the analysis's pure compute function directly
+  rather than going through the panel UI.
+- **Step 2: analysis variables as inputs.** Let the analyses' own inputs (WACC, terminal growth,
+  exit multiple, leverage, target IRR) be sensitized alongside model drivers. They're already
+  stored per scenario, so the same override layering applies.
+
+**Open questions:**
+
+- Where a run lives: a saved "sensitivity case" per model (like an LboCase) vs. ad hoc.
+- Performance budget for Monte Carlo. Full re-evaluation per sample in the browser may need a Web
+  Worker and a cap on iterations; check before choosing sample counts.
+- Whether to support correlated inputs (e.g. growth and margin moving together) in v1.
+- Whether results are cached the way `AnalysisResult` is, for later portfolio-level reuse.
+
+## 2. Overlays
+
+Overlays add **templated sections and lines** to an existing model to reflect a transaction or
+situation, then use ordinary formulas and the existing engine. The Debt Schedule is the pattern
+already shipped (eligibility scan, generated `StatementLine`s tagged with a role, a UI toggle; see
+`lib/debtSchedule.ts`). Per the principle above, prefer a static template unless the line count is
+genuinely variable. Every overlay with a sources & uses gets a Check for free.
+
+Candidates, roughly in order:
+
+- **Refinancing:** pay off existing debt, issue new, fees/OID/breakage.
+- **Recapitalization:** issue debt to fund a dividend. Same shape as refinancing.
+- **M&A / acquisition:** goodwill, purchase price allocation, pro forma combination, synergies,
+  transaction costs. The biggest lift here, and the prerequisite for accretion/dilution.
+- **Divestiture:** carve-out / discontinued operations.
+- **NOL / tax carryforward:** an optional module for distressed or early-stage names.
+- **Share count / dilution:** buybacks, issuance, treasury method. Needed once EPS or per-share
+  value matters.
+- **Lease accounting (ROU asset/liability):** only if real-estate or retail-heavy names are in
+  scope.
+
+## 3. Data-dependent analyses
+
+Analyses that need data beyond a single company's model, so they're likely gated on market-data
+access (see the platform track):
+
+- **Public comps** (trading comps; precedent transactions fit here too).
+- **Relative value.**
+- **PIT or PF capital structure:** point-in-time and pro forma views of the capital stack.
+- **Accretion/dilution** once the M&A overlay exists, and a **value-creation bridge** (growth vs.
+  margin vs. multiple vs. deleveraging), which is cheap once DCF/LBO outputs exist.
+
+## 4. AI-assisted modeling
+
+Use AI to do more of the modeling work, always landing in existing infrastructure rather than
+free-floating output:
+
+- Generate **side analyses** that plug directly into model inputs or drivers.
+- **Edit the model**: propose schema or driver changes for the user to accept.
 - AI-generated custom modeling structures (schema generation).
 
-## Open questions / notes
+The AI import follow-ups below are related and could share plumbing.
 
-- `docs/backend-storage-design.md` describes client-side debounced autosave as the intended pattern
-  once a real backend exists ("Decision: no sync engine — write-through autosave instead"). We
-  tried an eager-debounced-save for schema edits in this session and reverted it back to explicit
-  Save, specifically because it shipped without any undo/restore capability behind it. Worth
-  reconciling these two before the backend migration: autosave-for-durability and undo/versioning
-  are separable concerns, but autosave without the latter is a net negative, as this session found.
-- The existing Snapshot/History feature only supports *viewing* an old snapshot, not restoring from
-  one — there's no rollback action anywhere in the codebase today. Any future move back toward
-  autosave for schema edits should probably wait until real restore exists.
+## 5. Portfolio-level shocks
+
+An app-level modeling capability, possibly more deterministic than phase 4. Define a macro shock
+(recession as slower growth, inflation as higher expenses, a rate move, etc.), apply it broadly
+across every company's **base case**, non-destructively, and record the impact on outputs like
+leverage and FCF to **identify the most exposed companies**.
+
+Builds directly on phase 1: a shock is a sensitivity input applied portfolio-wide, and the
+per-(model, scenario) result cache is the natural place to read outcomes from. Open question: how a
+generic shock maps onto company models whose schemas differ (likely via the standard concepts
+analyses already require, such as Revenue, EBITDA and interest expense).
+
+## Platform capabilities (parallel track)
+
+Non-modeling capabilities that will merge in, possibly in parallel with the phases above since the
+modeling side is close to useful on its own:
+
+- Relative Value
+- Swap Finder
+- Holdings
+- Data Sheets
+- Market Data
+- Linking to memos / recommendations
+
+Most need additional data. Even before that data exists, it helps to know these are coming so the
+framework accommodates them: an issuer/security identity that models, holdings and market data all
+key off; a place for external market data to land; and model outputs (the `AnalysisResult` cache)
+readable across issuers.
+
+## Ongoing refinement
+
+Picked up opportunistically between phases:
+
+- **Analysis workflow refinement** for DCF, LBO and Recovery. DCF in particular hasn't been scoped
+  in detail.
+- **UI/UX pass:** two-tier workspace nav (Financials | Summary | Scenarios | analyses, with
+  Financials' own statement sub-nav), the persistent "Live output" rail from the mockup, mockup
+  1b's driver-first workspace, and a driver's value shown inline in the grid.
+- **Quarterly / semi-annual modeling** with annual aggregation, expand/collapse.
+- **AI import follow-ups** (first pass, historicals only, is on `feature/ai-import`): sub-lines for
+  debt tranches and segments (likely proposing schema additions during mapping), importing
+  projections with scenario cases, post-mapping checks (likely errors, suggested fits with
+  confidence), and confirming where the financials are in an ambiguous workbook.
+- **Mapping QoL:** step-through review (auto-advance to the next flagged line after approving), and
+  cross-company alias memory, which compounds with AI-assisted matching.
+- **Known rough edge:** `FormulaInput` silently discards an invalid formula if the row is collapsed
+  before blur.
+
+## Open questions
+
+- **Autosave vs. undo.** `docs/backend-storage-design.md` intends write-through autosave once a real
+  backend exists. We tried eager debounced save for schema edits and reverted to explicit Save
+  because there was no undo/restore behind it. Autosave and versioning are separable, but autosave
+  without restore is a net negative. Reconcile before the backend migration.
+- **No restore from snapshots.** Snapshot/History only supports viewing an old snapshot; there's no
+  rollback anywhere. Any move back toward autosave should wait for real restore.
+
+## Done
+
+- **Correctness:** equity roll-forward and real Change in NWC (`3507938`), generic Checks
+  (`69409bb`), convergence indicator for circular calcs.
+- **Model:** Debt Schedule engine and capital structure (`9d64332`), per-model private schemas,
+  scenario driver overrides per line (`557b8de`), driver charts (`6516706`, `77018c3`).
+- **Analyses:** Recovery Waterfall, LBO returns with its review fixes (PRs #14 to #16), DCF.
