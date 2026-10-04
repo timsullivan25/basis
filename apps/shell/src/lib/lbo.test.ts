@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildLboEvaluationInputs, computeAbilityToPay, computeLboOutput, effectiveLboFinancing, seedLboCase, type SeedLboCaseParams } from './lbo';
+import { applyLboFinancingPatch, buildLboEvaluationInputs, computeAbilityToPay, computeEntryLtmEbitda, computeLboOutput, effectiveLboFinancing, lastTwelveMonths, seedLboCase, type SeedLboCaseParams } from './lbo';
 import { createLboStatementSchema } from './lboStatementSchema';
 import { findSummaryLine } from './summaryLines';
 import { evaluateModel } from './engine/evaluate';
-import type { LboCase, LboFinancingInputs, StatementLine, StatementSchema, Timeline } from '../data';
+import { addChildLine, removeChildLine } from './statementLineChildren';
+import { regenerateDebtSchedule } from './debtSchedule';
+import type { LboCase, LboFinancingByScenario, LboFinancingInputs, StatementLine, StatementSchema, Timeline } from '../data';
 import type { LineValues } from './computedCache';
 
 function line(id: string, name: string, opts: Partial<StatementLine> = {}): StatementLine {
@@ -231,9 +233,9 @@ describe('buildLboEvaluationInputs + evaluateModel (end to end)', () => {
 });
 
 describe('effectiveLboFinancing', () => {
-  const financing: Record<string, LboFinancingInputs> = {
-    base: { leverageMultiple: 4, targetIrrs: [0.15, 0.2], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: 0.02 },
-    downside: { leverageMultiple: 3, targetIrrs: [], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: null },
+  const financing: LboFinancingByScenario = {
+    base: { leverageMultiple: 4, targetIrrs: [0.15, 0.2], exitMultiple: 9, exitPeriodIndex: null, transactionExpensesPct: 0.02 },
+    downside: { leverageMultiple: 3 },
   };
 
   it('base is ground truth', () => {
@@ -243,7 +245,15 @@ describe('effectiveLboFinancing', () => {
   it('a named scenario overrides only its own set fields, cascading the rest from base', () => {
     const effective = effectiveLboFinancing(financing, 'downside');
     expect(effective.leverageMultiple).toBe(3);
-    expect(effective.transactionExpensesPct).toBe(0.02); // cascaded from base, not downside's own null
+    expect(effective.transactionExpensesPct).toBe(0.02);
+    expect(effective.exitMultiple).toBe(9);
+  });
+
+  it('an explicit null override wins over a non-null base value ("No expansion", no transaction expenses)', () => {
+    const effective = effectiveLboFinancing({ ...financing, downside: { exitMultiple: null, transactionExpensesPct: null } }, 'downside');
+    expect(effective.exitMultiple).toBeNull();
+    expect(effective.transactionExpensesPct).toBeNull();
+    expect(effective.leverageMultiple).toBe(4);
   });
 
   it('a scenario with no entry at all cascades fully from base', () => {
@@ -325,5 +335,92 @@ describe('computeLboOutput', () => {
     }), BASE_TIMELINE);
 
     expect(upside.projection[0].totalDebt).toBeGreaterThan(base.projection[0].totalDebt!);
+  });
+});
+
+describe('applyLboFinancingPatch', () => {
+  const financing: LboFinancingByScenario = {
+    base: { leverageMultiple: 4, targetIrrs: [0.2], exitMultiple: null, exitPeriodIndex: null, transactionExpensesPct: 0.02 },
+  };
+
+  it('stores only the edited field on a named scenario, so later Base edits still reach it', () => {
+    const edited = applyLboFinancingPatch(financing, 'upside', { leverageMultiple: 5 });
+    expect(edited.upside).toEqual({ leverageMultiple: 5 });
+    const baseEdited = applyLboFinancingPatch(edited, 'base', { transactionExpensesPct: 0.03 });
+    expect(effectiveLboFinancing(baseEdited, 'upside')).toMatchObject({ leverageMultiple: 5, transactionExpensesPct: 0.03 });
+  });
+
+  it('merges successive edits rather than replacing the scenario entry', () => {
+    const once = applyLboFinancingPatch(financing, 'upside', { leverageMultiple: 5 });
+    const twice = applyLboFinancingPatch(once, 'upside', { exitMultiple: 8 });
+    expect(twice.upside).toEqual({ leverageMultiple: 5, exitMultiple: 8 });
+  });
+});
+
+describe('LTM EBITDA', () => {
+  const quarters: Timeline = Array.from({ length: 5 }, (_, i) => ({
+    id: `q${i}`, type: 'Quarter' as const, endDate: `2024-0${i + 1}-28`, label: `Q${i + 1}`, kind: 'actual' as const,
+  }));
+
+  it('sums the last four quarters on a quarterly model', () => {
+    const evaluation = lineValues({ ebitda: [10, 20, 30, 40, 50] });
+    expect(computeEntryLtmEbitda(baseSchema(), evaluation, quarters, 4)).toBe(20 + 30 + 40 + 50);
+  });
+
+  it('is just the period itself on an annual model', () => {
+    expect(computeEntryLtmEbitda(baseSchema(), lineValues({ ebitda: [400, 440] }), BASE_TIMELINE, 1)).toBe(440);
+  });
+
+  it('annualizes a short run of quarters rather than going null', () => {
+    expect(lastTwelveMonths([{ value: 10, type: 'Quarter' }, { value: 30, type: 'Quarter' }])).toBe(80);
+  });
+
+  it('stops at a change of period type', () => {
+    expect(lastTwelveMonths([{ value: 400, type: 'FY' }, { value: 30, type: 'Quarter' }])).toBe(120);
+  });
+
+  it('sizes leverage and the ability-to-pay grid off LTM on a quarterly model', () => {
+    const evaluation = lineValues({
+      rev: [250, 250, 250, 250, 250], ebitda: [100, 100, 100, 100, 100], da: [10, 10, 10, 10, 10], capex: [10, 10, 10, 10, 10],
+      nwc: [50, 50, 50, 50, 50], taxRate: [0.25, 0.25, 0.25, 0.25, 0.25], ebit: [90, 90, 90, 90, 90], netDebt: [800, 800, 800, 800, 800],
+    });
+    const result = seedLboCase({ modelId: 'm', baseSchema: baseSchema(), baseTimeline: quarters, baseEvaluation: evaluation, entryPeriodIndex: 4, horizonYears: 2 });
+    // 800 of net debt against 400 of LTM EBITDA is 2x, not 8x.
+    expect(result.financing.base.leverageMultiple).toBeCloseTo(2);
+    const output = computeLboOutput(result, 'base', baseSchema(), evaluation, quarters);
+    expect(output.projection[0].totalDebt).toBeCloseTo(800);
+    // MOIC still equals (1+IRR)^years with years = 8 quarters / 4.
+    expect(output.abilityToPay[1].moic).toBeCloseTo(Math.pow(1.2, 2), 6);
+  });
+});
+
+describe('debt raised at close', () => {
+  const evaluation = lineValues({
+    rev: [1000, 1100], ebitda: [400, 440], da: [50, 55], capex: [40, 44], nwc: [100, 110],
+    taxRate: [0.25, 0.25], ebit: [350, 385], netDebt: [800, 800],
+  });
+
+  it('counts every tranche at close, so a user-added tranche raises entry EV by its face value', () => {
+    const result = seed();
+    const before = computeLboOutput(result, 'base', baseSchema(), evaluation, BASE_TIMELINE);
+    const totalDebt = findSummaryLine(result.schema, 'totalDebt')!;
+    const { schema: withLine, lineId } = addChildLine(result.schema, { kind: 'line', parentLineId: totalDebt.id }, 'Notes');
+    const schema: StatementSchema = {
+      ...withLine,
+      sections: withLine.sections.map((s) => ({
+        ...s,
+        lines: s.lines.map((l) => (l.id === lineId ? { ...l, debtProperties: { debtType: 'term', couponType: 'fixed', couponRate: 0, amortizationRate: 0, repayable: false, originalFaceValue: 100 } } : l)),
+      })),
+    };
+    const after = computeLboOutput({ ...result, schema: regenerateDebtSchedule(schema, 1, false) }, 'base', baseSchema(), evaluation, BASE_TIMELINE);
+    expect(after.projection[0].totalDebt).toBeCloseTo(before.projection[0].totalDebt! + 100);
+    expect(after.abilityToPay[0].sponsorEquityCheck).not.toBeNull();
+  });
+
+  it('with the leverage-linked tranche deleted, leverage funds nothing at close', () => {
+    const result = seed();
+    const withoutTermLoan = { ...result, schema: regenerateDebtSchedule(removeChildLine(result.schema, result.leverageLinkedTrancheId!), 1, false), leverageLinkedTrancheId: null };
+    const output = computeLboOutput(withoutTermLoan, 'base', baseSchema(), evaluation, BASE_TIMELINE);
+    expect(output.projection[0].totalDebt).toBe(0);
   });
 });

@@ -48,6 +48,7 @@ export type {
   DriverDefinition,
   LboCase,
   LboCaseRepository,
+  LboFinancingByScenario,
   LboFinancingInputs,
   LboOutput,
   LineAggregation,

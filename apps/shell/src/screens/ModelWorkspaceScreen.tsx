@@ -35,6 +35,7 @@ import {
   type DcfInputs,
   type DcfOutput,
   type LboCase,
+  type LboFinancingInputs,
   type Mapping,
   type Model,
   type ModelImport,
@@ -71,7 +72,7 @@ import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
-import { computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
+import { applyLboFinancingPatch, computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 import { effectiveLineKind } from '../lib/statementLineChildren';
@@ -748,6 +749,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   async function updateLboCase(patch: Partial<Pick<LboCase, 'schema' | 'financing' | 'leverageLinkedTrancheId'>>) {
     if (!model) return;
     setLboCase(await lboCaseRepository.update(model.id, patch));
+  }
+
+  async function updateLboFinancing(scenarioId: ScenarioKey, patch: Partial<LboFinancingInputs>) {
+    if (!model) return;
+    setLboCase(await lboCaseRepository.updateWith(model.id, (existing) => ({
+      financing: applyLboFinancingPatch(existing.financing, scenarioId, patch),
+    })));
   }
 
   async function removeLboCase() {
@@ -1476,6 +1484,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             lboCase={lboCase}
             onCreateLboCase={createLboCase}
             onUpdateLboCase={updateLboCase}
+            onUpdateLboFinancing={updateLboFinancing}
             onRemoveLboCase={removeLboCase}
           />
         ) : null
