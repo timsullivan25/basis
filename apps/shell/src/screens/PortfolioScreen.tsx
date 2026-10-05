@@ -3,6 +3,7 @@ import { Button, Input } from '@basis/design-system';
 import { companyRepository, type Company } from '../data';
 import { AddCompanyDialog } from '../components/AddCompanyDialog';
 import { CompanyCard } from '../components/CompanyCard';
+import { DummyDataControls } from '../dev/dummyData/DummyDataControls'; // TEMPORARY test data
 
 interface PortfolioScreenProps {
   onSelectCompany: (company: Company) => void;
@@ -56,6 +57,7 @@ export function PortfolioScreen({ onSelectCompany }: PortfolioScreenProps) {
           style={{ width: 280 }}
         />
         <div style={{ flex: '1 1 auto' }} />
+        <DummyDataControls onCreated={onSelectCompany} onChanged={() => void refresh()} />
         <Button variant="primary" iconLeft="plus" onClick={() => setAddOpen(true)}>
           Add company
         </Button>
