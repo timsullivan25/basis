@@ -152,12 +152,12 @@ export function RecoveryWaterfallPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  // Defaults to the LAST period in the timeline, not the last actual — a recovery analysis is
-  // normally run against a future exit/distress point, not today's balance sheet (unlike DCF's
-  // Net Debt, which deliberately reads "now"). Projected periods are always appended after
-  // actuals here, so this naturally lands on the last projection when one exists, and degrades
-  // to the last actual for a historicals-only model.
-  const periodIndex = inputs.periodIndex ?? model.timeline.length - 1;
+  // Defaults to the last ACTUAL period — today's capital structure against LTM earnings, the
+  // usual starting point for a recovery analysis — rather than a projected year whose debt
+  // balances depend on projection assumptions. A future distress point is one Period pick away.
+  // Falls back to the last period when the model has no actuals at all.
+  const lastActualIndex = model.timeline.map((p) => p.kind).lastIndexOf('actual');
+  const periodIndex = inputs.periodIndex ?? (lastActualIndex >= 0 ? lastActualIndex : model.timeline.length - 1);
   const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
   const concepts = { ebitda: requiredConcept === 'ebitda' ? conceptValue : null, revenue: requiredConcept === 'revenue' ? conceptValue : null };
   const distributableValue = computeDistributableValue(inputs, concepts);
