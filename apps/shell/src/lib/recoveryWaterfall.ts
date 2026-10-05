@@ -1,4 +1,4 @@
-import type { AnalysisSettings, RecoveryInputs, ScenarioKey, StatementLine, StatementSchema } from '../data';
+import type { AnalysisSettings, RecoveryInputs, ScenarioKey, StatementLine, StatementSchema, Timeline } from '../data';
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 
 const DEFAULT_RECOVERY_INPUTS: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
@@ -99,6 +99,14 @@ export function computeDistributableValue(inputs: RecoveryInputs, concepts: Dist
     case null:
       return null;
   }
+}
+
+/** The period a recovery runs against when none is chosen: the last ACTUAL period (today's
+ *  capital structure against LTM earnings) rather than a projected year whose debt balances
+ *  depend on projection assumptions. Falls back to the last period when there are no actuals. */
+export function defaultRecoveryPeriodIndex(timeline: Timeline): number {
+  const lastActual = timeline.map((p) => p.kind).lastIndexOf('actual');
+  return lastActual >= 0 ? lastActual : timeline.length - 1;
 }
 
 /** The admin & priority claim in dollars — RecoveryInputs.adminCostsPct applied to the value

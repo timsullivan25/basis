@@ -14,6 +14,7 @@ import {
   computeDistributableValue,
   computeRecoverySensitivity,
   computeRecoveryWaterfall,
+  defaultRecoveryPeriodIndex,
   effectiveRecoveryInputs,
   orderedSeniorityTiers,
   type TrancheRecovery,
@@ -152,12 +153,7 @@ export function RecoveryWaterfallPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  // Defaults to the last ACTUAL period — today's capital structure against LTM earnings, the
-  // usual starting point for a recovery analysis — rather than a projected year whose debt
-  // balances depend on projection assumptions. A future distress point is one Period pick away.
-  // Falls back to the last period when the model has no actuals at all.
-  const lastActualIndex = model.timeline.map((p) => p.kind).lastIndexOf('actual');
-  const periodIndex = inputs.periodIndex ?? (lastActualIndex >= 0 ? lastActualIndex : model.timeline.length - 1);
+  const periodIndex = inputs.periodIndex ?? defaultRecoveryPeriodIndex(model.timeline);
   const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
   const concepts = { ebitda: requiredConcept === 'ebitda' ? conceptValue : null, revenue: requiredConcept === 'revenue' ? conceptValue : null };
   const distributableValue = computeDistributableValue(inputs, concepts);
