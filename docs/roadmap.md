@@ -86,7 +86,7 @@ engine changes are needed to get started.
   exit multiple, leverage, target IRR) be sensitized alongside model drivers. They're already
   stored per scenario, so the same override layering applies.
 
-**Built (on branch, not yet merged):** a Sensitivity tab on the model workspace
+**Built:** a Sensitivity tab on the model workspace
 (`lib/sensitivity.ts`, `lib/sensitivityAnalyses.ts`, `components/models/sensitivity/`) with
 three views over the same inputs and outputs:
 
