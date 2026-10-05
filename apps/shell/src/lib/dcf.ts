@@ -12,14 +12,15 @@ export function lastActualIndex(timeline: Timeline): number {
   return timeline.length - 1;
 }
 
-/** The four resolved statement-line ids DCF's UFCF build-up reads, plus the resolved tax-rate
- *  line — one per lib/summaryLines.ts SummaryConcept the DCF analysis catalog entry requires. */
+/** The four resolved statement-line ids DCF's UFCF build-up reads, plus the tax rate — a line id
+ *  when linked, or the entered rate (flat every period) when it's an input (see
+ *  lib/summaryLines.ts's conceptRef). */
 export interface DcfConceptLines {
   ebit: string;
   da: string;
   capex: string;
   nwc: string;
-  taxRate: string;
+  taxRate: string | number;
 }
 
 export interface DcfUfcfRow {
@@ -51,7 +52,8 @@ export type DcfZeroFillable = 'da' | 'capex' | 'deltaNwc';
  */
 export function computeUfcf(result: LineValues, timeline: Timeline, conceptLines: DcfConceptLines): DcfUfcfRow[] {
   const lastActual = lastActualIndex(timeline);
-  const taxRateAtLastActual = result.getValue(conceptLines.taxRate, lastActual);
+  const taxRateAt = (i: number) => (typeof conceptLines.taxRate === 'number' ? conceptLines.taxRate : result.getValue(conceptLines.taxRate, i));
+  const taxRateAtLastActual = taxRateAt(lastActual);
   const rows: DcfUfcfRow[] = [];
   timeline.forEach((period, i) => {
     if (period.kind !== 'projected') return;
@@ -71,7 +73,7 @@ export function computeUfcf(result: LineValues, timeline: Timeline, conceptLines
     // this projected period — the common case, since most schemas won't separately project
     // Income Tax Expense/Pretax Income — mirroring evaluate.ts's own "last-actual-implied-ratio"
     // convention for percent-of/days-of driver defaults, rather than inventing new fallback logic.
-    const taxRate = result.getValue(conceptLines.taxRate, i) ?? taxRateAtLastActual;
+    const taxRate = taxRateAt(i) ?? taxRateAtLastActual;
     const nopat = ebit !== null && taxRate !== null ? ebit * (1 - taxRate) : null;
     const ufcf = nopat !== null ? nopat + da - capex - deltaNwc : null;
     rows.push({ periodIndex: i, ebit, taxRate, nopat, da, capex, deltaNwc, ufcf, zeroFilled });

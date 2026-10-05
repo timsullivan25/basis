@@ -7,6 +7,7 @@ import {
   availableAnalysisMetrics,
   availableAnalysisParams,
   NO_ANALYSIS_PARAMS,
+  SHARED_ANALYSIS_INPUTS,
   type AnalysisContext,
   type AnalysisParams,
 } from './sensitivityAnalyses';
@@ -135,7 +136,7 @@ export interface InputOption {
   suggested: SensitivityInput;
 }
 
-const ANALYSIS_GROUP: Record<string, string> = { dcf: 'DCF', lbo: 'LBO', recoveryWaterfall: 'Recovery Waterfall' };
+const ANALYSIS_GROUP: Record<string, string> = { dcf: 'DCF', lbo: 'LBO', recoveryWaterfall: 'Recovery Waterfall', [SHARED_ANALYSIS_INPUTS]: 'Analysis inputs' };
 
 function shiftUnitFor(kind: ShiftKind, numberFormat: LineNumberFormat, isDays: boolean): InputOption['shiftUnit'] {
   if (kind === 'relative') return '%';

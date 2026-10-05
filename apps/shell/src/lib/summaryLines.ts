@@ -1,4 +1,4 @@
-import type { StatementLine, StatementSchema } from '../data';
+import type { ConceptInput, StatementLine, StatementSchema } from '../data';
 import { normalize } from './matchStatementLines';
 
 /** The canonical concepts a schema-independent consumer looks for — a Summary panel, or (from
@@ -72,4 +72,48 @@ export function findSummaryLine(schema: StatementSchema, concept: SummaryConcept
  *  alias-append, which couldn't override a line whose own name already matched. */
 export function assignConceptLine(schema: StatementSchema, concept: SummaryConcept, lineId: string): StatementSchema {
   return { ...schema, conceptLineIds: { ...schema.conceptLineIds, [concept]: lineId } };
+}
+
+/** Concepts that can be a single entered number instead of a line, with the value they start at
+ *  when nothing links. 25% tax = 21% federal + state/local. */
+export const INPUT_CONCEPT_DEFAULTS: Partial<Record<SummaryConcept, number>> = { taxRate: 0.25 };
+
+/** Where a concept's value comes from: a line, read period by period, or an entered number,
+ *  flat across every period. undefined only for a linked concept with no line. */
+export type ConceptSource = { kind: 'line'; line: StatementLine } | { kind: 'input'; value: number };
+
+export function conceptSource(schema: StatementSchema, concept: SummaryConcept): ConceptSource | undefined {
+  const line = findSummaryLine(schema, concept);
+  const defaultValue = INPUT_CONCEPT_DEFAULTS[concept];
+  if (defaultValue === undefined) return line ? { kind: 'line', line } : undefined;
+  const choice = schema.conceptInputs?.[concept];
+  const mode = choice?.mode ?? (line ? 'linked' : 'input');
+  if (mode === 'input') return { kind: 'input', value: choice?.value ?? defaultValue };
+  return line ? { kind: 'line', line } : undefined;
+}
+
+/** What an analysis hands its compute function for a concept: a line id, or the input number. */
+export function conceptRef(schema: StatementSchema, concept: SummaryConcept): string | number | undefined {
+  const source = conceptSource(schema, concept);
+  return source?.kind === 'line' ? source.line.id : source?.value;
+}
+
+/** A concept's value at one period, whichever way it's sourced. */
+export function readConceptValue(schema: StatementSchema, values: { getValue(lineId: string, periodIndex: number): number | null }, concept: SummaryConcept, periodIndex: number): number | null {
+  const source = conceptSource(schema, concept);
+  if (!source) return null;
+  return source.kind === 'input' ? source.value : values.getValue(source.line.id, periodIndex);
+}
+
+/** Switches a concept between linked and input, or sets its input value — returns the updated
+ *  schema for the caller to persist. */
+export function setConceptInput(schema: StatementSchema, concept: SummaryConcept, patch: Partial<ConceptInput>): StatementSchema {
+  const current = schema.conceptInputs?.[concept];
+  const source = conceptSource(schema, concept);
+  const next: ConceptInput = {
+    mode: current?.mode ?? (source?.kind === 'line' ? 'linked' : 'input'),
+    value: current?.value ?? INPUT_CONCEPT_DEFAULTS[concept] ?? 0,
+    ...patch,
+  };
+  return { ...schema, conceptInputs: { ...schema.conceptInputs, [concept]: next } };
 }

@@ -5,7 +5,7 @@ import { missingConceptsFor } from './analysisAvailability';
 import { computeDcfOutputs, computeUfcf, lastActualIndex } from './dcf';
 import { computeLboOutput, effectiveLboFinancing } from './lbo';
 import { adminClaimFor, computeDistributableValue, computeRecoveryWaterfall, defaultRecoveryPeriodIndex, orderedSeniorityTiers } from './recoveryWaterfall';
-import { findSummaryLine } from './summaryLines';
+import { conceptRef, conceptSource, findSummaryLine, setConceptInput } from './summaryLines';
 
 /**
  * The analysis side of sensitivity runs: which analysis results can be read as outputs, and which
@@ -21,6 +21,9 @@ export interface AnalysisParams {
   dcf: DcfInputs | null;
   lbo: LboFinancingInputs | null;
   recovery: RecoveryInputs | null;
+  /** The tax rate when it's an input rather than a linked line (see lib/summaryLines.ts's
+   *  conceptSource), shared by DCF and LBO; null when linked or neither is readable. */
+  taxRate: number | null;
 }
 
 export interface AnalysisContext {
@@ -33,11 +36,11 @@ export interface AnalysisContext {
   base: AnalysisParams;
 }
 
-export const NO_ANALYSIS_PARAMS: AnalysisParams = { dcf: null, lbo: null, recovery: null };
+export const NO_ANALYSIS_PARAMS: AnalysisParams = { dcf: null, lbo: null, recovery: null, taxRate: null };
 
 // --- Inputs ------------------------------------------------------------------------------------
 
-export type AnalysisParamId = 'dcf.wacc' | 'dcf.terminalGrowth' | 'lbo.leverageMultiple' | 'lbo.exitMultiple' | 'recovery.multiple' | 'recovery.directValue';
+export type AnalysisParamId = 'taxRate' | 'dcf.wacc' | 'dcf.terminalGrowth' | 'lbo.leverageMultiple' | 'lbo.exitMultiple' | 'recovery.multiple' | 'recovery.directValue';
 
 export interface AnalysisParamDef {
   id: AnalysisParamId;
@@ -53,7 +56,15 @@ export interface AnalysisParamDef {
   write(params: AnalysisParams, value: number): AnalysisParams;
 }
 
+/** analysisId of an input shared across analyses rather than owned by one (the tax rate input). */
+export const SHARED_ANALYSIS_INPUTS = 'analysisInputs';
+
 const PARAM_DEFS: AnalysisParamDef[] = [
+  {
+    id: 'taxRate', analysisId: SHARED_ANALYSIS_INPUTS, label: 'Tax Rate', numberFormat: 'percentage', kind: 'absolute', low: -0.05, high: 0.05,
+    read: (p) => p.taxRate,
+    write: (p, v) => ({ ...p, taxRate: Math.max(0, v) }),
+  },
   {
     id: 'dcf.wacc', analysisId: 'dcf', label: 'DCF WACC', numberFormat: 'percentage', kind: 'absolute', low: -0.01, high: 0.01,
     read: (p) => p.dcf?.wacc ?? null,
@@ -102,7 +113,7 @@ export function analysisParamFor(inputId: string): AnalysisParamDef | undefined 
 /** Assumptions of enabled analyses that have a value to shift. */
 export function availableAnalysisParams(ctx: AnalysisContext | null): AnalysisParamDef[] {
   if (!ctx) return [];
-  return PARAM_DEFS.filter((d) => ctx.enabledIds.includes(d.analysisId) && d.read(ctx.base) !== null);
+  return PARAM_DEFS.filter((d) => (d.analysisId === SHARED_ANALYSIS_INPUTS || ctx.enabledIds.includes(d.analysisId)) && d.read(ctx.base) !== null);
 }
 
 // --- Outputs -----------------------------------------------------------------------------------
@@ -137,12 +148,18 @@ function cached<T>(evaluation: LineValues, params: AnalysisParams, analysisId: s
   return byAnalysis.get(analysisId) as T;
 }
 
+/** The schema a point's analyses read — with the point's tax rate input applied when it has one. */
+function schemaFor(ctx: AnalysisContext, params: AnalysisParams): StatementSchema {
+  return params.taxRate === null ? ctx.schema : setConceptInput(ctx.schema, 'taxRate', { mode: 'input', value: params.taxRate });
+}
+
 function dcfOutputs(ctx: AnalysisContext, evaluation: LineValues, params: AnalysisParams) {
   return cached(evaluation, params, 'dcf', () => {
     if (!params.dcf) return null;
-    const line = (c: Parameters<typeof findSummaryLine>[1]) => findSummaryLine(ctx.schema, c)?.id;
-    const ebit = line('ebit'), da = line('da'), capex = line('capex'), nwc = line('nwc'), taxRate = line('taxRate');
-    if (!ebit || !da || !capex || !nwc || !taxRate) return null;
+    const schema = schemaFor(ctx, params);
+    const line = (c: Parameters<typeof findSummaryLine>[1]) => findSummaryLine(schema, c)?.id;
+    const ebit = line('ebit'), da = line('da'), capex = line('capex'), nwc = line('nwc'), taxRate = conceptRef(schema, 'taxRate');
+    if (!ebit || !da || !capex || !nwc || taxRate === undefined) return null;
     const ufcfRows = computeUfcf(evaluation, ctx.timeline, { ebit, da, capex, nwc, taxRate });
     if (ufcfRows.length === 0) return null;
     const netDebtLine = findSummaryLine(ctx.schema, 'netDebt');
@@ -156,7 +173,7 @@ function lboOutput(ctx: AnalysisContext, evaluation: LineValues, params: Analysi
     if (!ctx.lboCase || !params.lbo) return null;
     // The point's financing (already the active scenario's effective values, possibly shifted)
     // becomes the case's Base so computeLboOutput reads it as-is.
-    return computeLboOutput({ ...ctx.lboCase, financing: { base: params.lbo } }, 'base', ctx.schema, evaluation, ctx.timeline);
+    return computeLboOutput({ ...ctx.lboCase, financing: { base: params.lbo } }, 'base', schemaFor(ctx, params), evaluation, ctx.timeline);
   });
 }
 
@@ -235,4 +252,11 @@ export function readableAnalysisIds(schema: StatementSchema, enabledIds: string[
 /** The effective LBO financing for a scenario, or null without a case. */
 export function lboParamsFor(lboCase: LboCase | null, scenarioId: ScenarioKey): LboFinancingInputs | null {
   return lboCase ? effectiveLboFinancing(lboCase.financing, scenarioId) : null;
+}
+
+/** The tax rate input to sensitize, when DCF or LBO is readable and the rate isn't linked. */
+export function taxRateParamFor(schema: StatementSchema, enabledIds: string[]): number | null {
+  if (!enabledIds.includes('dcf') && !enabledIds.includes('lbo')) return null;
+  const source = conceptSource(schema, 'taxRate');
+  return source?.kind === 'input' ? source.value : null;
 }
