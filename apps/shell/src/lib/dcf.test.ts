@@ -97,7 +97,7 @@ describe('effectiveDcfInputs', () => {
       modelId: 'm1',
       enabledAnalysisIds: ['dcf'],
       dcfInputs,
-      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null } },
+      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null } },
       createdAt: 't0',
       updatedAt: 't0',
     };
