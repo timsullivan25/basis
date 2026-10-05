@@ -8,7 +8,7 @@ In the app, open **Portfolio → Test data**:
 - **Download dummy workbook** gives you the same data as a Basis Template `.xlsx` for testing the upload and mapping flow by hand. A committed copy is in this folder as `dummy-test-co.xlsx`.
 - **Remove all dummy issuers** deletes every issuer named "Dummy Test Co…" along with its model, mapping, scenarios, analyses and cached results.
 
-Starting assumptions: 7% → 4% revenue growth (the Downside scenario uses −5% → 2%), $75 minimum cash, 9% WACC and 2.5% terminal growth, and recovery at 3.0x FY2025 EBITDA with $25 of admin claims. At those numbers the unsecured notes are the fulcrum.
+Starting assumptions: 7% → 4% revenue growth (the Downside scenario uses −5% → 2%), $75 minimum cash, 9% WACC and 2.5% terminal growth, and recovery at 3.0x FY2025 EBITDA with admin claims at 2.5% of value. At those numbers the unsecured notes are the fulcrum.
 
 ## Files
 

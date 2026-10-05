@@ -213,7 +213,7 @@ export async function seedDummyIssuer(): Promise<Company> {
   await analysisSettingsRepository.update(model.id, {
     enabledAnalysisIds: ['dcf', 'lbo', 'recoveryWaterfall'],
     dcfInputs: { base: { wacc: 0.09, terminalGrowth: 0.025 } },
-    recoveryInputs: { base: { method: 'ebitdaMultiple', multiple: 3, periodIndex: actualTimeline.length - 1, directValue: null, adminCosts: 25 } },
+    recoveryInputs: { base: { method: 'ebitdaMultiple', multiple: 3, periodIndex: actualTimeline.length - 1, directValue: null, adminCostsPct: 0.025 } },
   });
   await lboCaseRepository.create(
     seedLboCase({ modelId: model.id, baseSchema: savedSchema, baseTimeline: model.timeline, baseEvaluation: evaluation, entryPeriodIndex: actualTimeline.length - 1 }),
