@@ -4,6 +4,7 @@ import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import type { AnalysisSettings, DcfInputs, LboCase, LboFinancingInputs, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
 import type { SeedLboCaseParams } from '../../../lib/lbo';
+import { AnalysisErrorBoundary } from './AnalysisErrorBoundary';
 import { DcfPanel } from './DcfPanel';
 import { LboPanel } from './LboPanel';
 import { RecoveryWaterfallPanel } from './RecoveryWaterfallPanel';
@@ -140,7 +141,11 @@ export function AnalysesPanel({
             key: entry.id,
             label: entry.name,
             icon: entry.icon,
-            content: panelPropsById[entry.id],
+            content: (
+              <AnalysisErrorBoundary name={entry.name} resetKeys={[schema, model, evaluation, analysisSettings, activeScenarioId, lboCase]}>
+                {panelPropsById[entry.id]}
+              </AnalysisErrorBoundary>
+            ),
           }))}
         />
       ) : null}

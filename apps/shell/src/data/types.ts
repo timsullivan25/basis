@@ -816,6 +816,8 @@ export interface DcfOutput {
     capex: number | null;
     deltaNwc: number | null;
     ufcf: number | null;
+    /** Absent on results cached before missing D&A/CapEx/ΔNWC started counting as 0. */
+    zeroFilled?: Array<'da' | 'capex' | 'deltaNwc'>;
   }>;
   discountFactors: (number | null)[];
   presentValueOfUfcf: number | null;
