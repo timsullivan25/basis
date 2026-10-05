@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Field, Icon, IconButton, Input, MetricCard, Select, Switch } from '@basis/design-system';
-import { statementSchemaRepository, type LboCase, type LboFinancingInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
+import { Alert, Badge, Button, Card, DataTable, Field, Icon, IconButton, Input, SegmentedControl, Select, Switch } from '@basis/design-system';
+import { statementSchemaRepository, type LboCase, type LboFinancingInputs, type Model, type ScenarioKey, type StatementLine, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
 import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
-import { computeEntryLtmEbitda, computeLboOutput, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
+import { computeEntryLtmEbitda, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, evaluateLboCase, lboOutputFrom, type SeedLboCaseParams } from '../../../lib/lbo';
+import { getLineRowStyle } from '../../statements/statementFormatting';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { DebtTranchePropertiesEditor } from '../instances/DebtTranchePropertiesEditor';
 import type { LineValues } from '../../../lib/computedCache';
@@ -49,11 +50,17 @@ function parsePercent(text: string): number | null {
 
 // Both fields commit only when the parsed value actually changed — focusing and leaving a field
 // must not write anything, or it would pin a scenario's value and cut it off from Base.
+// Shown to at most 2 decimals (a seeded leverage like 1.8181… reads as 1.82); an untouched field
+// compares against that same displayed text, so blurring it doesn't write the rounded value back.
+function displayNumber(value: number | null): string {
+  return value === null ? '' : String(Number(value.toFixed(2)));
+}
+
 function NumberField({ value, onCommit, suffix }: { value: number | null; onCommit: (next: number | null) => void; suffix?: string }) {
-  const [text, setText] = useState(() => (value === null ? '' : String(value)));
+  const [text, setText] = useState(() => displayNumber(value));
   const commit = () => {
     const next = parseNumber(text);
-    if (next !== value) onCommit(next);
+    if (next !== parseNumber(displayNumber(value))) onCommit(next);
   };
   return (
     <Input
@@ -67,7 +74,7 @@ function NumberField({ value, onCommit, suffix }: { value: number | null; onComm
   );
 }
 
-function PercentField({ value, onCommit }: { value: number | null; onCommit: (next: number | null) => void }) {
+function PercentField({ value, onCommit, suffix = '%' }: { value: number | null; onCommit: (next: number | null) => void; suffix?: string }) {
   const [text, setText] = useState(() => (value === null ? '' : String(value * 100)));
   const commit = () => {
     const next = parsePercent(text);
@@ -81,6 +88,7 @@ function PercentField({ value, onCommit }: { value: number | null; onCommit: (ne
       onChange={(e) => setText(e.target.value)}
       onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
       onBlur={commit}
+      suffix={suffix}
       style={{ width: 90 }}
     />
   );
@@ -109,6 +117,7 @@ export function LboPanel({
   const [entryPeriodIndex, setEntryPeriodIndex] = useState(model.timeline.length - 1);
   const [horizonYears, setHorizonYears] = useState(DEFAULT_HORIZON_YEARS);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [projectionView, setProjectionView] = useState<'summary' | 'model'>('summary');
 
   const catalogEntry = ANALYSIS_CATALOG.find((e) => e.id === 'lbo')!;
   const missing = missingConceptsFor(schema, catalogEntry);
@@ -133,10 +142,13 @@ export function LboPanel({
   // early return below, so hook order stays stable regardless of whether a case exists yet. No
   // case yet means nothing to compute: an empty result, not a wasted call against a fabricated
   // stand-in case.
-  const output = useMemo(() => {
-    if (!lboCase) return { projection: [], abilityToPay: [] };
-    return computeLboOutput(lboCase, activeScenarioId, schema, evaluation, model.timeline);
-  }, [lboCase, activeScenarioId, schema, evaluation, model.timeline]);
+  // evaluateLboCase + lboOutputFrom is exactly what computeLboOutput does; split here so the
+  // full-model view can render every evaluated line, not just the summary rows.
+  const evaluated = useMemo(
+    () => (lboCase ? evaluateLboCase(lboCase, activeScenarioId, schema, evaluation, model.timeline) : null),
+    [lboCase, activeScenarioId, schema, evaluation, model.timeline],
+  );
+  const output = useMemo(() => (evaluated ? lboOutputFrom(evaluated) : { projection: [], abilityToPay: [] }), [evaluated]);
 
   if (!lboCase) {
     return (
@@ -234,10 +246,14 @@ export function LboPanel({
     onUpdateLboFinancing(activeScenarioId, patch);
   }
 
-  const tranches = totalDebtLine ? childrenOf(lboCase.schema, totalDebtLine.id) : [];
+  // Revolvers lead (senior, first-out), whatever order the case was created in.
+  const tranches = totalDebtLine
+    ? [...childrenOf(lboCase.schema, totalDebtLine.id)].sort((a, b) => Number(b.debtProperties?.debtType === 'revolver') - Number(a.debtProperties?.debtType === 'revolver'))
+    : [];
   const leverageLinkedTranche = tranches.find((t) => t.id === lboCase.leverageLinkedTrancheId);
   const liveEntryEbitda = computeEntryLtmEbitda(schema, evaluation, model.timeline, lboCase.entryPeriodIndex);
-  const entryTotalDebt = output.projection[0]?.totalDebt ?? null;
+  const transactionExpensesAmount =
+    financing.transactionExpensesPct !== null && liveEntryEbitda !== null ? financing.transactionExpensesPct * liveEntryEbitda : null;
   const caseHorizonYears = (lboCase.timeline.length - 1) / periodsPerYear;
   const liveTermLoanFaceValue = computeLeverageLinkedFaceValue(financing.leverageMultiple, liveEntryEbitda);
 
@@ -299,11 +315,21 @@ export function LboPanel({
       <Card title="Financing" icon="landmark" padding="md">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
           <div style={{ display: 'flex', gap: 'var(--space-6)' }}>
-            <Field label="Leverage" hint="× LTM entry EBITDA — sizes the Term Loan, live">
-              <NumberField value={financing.leverageMultiple} onCommit={(v) => v !== null && updateFinancing({ leverageMultiple: v })} suffix="x" />
+            <Field label="Leverage" hint={`Multiple of LTM entry EBITDA (${formatPeriodValue(liveEntryEbitda, 'number')}). Sizes the leverage-linked Term Loan and updates live with the model.`}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                <NumberField value={financing.leverageMultiple} onCommit={(v) => v !== null && updateFinancing({ leverageMultiple: v })} suffix="x" />
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                  = {formatPeriodValue(liveTermLoanFaceValue, 'number')}
+                </span>
+              </div>
             </Field>
-            <Field label="Transaction expenses" hint="% of LTM entry EBITDA">
-              <PercentField value={financing.transactionExpensesPct} onCommit={(v) => updateFinancing({ transactionExpensesPct: v })} />
+            <Field label="Transaction expenses" hint="Percent of LTM entry EBITDA, entered as a percent (2 means 2%). Added to the sponsor's equity check.">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                <PercentField value={financing.transactionExpensesPct} onCommit={(v) => updateFinancing({ transactionExpensesPct: v })} />
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                  of EBITDA = {formatPeriodValue(transactionExpensesAmount, 'number')}
+                </span>
+              </div>
             </Field>
           </div>
 
@@ -329,26 +355,41 @@ export function LboPanel({
         </div>
       </Card>
 
-      <Card title="Projection" padding="none">
-        <DataTable
-          dense
-          stickyFirstColumn
-          columns={[
-            { key: 'name', label: 'Line', width: 160, render: (_: unknown, row: { label: string }) => row.label },
-            ...lboCase.timeline.map((period, i) => ({
-              key: `p${i}`,
-              label: period.label,
-              numeric: true,
-              width: 100,
-              render: (_: unknown, row: { key: string }) => {
-                const value = output.projection[i]?.[row.key as (typeof PROJECTION_ROWS)[number]] ?? null;
-                return formatPeriodValue(value, 'number');
-              },
-            })),
-          ]}
-          rows={PROJECTION_ROWS.map((key) => ({ key, label: PROJECTION_LABELS[key] }))}
-          rowKey="key"
-        />
+      <Card
+        title="Projection"
+        padding="none"
+        actions={
+          <SegmentedControl
+            size="sm"
+            value={projectionView}
+            onChange={(v) => setProjectionView(v as 'summary' | 'model')}
+            options={[{ value: 'summary', label: 'Summary' }, { value: 'model', label: 'Full model' }]}
+          />
+        }
+      >
+        {projectionView === 'summary' ? (
+          <DataTable
+            dense
+            stickyFirstColumn
+            columns={[
+              { key: 'name', label: 'Line', width: 160, render: (_: unknown, row: { label: string }) => row.label },
+              ...lboCase.timeline.map((period, i) => ({
+                key: `p${i}`,
+                label: period.label,
+                numeric: true,
+                width: 100,
+                render: (_: unknown, row: { key: string }) => {
+                  const value = output.projection[i]?.[row.key as (typeof PROJECTION_ROWS)[number]] ?? null;
+                  return formatPeriodValue(value, 'number');
+                },
+              })),
+            ]}
+            rows={PROJECTION_ROWS.map((key) => ({ key, label: PROJECTION_LABELS[key] }))}
+            rowKey="key"
+          />
+        ) : evaluated ? (
+          <LboModelTable schema={evaluated.schema} timeline={evaluated.timeline} evaluation={evaluated.evaluation} />
+        ) : null}
       </Card>
 
       <Card title="Ability to Pay" icon="target" padding="md">
@@ -433,14 +474,51 @@ export function LboPanel({
         </div>
       </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-5)' }}>
-        <MetricCard label="Entry EBITDA (LTM)" value={formatPeriodValue(liveEntryEbitda, 'number')} />
-        <MetricCard
-          label="Entry Leverage"
-          value={entryTotalDebt !== null && liveEntryEbitda !== null && liveEntryEbitda > 0 ? `${(entryTotalDebt / liveEntryEbitda).toFixed(2)}x` : '—'}
-        />
-      </div>
     </div>
+  );
+}
+
+interface LboModelRow {
+  id: string;
+  __group?: string;
+  line?: StatementLine;
+}
+
+/** Every line of the evaluated LBO statement (income statement, cash flow, balance sheet, debt
+ *  schedule), read-only — the model the summary rows and Ability to Pay are computed from. */
+function LboModelTable({ schema, timeline, evaluation }: { schema: StatementSchema; timeline: LboCase['timeline']; evaluation: LineValues }) {
+  const rows: LboModelRow[] = schema.sections.flatMap((section) => [
+    { id: `group-${section.id}`, __group: section.name },
+    ...section.lines.map((line) => ({ id: line.id, line })),
+  ]);
+  return (
+    <DataTable
+      dense
+      stickyFirstColumn
+      columns={[
+        {
+          key: 'name', label: 'Line', width: 220,
+          render: (_: unknown, row: LboModelRow) =>
+            row.line ? <span style={{ paddingLeft: row.line.parentLineId ? 'var(--space-6)' : 0 }}>{row.line.name}</span> : null,
+        },
+        ...timeline.map((period, i) => ({
+          key: `p${i}`,
+          label: period.label,
+          numeric: true,
+          width: 100,
+          background: period.kind === 'projected' ? 'var(--alpha-blue-06)' : undefined,
+          render: (_: unknown, row: LboModelRow) => {
+            if (!row.line) return null;
+            const error = evaluation.getError(row.line.id);
+            if (error) return <span title={error}><Icon name="alert-triangle" size={12} color="var(--text-negative)" /></span>;
+            return formatPeriodValue(evaluation.getValue(row.line.id, i), row.line.numberFormat);
+          },
+        })),
+      ]}
+      rows={rows}
+      rowKey="id"
+      rowStyle={(row: LboModelRow) => (row.line ? getLineRowStyle(row.line) : {})}
+    />
   );
 }
 
