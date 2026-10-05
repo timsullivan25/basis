@@ -22,7 +22,7 @@ export function Tooltip({ content, children, placement = 'top', delay = 120, max
             position: 'absolute', zIndex: 60, width: 'max-content', maxWidth, padding: 'var(--space-3) var(--space-5)',
             background: 'var(--surface-tooltip)', color: 'var(--white)',
             fontFamily: 'var(--font-sans)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-regular)',
-            lineHeight: 'var(--leading-snug)', letterSpacing: 'var(--tracking-normal)',
+            lineHeight: 'var(--leading-snug)', letterSpacing: 'var(--tracking-normal)', textTransform: 'none', whiteSpace: 'normal',
             borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-3)',
             animation: 'basis-fade-in var(--dur-fast) var(--ease-out)', pointerEvents: 'none', ...pos,
           }}

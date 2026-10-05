@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
 import { Accordion, Card, Switch } from '@basis/design-system';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import type { AnalysisSettings, DcfInputs, LboCase, LboFinancingInputs, Model, RecoveryInputs, ScenarioKey, StatementSchema } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
 import type { SeedLboCaseParams } from '../../../lib/lbo';
+import { AnalysisErrorBoundary } from './AnalysisErrorBoundary';
 import { DcfPanel } from './DcfPanel';
 import { LboPanel } from './LboPanel';
 import { RecoveryWaterfallPanel } from './RecoveryWaterfallPanel';
@@ -24,6 +24,10 @@ interface AnalysesPanelProps {
   onUpdateLboCase: (patch: Partial<Pick<LboCase, 'schema' | 'leverageLinkedTrancheId'>>) => void;
   onUpdateLboFinancing: (scenarioId: ScenarioKey, patch: Partial<LboFinancingInputs>) => void;
   onRemoveLboCase: () => void;
+  /** Which enabled analyses' sections are expanded — owned by ModelWorkspaceScreen so it survives
+   *  this panel unmounting on a tab switch. `null` means "never touched": everything enabled is open. */
+  openKeys: string[] | null;
+  onOpenKeysChange: (keys: string[]) => void;
 }
 
 /** Always starts from the full catalog (today, just DCF) with an enable/disable toggle per entry
@@ -45,18 +49,15 @@ export function AnalysesPanel({
   onUpdateLboCase,
   onUpdateLboFinancing,
   onRemoveLboCase,
+  openKeys: openKeysProp,
+  onOpenKeysChange,
 }: AnalysesPanelProps) {
   const enabledIds = analysisSettings?.enabledAnalysisIds ?? [];
 
-  // Which enabled analyses' own Accordion sections are expanded — local UI state, not persisted
-  // (nothing downstream needs to know). Starts with everything enabled today already open, and
-  // newly-enabled analyses are added (never silently removed on disable, so re-enabling one
-  // reopens it) — see the effect below.
-  const [openKeys, setOpenKeys] = useState<string[]>(enabledIds);
-  useEffect(() => {
-    setOpenKeys((prev) => [...prev, ...enabledIds.filter((id) => !prev.includes(id))]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [analysisSettings?.enabledAnalysisIds]);
+  // Deliberately no effect re-deriving this from enabledAnalysisIds — that array is a fresh copy
+  // on every settings save (any DCF/Recovery input edit), which used to re-open every section.
+  // Newly-enabled analyses are opened by the toggle handler itself instead.
+  const openKeys = openKeysProp ?? enabledIds;
 
   const panelPropsById: Record<string, React.ReactNode> = {
     dcf: (
@@ -134,13 +135,17 @@ export function AnalysesPanel({
         <Accordion
           openKeys={openKeys}
           onToggle={(key) =>
-            setOpenKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
+            onOpenKeysChange(openKeys.includes(key) ? openKeys.filter((k) => k !== key) : [...openKeys, key])
           }
           items={ANALYSIS_CATALOG.filter((entry) => enabledIds.includes(entry.id)).map((entry) => ({
             key: entry.id,
             label: entry.name,
             icon: entry.icon,
-            content: panelPropsById[entry.id],
+            content: (
+              <AnalysisErrorBoundary name={entry.name} resetKeys={[schema, model, evaluation, analysisSettings, activeScenarioId, lboCase]}>
+                {panelPropsById[entry.id]}
+              </AnalysisErrorBoundary>
+            ),
           }))}
         />
       ) : null}

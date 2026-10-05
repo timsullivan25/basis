@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, Card, DataTable, Field, Icon, Input, MetricCard, Select } from '@basis/design-system';
-import { statementSchemaRepository, type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
+import { Alert, Card, DataTable, Field, Icon, Input, MetricCard } from '@basis/design-system';
+import { type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
-import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
+import { findSummaryLine } from '../../../lib/summaryLines';
+import { ConceptLinesCard } from './ConceptLinesCard';
 import type { LineValues } from '../../../lib/computedCache';
 import {
   computeDcfOutputs,
@@ -26,15 +27,6 @@ interface DcfPanelProps {
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
 }
-
-const CONCEPT_LABELS: Record<SummaryConcept, string> = {
-  revenue: 'Revenue', ebitda: 'EBITDA', netDebt: 'Net Debt', netLeverage: 'Net Leverage',
-  interestCoverage: 'Interest Coverage', totalDebt: 'Total Debt', totalEquity: 'Total Equity',
-  ebit: 'EBIT', da: 'D&A', capex: 'CapEx', nwc: 'Net Working Capital', taxRate: 'Effective Tax Rate',
-  cash: 'Cash & Equivalents', fcf: 'Free Cash Flow',
-};
-
-const ADD_NEW_LINE = '__add_new_line__';
 
 const UFCF_ROW_DEFS: Array<{ key: string; label: string; formula: string; get: (r: DcfUfcfRow) => number | null }> = [
   { key: 'ebit', label: 'EBIT', formula: 'The resolved EBIT line', get: (r) => r.ebit },
@@ -94,22 +86,6 @@ export function DcfPanel({
   const catalogEntry = ANALYSIS_CATALOG.find((e) => e.id === 'dcf')!;
   const missing = missingConceptsFor(schema, catalogEntry);
 
-  async function assignConceptLine(concept: SummaryConcept, lineId: string) {
-    const alias = canonicalAliasFor(concept);
-    const sections = schema.sections.map((section) => ({
-      ...section,
-      lines: section.lines.map((line) =>
-        line.id === lineId && !line.aliases.includes(alias) ? { ...line, aliases: [...line.aliases, alias] } : line,
-      ),
-    }));
-    const updated = await statementSchemaRepository.save({ ...schema, sections });
-    onSchemaUpdated(updated);
-  }
-
-  const lineGroups = schema.sections
-    .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
-    .filter((g) => g.options.length > 0);
-
   const inputs = analysisSettings ? effectiveDcfInputs(analysisSettings, activeScenarioId) : { wacc: null, terminalGrowth: null };
 
   const conceptLines: DcfConceptLines | null =
@@ -132,6 +108,25 @@ export function DcfPanel({
 
   const waccExceedsGrowth = inputs.wacc !== null && inputs.terminalGrowth !== null && inputs.wacc <= inputs.terminalGrowth;
 
+  // Why EV can't compute yet, in the order a user would fix them — shown in place of the outputs
+  // so a gap reads as "here's what's missing" instead of the valuation silently disappearing.
+  const blockers: string[] = [];
+  if (conceptLines && ufcfRows.length === 0) blockers.push('The model has no projected periods. Add some on the Model tab.');
+  if (inputs.wacc === null) blockers.push('Enter a WACC.');
+  if (inputs.terminalGrowth === null) blockers.push('Enter a terminal growth rate.');
+  const missingEbit = ufcfRows.filter((r) => r.ebit === null);
+  const missingTax = ufcfRows.filter((r) => r.ebit !== null && r.taxRate === null);
+  if (missingEbit.length > 0) {
+    blockers.push(`EBIT has no value in ${missingEbit.map((r) => model.timeline[r.periodIndex].label).join(', ')}.`);
+  }
+  if (missingTax.length > 0) {
+    blockers.push(`The tax rate has no value in ${missingTax.map((r) => model.timeline[r.periodIndex].label).join(', ')} or the last actual period.`);
+  }
+
+  const zeroFilledLabels = (['capex', 'da', 'deltaNwc'] as const)
+    .filter((key) => ufcfRows.some((r) => r.zeroFilled.includes(key)))
+    .map((key) => ({ capex: 'CapEx', da: 'D&A', deltaNwc: 'Δ NWC' })[key]);
+
   const sensitivity =
     dcfOutputs && inputs.wacc !== null && inputs.terminalGrowth !== null && !waccExceedsGrowth
       ? computeSensitivityGrid(ufcfRows, model.timeline, inputs.wacc, inputs.terminalGrowth)
@@ -139,47 +134,12 @@ export function DcfPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      {missing.length > 0 ? (
-        <Card title="Required lines" icon="list-checks" padding="none">
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {catalogEntry.requiredConcepts.map((concept) => {
-              const resolved = findSummaryLine(schema, concept);
-              return (
-                <div
-                  key={concept}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-5)',
-                    padding: 'var(--space-4) var(--space-6)', borderBottom: '1px solid var(--border-default)',
-                  }}
-                >
-                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{CONCEPT_LABELS[concept]}</span>
-                  {resolved ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-                      <Icon name="check" size={12} color="var(--status-positive-fg)" />
-                      {resolved.name}
-                    </span>
-                  ) : (
-                    <Select
-                      size="sm"
-                      fullWidth={false}
-                      style={{ width: 220 }}
-                      value=""
-                      options={[{ value: '', label: 'Select a line…' }, { value: ADD_NEW_LINE, label: 'Add a new line…' }]}
-                      groups={lineGroups}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (!value) return;
-                        if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
-                        else void assignConceptLine(concept, value);
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      ) : null}
+      <ConceptLinesCard
+          schema={schema}
+          concepts={catalogEntry.requiredConcepts}
+          onSchemaUpdated={onSchemaUpdated}
+          onOpenStatementDefinitions={onOpenStatementDefinitions}
+        />
 
       <Card title="DCF" icon="calculator" padding="md">
         <div key={activeScenarioId} style={{ display: 'flex', gap: 'var(--space-6)' }}>
@@ -245,6 +205,21 @@ export function DcfPanel({
             }
           />
         </Card>
+      ) : null}
+
+      {zeroFilledLabels.length > 0 ? (
+        <Alert tone="info" compact>
+          {zeroFilledLabels.join(', ')} {zeroFilledLabels.length === 1 ? 'has' : 'have'} no value in some projected periods and{' '}
+          {zeroFilledLabels.length === 1 ? 'is' : 'are'} counted as 0 there.
+        </Alert>
+      ) : null}
+
+      {conceptLines && !waccExceedsGrowth && blockers.length > 0 ? (
+        <Alert tone="caution" title="Valuation can't compute yet">
+          {blockers.map((b) => (
+            <div key={b}>{b}</div>
+          ))}
+        </Alert>
       ) : null}
 
       {waccExceedsGrowth ? (

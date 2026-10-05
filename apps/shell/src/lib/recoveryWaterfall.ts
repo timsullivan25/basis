@@ -1,7 +1,7 @@
-import type { AnalysisSettings, RecoveryInputs, ScenarioKey, StatementLine, StatementSchema } from '../data';
+import type { AnalysisSettings, RecoveryInputs, ScenarioKey, StatementLine, StatementSchema, Timeline } from '../data';
 import { childrenOf, effectiveLineKind } from './statementLineChildren';
 
-const DEFAULT_RECOVERY_INPUTS: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+const DEFAULT_RECOVERY_INPUTS: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
 
 /** A scenario's effective Recovery Waterfall valuation inputs — 'base' is ground truth, a named
  *  scenario's entry is sparse against it (per-field, not whole-record), same convention and same
@@ -17,7 +17,7 @@ export function effectiveRecoveryInputs(settings: AnalysisSettings, scenarioId: 
     multiple: override?.multiple ?? base.multiple,
     periodIndex: override?.periodIndex ?? base.periodIndex,
     directValue: override?.directValue ?? base.directValue,
-    adminCosts: override?.adminCosts ?? base.adminCosts,
+    adminCostsPct: override?.adminCostsPct ?? base.adminCostsPct,
   };
 }
 
@@ -39,15 +39,25 @@ export interface SeniorityTier {
   tranches: StatementLine[];
 }
 
-/** Every leaf debt tranche (see StatementLine.debtProperties' own doc comment for what "leaf"
- *  means here), grouped into seniority tiers in schema order — the same "schema order is
- *  seniority order" convention lib/debtSchedule.ts's own orderedTranches uses for cumulative
- *  Leverage/LTV, just applied to TIERS (parent lines) instead of individual tranches, and without
- *  that function's revolver-first carve-out (a cash-sweep concern, not a legal-seniority one). */
-export function orderedSeniorityTiers(schema: StatementSchema): SeniorityTier[] {
+/** Every leaf debt line (debt-kind, no children of its own), grouped into seniority tiers in
+ *  schema order — the same "schema order is seniority order" convention lib/debtSchedule.ts's own
+ *  orderedTranches uses for cumulative Leverage/LTV, just applied to TIERS (parent lines) instead
+ *  of individual tranches, and without that function's revolver-first carve-out (a cash-sweep
+ *  concern, not a legal-seniority one).
+ *
+ *  Unlike orderedTranches, debtProperties are NOT required: a recovery claim only needs a
+ *  balance, and a tier line mapped directly (e.g. "Unsecured Debt" with a mapped value but no
+ *  coupon/maturity configured) is a real claim. When `getBalance` is given, a leaf with no
+ *  debtProperties AND no balance is dropped as an unused tier (the default template ships
+ *  1L/2L/Unsecured tiers whether or not the issuer has them) rather than showing as an unknown
+ *  claim that blanks out every total. */
+export function orderedSeniorityTiers(schema: StatementSchema, getBalance?: (lineId: string) => number | null): SeniorityTier[] {
   const allLines = schema.sections.flatMap((s) => s.lines);
   const tranches = allLines.filter(
-    (l) => l.debtProperties !== undefined && effectiveLineKind(schema, l) === 'debt' && childrenOf(schema, l.id).length === 0,
+    (l) =>
+      effectiveLineKind(schema, l) === 'debt' &&
+      childrenOf(schema, l.id).length === 0 &&
+      (l.debtProperties !== undefined || getBalance === undefined || getBalance(l.id) !== null),
   );
 
   const tiers: SeniorityTier[] = [];
@@ -89,6 +99,20 @@ export function computeDistributableValue(inputs: RecoveryInputs, concepts: Dist
     case null:
       return null;
   }
+}
+
+/** The period a recovery runs against when none is chosen: the last ACTUAL period (today's
+ *  capital structure against LTM earnings) rather than a projected year whose debt balances
+ *  depend on projection assumptions. Falls back to the last period when there are no actuals. */
+export function defaultRecoveryPeriodIndex(timeline: Timeline): number {
+  const lastActual = timeline.map((p) => p.kind).lastIndexOf('actual');
+  return lastActual >= 0 ? lastActual : timeline.length - 1;
+}
+
+/** The admin & priority claim in dollars — RecoveryInputs.adminCostsPct applied to the value
+ *  actually being distributed. Null (treated as no claim) when either is unset. */
+export function adminClaimFor(inputs: RecoveryInputs, distributableValue: number | null): number | null {
+  return inputs.adminCostsPct !== null && distributableValue !== null ? inputs.adminCostsPct * distributableValue : null;
 }
 
 export interface TrancheRecovery {
@@ -251,7 +275,7 @@ export function computeRecoverySensitivity(
   return driverValues.map((driverValue) => {
     const steppedInputs: RecoveryInputs = inputs.method === 'direct' ? { ...inputs, directValue: driverValue } : { ...inputs, multiple: driverValue };
     const distributableValue = computeDistributableValue(steppedInputs, concepts);
-    const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, inputs.adminCosts);
+    const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, adminClaimFor(inputs, distributableValue));
     return { driverValue, waterfall };
   });
 }

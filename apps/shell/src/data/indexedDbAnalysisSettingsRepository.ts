@@ -16,7 +16,7 @@ export class IndexedDbAnalysisSettingsRepository implements AnalysisSettingsRepo
       modelId,
       enabledAnalysisIds: ANALYSIS_CATALOG.filter((entry) => entry.defaultEnabled).map((entry) => entry.id),
       dcfInputs: { base: { wacc: null, terminalGrowth: null } },
-      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null } },
+      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null } },
       createdAt: now,
       updatedAt: now,
     };

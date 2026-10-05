@@ -75,7 +75,7 @@ describe('computeUfcf', () => {
     expect(rows[0].ufcf).toBeNull();
   });
 
-  it('yields a null ΔNWC/UFCF for the first projected period when there is no prior period at all', () => {
+  it('counts a missing ΔNWC as 0 when there is no prior period at all', () => {
     const timeline: Timeline = [period('2024', 'projected')];
     const result = lineValues({
       ebit: [100],
@@ -85,8 +85,9 @@ describe('computeUfcf', () => {
       taxRate: [0.2],
     });
     const rows = computeUfcf(result, timeline, concepts);
-    expect(rows[0].deltaNwc).toBeNull();
-    expect(rows[0].ufcf).toBeNull();
+    expect(rows[0].deltaNwc).toBe(0);
+    expect(rows[0].zeroFilled).toEqual(['deltaNwc']);
+    expect(rows[0].ufcf).toBeCloseTo(82);
   });
 });
 
@@ -97,7 +98,7 @@ describe('effectiveDcfInputs', () => {
       modelId: 'm1',
       enabledAnalysisIds: ['dcf'],
       dcfInputs,
-      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null } },
+      recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null } },
       createdAt: 't0',
       updatedAt: 't0',
     };
@@ -123,7 +124,7 @@ describe('effectiveDcfInputs', () => {
 });
 
 function ufcfRow(periodIndex: number, ufcf: number | null): DcfUfcfRow {
-  return { periodIndex, ebit: null, taxRate: null, nopat: null, da: null, capex: null, deltaNwc: null, ufcf };
+  return { periodIndex, ebit: null, taxRate: null, nopat: null, da: null, capex: null, deltaNwc: null, ufcf, zeroFilled: [] };
 }
 
 describe('computeDcfOutputs', () => {

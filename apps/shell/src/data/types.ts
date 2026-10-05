@@ -249,6 +249,10 @@ export interface StatementSchema {
   /** Array position is the display order of sections. */
   sections: StatementSection[];
   drivers: DriverDefinition[];
+  /** Explicit concept -> line picks made from an analysis's "Lines used" card (keyed by
+   *  SummaryConcept). Checked before name/alias matching in findSummaryLine, so a user can point
+   *  a concept at a different line even when another line's own name already matches it. */
+  conceptLineIds?: Record<string, string>;
 }
 
 export interface StatementSchemaRepository {
@@ -752,12 +756,12 @@ export interface RecoveryInputs {
   multiple: number | null;
   periodIndex: number | null;
   directValue: number | null;
-  /** Administrative & priority claims (DIP financing, professional fees, wind-down costs) —
-   *  a flat dollar amount paid out of distributableValue BEFORE any secured tranche, per the
-   *  standard priority sequence. `null` (not 0) means "not entered" — treated as $0 by
-   *  computeRecoveryWaterfall, same "optional, off by default" semantics as the rest of this
-   *  analysis's inputs. */
-  adminCosts: number | null;
+  /** Administrative & priority claims (DIP financing, professional fees, wind-down costs) as a
+   *  fraction of distributable value (0.05 for 5%), paid BEFORE any secured tranche per the
+   *  standard priority sequence — see lib/recoveryWaterfall.ts's adminClaimFor. `null` (not 0)
+   *  means "not entered", treated as no claim. Replaced an earlier flat-dollar `adminCosts`
+   *  field; a stored record still carrying that field just ignores it. */
+  adminCostsPct: number | null;
 }
 
 /**
@@ -794,7 +798,7 @@ export interface AnalysisSettingsRepository {
   /** Seeds a fresh row: enabledAnalysisIds from the catalog's defaultEnabled entries,
    *  dcfInputs: { base: { wacc: null, terminalGrowth: null } },
    *  recoveryInputs: { base: { method: null, multiple: null, periodIndex: null, directValue: null,
-   *  adminCosts: null } }. */
+   *  adminCostsPct: null } }. */
   create(modelId: string): Promise<AnalysisSettings>;
   update(
     modelId: string,
@@ -816,6 +820,8 @@ export interface DcfOutput {
     capex: number | null;
     deltaNwc: number | null;
     ufcf: number | null;
+    /** Absent on results cached before missing D&A/CapEx/ΔNWC started counting as 0. */
+    zeroFilled?: Array<'da' | 'capex' | 'deltaNwc'>;
   }>;
   discountFactors: (number | null)[];
   presentValueOfUfcf: number | null;

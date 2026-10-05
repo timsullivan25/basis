@@ -51,6 +51,8 @@ import { getCheckStatus, getLineRowStyle } from '../components/statements/statem
 import { formatPeriodValue } from '../components/models/mapping/mappingFormatting';
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
+import { SensitivityPanel } from '../components/models/sensitivity/SensitivityPanel';
+import { lboParamsFor, readableAnalysisIds, type AnalysisContext } from '../lib/sensitivityAnalyses';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
@@ -73,6 +75,7 @@ import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../lib/debtSchedule';
 import { applyLboFinancingPatch, computeLboOutput, seedLboCase, type SeedLboCaseParams } from '../lib/lbo';
+import { effectiveRecoveryInputs } from '../lib/recoveryWaterfall';
 import { DriverChart, DriverSparkline } from '../components/models/DriverChart';
 import { DriverValueInput, formatDriverValue } from '../components/models/DriverValueInput';
 import { effectiveLineKind } from '../lib/statementLineChildren';
@@ -285,6 +288,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
   const [lboCase, setLboCase] = useState<LboCase | null>(null);
+  // Analyses tab's expanded sections — lives here (not in AnalysesPanel) so switching tabs doesn't
+  // reset it. null = untouched, i.e. every enabled analysis open.
+  const [openAnalysisKeys, setOpenAnalysisKeys] = useState<string[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,6 +311,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       setModelImport(existingModelImport ?? null);
       setAnalysisSettings(existingAnalysisSettings ?? null);
       setLboCase(existingLboCase ?? null);
+      setOpenAnalysisKeys(null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -324,13 +331,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   const currentProjectedCount = model ? model.timeline.filter((p) => p.kind === 'projected').length : 0;
 
-  // Resyncs the horizon field when a different model loads (initial load / company switch) —
-  // our own extend/shrink actions explicitly set this themselves right after, so this effect
-  // firing only on `model?.id` (not on every timeline edit) never fights with that.
+  // Resyncs the horizon field whenever the stored projection count changes — a different model
+  // loading, our own extend/shrink, or a mapping save rewriting the timeline — so the field never
+  // shows a number the timeline doesn't actually have. Typing doesn't change the count, so this
+  // never fights an in-progress edit.
   useEffect(() => {
     setHorizonInput(String(currentProjectedCount));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model?.id]);
+  }, [model?.id, currentProjectedCount]);
 
   const activeScenario = activeScenarioId === 'base' ? null : (scenarios.find((s) => s.id === activeScenarioId) ?? null);
 
@@ -338,15 +345,23 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   // Every dynamic child line (segment, EBITDA adjustment, KPI, debt tranche) is already a real
   // StatementLine living directly in `schema` (see lib/statementLineChildren.ts) — one plain
   // evaluation, no separate splice step.
-  const evaluation = useMemo(() => {
-    if (!schema || !evaluatedModel) return null;
-    // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
-    // layered on top via the same merge helper the compare view will batch-evaluate with.
-    const driverValues = activeScenario
+  // Base's own driverValues flow through unmerged; a named scenario's sparse overrides are
+  // layered on top via the same merge helper the compare view will batch-evaluate with. Kept as
+  // its own memo so the Sensitivity tab can start its sweeps from exactly what's evaluated here.
+  const effectiveDriverValues = useMemo(() => {
+    if (!evaluatedModel) return null;
+    return activeScenario
       ? mergeScenarioDriverValues(evaluatedModel.driverValues ?? {}, activeScenario.driverValues)
       : (evaluatedModel.driverValues ?? {});
-    return evaluateModel(schema, { ...evaluatedModel, driverValues });
-  }, [schema, evaluatedModel, activeScenario]);
+  }, [evaluatedModel, activeScenario]);
+  const evaluatedInput = useMemo(
+    () => (evaluatedModel && effectiveDriverValues ? { timeline: evaluatedModel.timeline, historicals: evaluatedModel.historicals, driverValues: effectiveDriverValues } : null),
+    [evaluatedModel, effectiveDriverValues],
+  );
+  const evaluation = useMemo(() => {
+    if (!schema || !evaluatedInput) return null;
+    return evaluateModel(schema, evaluatedInput);
+  }, [schema, evaluatedInput]);
 
   // Persists the active scenario's live evaluation as a ComputedResult — "computed state is a
   // cache, not a source" from the architecture contract. Auto mode only: manual mode's frozen
@@ -404,6 +419,26 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     const versionStamp = computeAnalysisVersionStamp(model, activeScenario, schema, lboCase);
     void analysisResultRepository.set(buildAnalysisResult(model.id, activeScenarioId, 'lbo', versionStamp, output));
   }, [recalcMode, schema, model, evaluation, activeScenario, activeScenarioId, analysisSettings, lboCase]);
+
+  // What the Sensitivity tab needs to read analysis results and shift analysis assumptions: the
+  // enabled analyses and the active scenario's effective inputs for each.
+  const sensitivityAnalysis = useMemo((): AnalysisContext | null => {
+    if (!schema || !evaluatedInput || !analysisSettings) return null;
+    const enabledIds = readableAnalysisIds(schema, analysisSettings.enabledAnalysisIds);
+    if (enabledIds.length === 0) return null;
+    return {
+      schema,
+      timeline: evaluatedInput.timeline,
+      scenarioId: activeScenarioId,
+      enabledIds,
+      lboCase,
+      base: {
+        dcf: enabledIds.includes('dcf') ? effectiveDcfInputs(analysisSettings, activeScenarioId) : null,
+        lbo: enabledIds.includes('lbo') ? lboParamsFor(lboCase, activeScenarioId) : null,
+        recovery: enabledIds.includes('recoveryWaterfall') ? effectiveRecoveryInputs(analysisSettings, activeScenarioId) : null,
+      },
+    };
+  }, [schema, evaluatedInput, analysisSettings, activeScenarioId, lboCase]);
 
   // Batch-evaluates Base + every scenario for the Compare tab — always against the live model
   // (auto), independent of the main grid's Auto/Manual toggle, which is specifically about not
@@ -662,6 +697,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       modelImportRepository.get(savedModel.modelImportId),
     ]);
     setModel(savedModel);
+    // Manual recalc mode would otherwise keep evaluating the pre-remap historicals against the
+    // new schema — a remap is an explicit save, so take it as a recalculate too.
+    if (recalcMode === 'manual') setManualSnapshot(savedModel);
     setSchema(existingSchema ?? null);
     setMapping(existingMapping ?? null);
     setModelImport(existingModelImport ?? null);
@@ -730,6 +768,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       ? [...settings.enabledAnalysisIds, analysisId]
       : settings.enabledAnalysisIds.filter((id) => id !== analysisId);
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { enabledAnalysisIds: nextIds }));
+    if (enabled) setOpenAnalysisKeys((prev) => (prev === null || prev.includes(analysisId) ? prev : [...prev, analysisId]));
   }
 
   async function updateDcfInputs(scenarioId: ScenarioKey, patch: Partial<DcfInputs>) {
@@ -771,7 +810,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   async function updateRecoveryInputs(scenarioId: ScenarioKey, patch: Partial<RecoveryInputs>) {
     if (!model) return;
     const settings = analysisSettings ?? (await analysisSettingsRepository.create(model.id));
-    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    const current = settings.recoveryInputs?.[scenarioId] ?? { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
     const recoveryInputs = { ...settings.recoveryInputs, [scenarioId]: { ...current, ...patch } };
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { recoveryInputs }));
   }
@@ -790,6 +829,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
     { value: 'financials', label: 'Financials' },
     { value: 'summary', label: 'Summary' },
     { value: 'analyses', label: 'Analyses' },
+    { value: 'sensitivity', label: 'Sensitivity' },
     ...(scenarios.length > 0 ? [{ value: 'compare', label: 'Compare' }] : []),
   ];
   const topNavValue = isFinancialsTab ? 'financials' : tab;
@@ -1486,6 +1526,19 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             onUpdateLboCase={updateLboCase}
             onUpdateLboFinancing={updateLboFinancing}
             onRemoveLboCase={removeLboCase}
+            openKeys={openAnalysisKeys}
+            onOpenKeysChange={setOpenAnalysisKeys}
+          />
+        ) : null
+      ) : tab === 'sensitivity' ? (
+        evaluatedInput ? (
+          <SensitivityPanel
+            key={model.id}
+            schema={schema}
+            model={evaluatedInput}
+            baseline={evaluation}
+            analysis={sensitivityAnalysis}
+            scenarioName={activeScenario?.name ?? 'Base case'}
           />
         ) : null
       ) : tab === 'compare' ? (
