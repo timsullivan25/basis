@@ -10,9 +10,11 @@ import {
 } from '../../../data';
 import type { LineValues } from '../../../lib/computedCache';
 import {
+  adminClaimFor,
   computeDistributableValue,
   computeRecoverySensitivity,
   computeRecoveryWaterfall,
+  defaultRecoveryPeriodIndex,
   effectiveRecoveryInputs,
   orderedSeniorityTiers,
   type TrancheRecovery,
@@ -85,6 +87,33 @@ function NumberInput({ value, onCommit }: { value: number | null; onCommit: (nex
   );
 }
 
+/** Same buffer/commit pattern as NumberInput, but shown as a whole percentage (5 = 5%) and
+ *  committed as a fraction (0.05), matching DcfPanel's own PercentInput. */
+function PercentInput({ value, onCommit }: { value: number | null; onCommit: (next: number | null) => void }) {
+  const [text, setText] = useState(() => (value === null ? '' : String(value * 100)));
+  function commit() {
+    const trimmed = text.trim();
+    if (trimmed === '') return onCommit(null);
+    const n = Number(trimmed);
+    onCommit(Number.isNaN(n) ? null : n / 100);
+  }
+  return (
+    <Input
+      size="sm"
+      mono
+      type="number"
+      selectOnFocus
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+      }}
+      onBlur={commit}
+      style={{ width: 90 }}
+    />
+  );
+}
+
 function tranche(t: TrancheRecovery, fulcrumLineId: string | null): DisplayRow {
   return {
     lineId: t.lineId,
@@ -109,7 +138,7 @@ export function RecoveryWaterfallPanel({
 }: RecoveryWaterfallPanelProps) {
   const inputs: RecoveryInputs = analysisSettings
     ? effectiveRecoveryInputs(analysisSettings, activeScenarioId)
-    : { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    : { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
 
   const requiredConcept = inputs.method === 'ebitdaMultiple' ? 'ebitda' : inputs.method === 'revenueMultiple' ? 'revenue' : null;
   const conceptLine = requiredConcept ? findSummaryLine(schema, requiredConcept) : undefined;
@@ -124,19 +153,14 @@ export function RecoveryWaterfallPanel({
     .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
     .filter((g) => g.options.length > 0);
 
-  // Defaults to the LAST period in the timeline, not the last actual — a recovery analysis is
-  // normally run against a future exit/distress point, not today's balance sheet (unlike DCF's
-  // Net Debt, which deliberately reads "now"). Projected periods are always appended after
-  // actuals here, so this naturally lands on the last projection when one exists, and degrades
-  // to the last actual for a historicals-only model.
-  const periodIndex = inputs.periodIndex ?? model.timeline.length - 1;
+  const periodIndex = inputs.periodIndex ?? defaultRecoveryPeriodIndex(model.timeline);
   const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
   const concepts = { ebitda: requiredConcept === 'ebitda' ? conceptValue : null, revenue: requiredConcept === 'revenue' ? conceptValue : null };
   const distributableValue = computeDistributableValue(inputs, concepts);
 
-  const tiers = orderedSeniorityTiers(schema);
   const getBalance = (lineId: string) => evaluation.getValue(lineId, periodIndex);
-  const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, inputs.adminCosts);
+  const tiers = orderedSeniorityTiers(schema, getBalance);
+  const waterfall = computeRecoveryWaterfall(tiers, getBalance, distributableValue, adminClaimFor(inputs, distributableValue));
 
   const equityRow: DisplayRow = {
     lineId: '__equity__',
@@ -153,7 +177,7 @@ export function RecoveryWaterfallPanel({
   // strictly senior/junior (different groups), the same question the table alone couldn't answer
   // when every row just carried its tier name as a small caption.
   const displayRows: DisplayRow[] = [
-    ...(inputs.adminCosts !== null
+    ...(inputs.adminCostsPct !== null
       ? [
           { lineId: '__group-admin__', __group: 'Priority (paid before any secured debt)' },
           tranche(waterfall.adminCosts, waterfall.fulcrumLineId),
@@ -173,7 +197,7 @@ export function RecoveryWaterfallPanel({
   const sensitivity = computeRecoverySensitivity(inputs, concepts, tiers, getBalance);
   const sensitivityRows: RecoveryRangeRow[] = sensitivity
     ? [
-        ...(inputs.adminCosts !== null
+        ...(inputs.adminCostsPct !== null
           ? [
               {
                 key: waterfall.adminCosts.lineId,
@@ -248,8 +272,11 @@ export function RecoveryWaterfallPanel({
             ) : null}
 
             {inputs.method !== null ? (
-              <Field label="Admin & priority costs">
-                <NumberInput value={inputs.adminCosts} onCommit={(adminCosts) => onUpdateRecoveryInputs(activeScenarioId, { adminCosts })} />
+              <Field label="Admin & priority claims (% of value)">
+                <PercentInput
+                  value={inputs.adminCostsPct}
+                  onCommit={(adminCostsPct) => onUpdateRecoveryInputs(activeScenarioId, { adminCostsPct })}
+                />
               </Field>
             ) : null}
           </div>

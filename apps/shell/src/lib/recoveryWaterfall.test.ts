@@ -89,27 +89,27 @@ describe('orderedSeniorityTiers', () => {
 
 describe('computeDistributableValue', () => {
   it('multiplies EBITDA by the multiple for the ebitdaMultiple method', () => {
-    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 5, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 5, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeDistributableValue(inputs, { ebitda: 100, revenue: null })).toBe(500);
   });
 
   it('multiplies Revenue by the multiple for the revenueMultiple method', () => {
-    const inputs: RecoveryInputs = { method: 'revenueMultiple', multiple: 2, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'revenueMultiple', multiple: 2, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeDistributableValue(inputs, { ebitda: null, revenue: 300 })).toBe(600);
   });
 
   it('returns directValue as-is for the direct method', () => {
-    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 750, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 750, adminCostsPct: null };
     expect(computeDistributableValue(inputs, { ebitda: null, revenue: null })).toBe(750);
   });
 
   it('returns null when the chosen method is missing an input it needs', () => {
-    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 5, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 5, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeDistributableValue(inputs, { ebitda: null, revenue: null })).toBeNull();
   });
 
   it('returns null when no method has been chosen yet', () => {
-    const inputs: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeDistributableValue(inputs, { ebitda: 100, revenue: 100 })).toBeNull();
   });
 });
@@ -241,17 +241,17 @@ describe('computeRecoverySensitivity', () => {
   const getBalance = () => 400;
 
   it('returns null when no method is chosen', () => {
-    const inputs: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: null, multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeRecoverySensitivity(inputs, { ebitda: 100, revenue: 100 }, tiers, getBalance)).toBeNull();
   });
 
   it("returns null when the method's own driver value isn't set", () => {
-    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: null, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: null, periodIndex: null, directValue: null, adminCostsPct: null };
     expect(computeRecoverySensitivity(inputs, { ebitda: 100, revenue: 100 }, tiers, getBalance)).toBeNull();
   });
 
   it('steps an EBITDA multiple by whole turns around the base case, clamped at 0x', () => {
-    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 0.5, periodIndex: null, directValue: null, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 0.5, periodIndex: null, directValue: null, adminCostsPct: null };
     const points = computeRecoverySensitivity(inputs, { ebitda: 400, revenue: 0 }, tiers, getBalance);
     expect(points).not.toBeNull();
     expect(points!.map((p) => p.driverValue)).toEqual([0, 0, 0.5, 1, 1.5]); // -1 and -0.5 both clamp to 0
@@ -262,15 +262,15 @@ describe('computeRecoverySensitivity', () => {
   });
 
   it('steps the direct value by percentage, never clamped', () => {
-    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 1000, adminCosts: null };
+    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 1000, adminCostsPct: null };
     const points = computeRecoverySensitivity(inputs, { ebitda: 0, revenue: 0 }, tiers, getBalance);
     expect(points!.map((p) => p.driverValue)).toEqual([800, 900, 1000, 1100, 1200]);
   });
 
-  it('carries adminCosts into every stepped point, not just the base case', () => {
-    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 1000, adminCosts: 50 };
+  it('applies adminCostsPct to every stepped point, not just the base case', () => {
+    const inputs: RecoveryInputs = { method: 'direct', multiple: null, periodIndex: null, directValue: 1000, adminCostsPct: 0.05 };
     const points = computeRecoverySensitivity(inputs, { ebitda: 0, revenue: 0 }, tiers, getBalance);
-    expect(points!.every((p) => p.waterfall.adminCosts.recoveryAmount === 50)).toBe(true);
+    expect(points!.map((p) => p.waterfall.adminCosts.recoveryAmount)).toEqual([40, 45, 50, 55, 60]);
   });
 });
 
@@ -288,15 +288,15 @@ describe('effectiveRecoveryInputs', () => {
   }
 
   it("returns base's inputs directly for the base scenario", () => {
-    const base: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 6, periodIndex: null, directValue: null, adminCosts: 25 };
+    const base: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 6, periodIndex: null, directValue: null, adminCostsPct: 0.025 };
     expect(effectiveRecoveryInputs(settings({ base }), 'base')).toEqual(base);
   });
 
   it("cascades a named scenario's unset fields from base, per field", () => {
-    const base: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 6, periodIndex: 2, directValue: null, adminCosts: 25 };
-    const downside: RecoveryInputs = { method: null, multiple: 4, periodIndex: null, directValue: null, adminCosts: null };
+    const base: RecoveryInputs = { method: 'ebitdaMultiple', multiple: 6, periodIndex: 2, directValue: null, adminCostsPct: 0.025 };
+    const downside: RecoveryInputs = { method: null, multiple: 4, periodIndex: null, directValue: null, adminCostsPct: null };
     const effective = effectiveRecoveryInputs(settings({ base, downside }), 'downside');
-    expect(effective).toEqual({ method: 'ebitdaMultiple', multiple: 4, periodIndex: 2, directValue: null, adminCosts: 25 });
+    expect(effective).toEqual({ method: 'ebitdaMultiple', multiple: 4, periodIndex: 2, directValue: null, adminCostsPct: 0.025 });
   });
 
   it('falls back to an all-null default when recoveryInputs is missing entirely (pre-existing record)', () => {
@@ -306,7 +306,7 @@ describe('effectiveRecoveryInputs', () => {
       multiple: null,
       periodIndex: null,
       directValue: null,
-      adminCosts: null,
+      adminCostsPct: null,
     });
   });
 });

@@ -4,7 +4,7 @@ import type { LineValues } from './computedCache';
 import { missingConceptsFor } from './analysisAvailability';
 import { computeDcfOutputs, computeUfcf, lastActualIndex } from './dcf';
 import { computeLboOutput, effectiveLboFinancing } from './lbo';
-import { computeDistributableValue, computeRecoveryWaterfall, orderedSeniorityTiers } from './recoveryWaterfall';
+import { adminClaimFor, computeDistributableValue, computeRecoveryWaterfall, defaultRecoveryPeriodIndex, orderedSeniorityTiers } from './recoveryWaterfall';
 import { findSummaryLine } from './summaryLines';
 
 /**
@@ -164,7 +164,7 @@ function recoveryOutput(ctx: AnalysisContext, evaluation: LineValues, params: An
   return cached(evaluation, params, 'recoveryWaterfall', () => {
     const inputs = params.recovery;
     if (!inputs) return null;
-    const periodIndex = inputs.periodIndex ?? ctx.timeline.length - 1;
+    const periodIndex = inputs.periodIndex ?? defaultRecoveryPeriodIndex(ctx.timeline);
     const concept = inputs.method === 'ebitdaMultiple' ? 'ebitda' : inputs.method === 'revenueMultiple' ? 'revenue' : null;
     const conceptLine = concept ? findSummaryLine(ctx.schema, concept) : undefined;
     const conceptValue = conceptLine ? evaluation.getValue(conceptLine.id, periodIndex) : null;
@@ -173,7 +173,7 @@ function recoveryOutput(ctx: AnalysisContext, evaluation: LineValues, params: An
       revenue: concept === 'revenue' ? conceptValue : null,
     });
     const getBalance = (lineId: string) => evaluation.getValue(lineId, periodIndex);
-    return computeRecoveryWaterfall(orderedSeniorityTiers(ctx.schema), getBalance, distributableValue, inputs.adminCosts);
+    return computeRecoveryWaterfall(orderedSeniorityTiers(ctx.schema, getBalance), getBalance, distributableValue, adminClaimFor(inputs, distributableValue));
   });
 }
 
