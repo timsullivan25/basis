@@ -360,16 +360,22 @@ export function buildDebtEndingBalanceFormula(
   return add(sub(sub(ref(beginningId), ref(amortizationId)), ref(repaymentId)), ref(borrowingId));
 }
 
-/** (an explicit original-face-value override, else this tranche's own value at the model's last
- *  actual period) × amortizationRate, prorated to the model's own period frequency. */
+/** The scheduled amount — (an explicit original-face-value override, else this tranche's own
+ *  value at the model's last actual period) × amortizationRate, prorated to the model's own period
+ *  frequency — capped at the beginning balance, so a paid-down tranche never amortizes below zero:
+ *  max(0, Beginning − max(0, Beginning − scheduled)), i.e. min(scheduled, Beginning). Written with
+ *  `-` rather than min() so a period with no beginning balance (the first period, before any debt
+ *  is outstanding) amortizes 0 instead of min() skipping the null and taking the full schedule. */
 export function buildDebtAmortizationFormula(
   trancheLineId: string,
   originalFaceValue: number | undefined,
   amortizationRate: number,
   periodsPerYear: number,
+  beginningId: string,
 ): ResolvedFormula {
   const base = originalFaceValue !== undefined ? num(originalFaceValue) : lastActualOf(ref(trancheLineId));
-  return mul(base, num(amortizationRate / periodsPerYear));
+  const scheduled = mul(base, num(amortizationRate / periodsPerYear));
+  return maxOf(num(0), sub(ref(beginningId), maxOf(num(0), sub(ref(beginningId), scheduled))));
 }
 
 /** couponRate/periodsPerYear × (avg(Beginning, Ending) if circularCalcsEnabled, else Beginning
@@ -419,7 +425,8 @@ export function buildCashShortfallFormula(
   return maxOf(num(0), sub(driverRef(minimumCashDriverId), add(priorPeriodOf(ref(cashLineId)), ref(fcfLineId))));
 }
 
-/** min(max(0, cash remaining after every more-senior tranche's own Repayment), this tranche's own
+/** min(max(0, cash remaining after every prior claim — the caller passes every tranche's mandatory
+ *  amortization plus each more-senior tranche's own Repayment), this tranche's own
  *  balance after mandatory amortization) — one link in the seniority waterfall chain; a
  *  non-repayable tranche never calls this (its Repayment is a flat 0 — see regenerateDebtSchedule),
  *  so the chain passes through it with no special case needed here. */
@@ -433,7 +440,8 @@ export function buildDebtRepaymentFormula(
     moreSeniorRepaymentIds.length === 0
       ? ref(cashAvailableId)
       : maxOf(num(0), sub(ref(cashAvailableId), sumOf(moreSeniorRepaymentIds.map(ref))));
-  return minOf(remaining, sub(ref(beginningId), ref(amortizationId)));
+  // max(0, …) so a period with no beginning balance repays 0, not the whole cash pool.
+  return minOf(remaining, maxOf(num(0), sub(ref(beginningId), ref(amortizationId))));
 }
 
 /** min(shortfall, remaining undrawn capacity) — capped so a draw can never push the revolver past

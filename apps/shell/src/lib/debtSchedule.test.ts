@@ -246,19 +246,19 @@ describe('regenerateDebtSchedule — end to end via evaluateModel', () => {
     const termARepay = findByRole(regenerated, 'repayment', 'termA')!;
     const termBRepay = findByRole(regenerated, 'repayment', 'termB')!;
     expect(evaluation.getValue(revolverRepay.id, 1)).toBe(15); // fully repaid — it was senior-most
-    expect(evaluation.getValue(termARepay.id, 1)).toBe(75); // 90 available − 15 to the revolver
+    expect(evaluation.getValue(termARepay.id, 1)).toBe(70); // 90 available − 5 Term A amortization − 15 to the revolver
     expect(evaluation.getValue(termBRepay.id, 1)).toBe(0); // non-repayable, never touched
 
     const revolverEnding = findByRole(regenerated, 'endingBalance', 'revolver')!;
     const termAEnding = findByRole(regenerated, 'endingBalance', 'termA')!;
     const termBEnding = findByRole(regenerated, 'endingBalance', 'termB')!;
     expect(evaluation.getValue(revolverEnding.id, 1)).toBe(0);
-    expect(evaluation.getValue(termAEnding.id, 1)).toBe(20); // 100 − 5 amort − 75 repay
+    expect(evaluation.getValue(termAEnding.id, 1)).toBe(25); // 100 − 5 amort − 70 repay
     expect(evaluation.getValue(termBEnding.id, 1)).toBe(50); // untouched
 
     // Interest Expense total = revolver coupon + commitment fee + term A + term B, all Beginning-only.
     expect(evaluation.getValue(TOTAL_INTEREST_ID, 1)).toBeCloseTo(0.08 * 15 + 0.005 * (50 - 15) + 0.06 * 100 + 0.07 * 50, 6);
-    expect(evaluation.getValue(TOTAL_REPAYMENTS_ID, 1)).toBe(15 + (5 + 75) + 0); // revolver + (termA amort+repay) + termB
+    expect(evaluation.getValue(TOTAL_REPAYMENTS_ID, 1)).toBe(15 + (5 + 70) + 0); // revolver + (termA amort+repay) + termB
   });
 
   it('draws the revolver to cover a shortfall within capacity, with no breach', () => {
