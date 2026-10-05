@@ -55,10 +55,21 @@ export function canonicalAliasFor(concept: SummaryConcept): string {
  *  tile/row built on this must handle that by omitting itself, not fabricating a value. */
 export function findSummaryLine(schema: StatementSchema, concept: SummaryConcept): StatementLine | undefined {
   const lines = schema.sections.flatMap((s) => s.lines);
+  // An explicit pick wins over name/alias matching — ignored if that line has since been deleted.
+  const pickedId = schema.conceptLineIds?.[concept];
+  const picked = pickedId ? lines.find((l) => l.id === pickedId) : undefined;
+  if (picked) return picked;
   for (const candidate of CANDIDATES[concept]) {
     const target = normalize(candidate);
     const match = lines.find((l) => normalize(l.name) === target || l.aliases.some((a) => normalize(a) === target));
     if (match) return match;
   }
   return undefined;
+}
+
+/** Points a concept at a specific line — returns the updated schema for the caller to persist.
+ *  Re-pointable at any time (the "Lines used" card on each analysis), unlike the old
+ *  alias-append, which couldn't override a line whose own name already matched. */
+export function assignConceptLine(schema: StatementSchema, concept: SummaryConcept, lineId: string): StatementSchema {
+  return { ...schema, conceptLineIds: { ...schema.conceptLineIds, [concept]: lineId } };
 }

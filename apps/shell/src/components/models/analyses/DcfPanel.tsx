@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, Card, DataTable, Field, Icon, Input, MetricCard, Select } from '@basis/design-system';
-import { statementSchemaRepository, type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
+import { Alert, Card, DataTable, Field, Icon, Input, MetricCard } from '@basis/design-system';
+import { type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
-import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
+import { findSummaryLine } from '../../../lib/summaryLines';
+import { ConceptLinesCard } from './ConceptLinesCard';
 import type { LineValues } from '../../../lib/computedCache';
 import {
   computeDcfOutputs,
@@ -26,15 +27,6 @@ interface DcfPanelProps {
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
 }
-
-const CONCEPT_LABELS: Record<SummaryConcept, string> = {
-  revenue: 'Revenue', ebitda: 'EBITDA', netDebt: 'Net Debt', netLeverage: 'Net Leverage',
-  interestCoverage: 'Interest Coverage', totalDebt: 'Total Debt', totalEquity: 'Total Equity',
-  ebit: 'EBIT', da: 'D&A', capex: 'CapEx', nwc: 'Net Working Capital', taxRate: 'Effective Tax Rate',
-  cash: 'Cash & Equivalents', fcf: 'Free Cash Flow',
-};
-
-const ADD_NEW_LINE = '__add_new_line__';
 
 const UFCF_ROW_DEFS: Array<{ key: string; label: string; formula: string; get: (r: DcfUfcfRow) => number | null }> = [
   { key: 'ebit', label: 'EBIT', formula: 'The resolved EBIT line', get: (r) => r.ebit },
@@ -94,22 +86,6 @@ export function DcfPanel({
   const catalogEntry = ANALYSIS_CATALOG.find((e) => e.id === 'dcf')!;
   const missing = missingConceptsFor(schema, catalogEntry);
 
-  async function assignConceptLine(concept: SummaryConcept, lineId: string) {
-    const alias = canonicalAliasFor(concept);
-    const sections = schema.sections.map((section) => ({
-      ...section,
-      lines: section.lines.map((line) =>
-        line.id === lineId && !line.aliases.includes(alias) ? { ...line, aliases: [...line.aliases, alias] } : line,
-      ),
-    }));
-    const updated = await statementSchemaRepository.save({ ...schema, sections });
-    onSchemaUpdated(updated);
-  }
-
-  const lineGroups = schema.sections
-    .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
-    .filter((g) => g.options.length > 0);
-
   const inputs = analysisSettings ? effectiveDcfInputs(analysisSettings, activeScenarioId) : { wacc: null, terminalGrowth: null };
 
   const conceptLines: DcfConceptLines | null =
@@ -158,47 +134,12 @@ export function DcfPanel({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      {missing.length > 0 ? (
-        <Card title="Required lines" icon="list-checks" padding="none">
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {catalogEntry.requiredConcepts.map((concept) => {
-              const resolved = findSummaryLine(schema, concept);
-              return (
-                <div
-                  key={concept}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-5)',
-                    padding: 'var(--space-4) var(--space-6)', borderBottom: '1px solid var(--border-default)',
-                  }}
-                >
-                  <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{CONCEPT_LABELS[concept]}</span>
-                  {resolved ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-                      <Icon name="check" size={12} color="var(--status-positive-fg)" />
-                      {resolved.name}
-                    </span>
-                  ) : (
-                    <Select
-                      size="sm"
-                      fullWidth={false}
-                      style={{ width: 220 }}
-                      value=""
-                      options={[{ value: '', label: 'Select a line…' }, { value: ADD_NEW_LINE, label: 'Add a new line…' }]}
-                      groups={lineGroups}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (!value) return;
-                        if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
-                        else void assignConceptLine(concept, value);
-                      }}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      ) : null}
+      <ConceptLinesCard
+          schema={schema}
+          concepts={catalogEntry.requiredConcepts}
+          onSchemaUpdated={onSchemaUpdated}
+          onOpenStatementDefinitions={onOpenStatementDefinitions}
+        />
 
       <Card title="DCF" icon="calculator" padding="md">
         <div key={activeScenarioId} style={{ display: 'flex', gap: 'var(--space-6)' }}>

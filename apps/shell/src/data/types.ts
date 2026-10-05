@@ -249,6 +249,10 @@ export interface StatementSchema {
   /** Array position is the display order of sections. */
   sections: StatementSection[];
   drivers: DriverDefinition[];
+  /** Explicit concept -> line picks made from an analysis's "Lines used" card (keyed by
+   *  SummaryConcept). Checked before name/alias matching in findSummaryLine, so a user can point
+   *  a concept at a different line even when another line's own name already matches it. */
+  conceptLineIds?: Record<string, string>;
 }
 
 export interface StatementSchemaRepository {
