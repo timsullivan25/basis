@@ -1,5 +1,6 @@
 import React from 'react';
 import { Icon } from '../primitives/Icon.jsx';
+import { Tooltip } from '../feedback/Tooltip.jsx';
 
 /** Label + help/error scaffold shared by every input. */
 export function Field({ label, hint, error, required = false, htmlFor, children, inline = false, style, ...rest }) {
@@ -8,7 +9,12 @@ export function Field({ label, hint, error, required = false, htmlFor, children,
       {label ? (
         <label htmlFor={htmlFor} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)', letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase', color: 'var(--text-secondary)', width: inline ? 120 : undefined, flex: inline ? '0 0 auto' : undefined }}>
           {label}{required ? <span style={{ color: 'var(--text-negative)' }}>*</span> : null}
-          {hint && !error ? <Icon name="info" size={11} color="var(--text-tertiary)" title={hint} /> : null}
+          {hint && !error ? (
+            // A real Tooltip rather than the SVG's own <title>, which the dynamic icon never renders.
+            <Tooltip content={hint} placement="right" tabIndex={0} style={{ cursor: 'help' }}>
+              <Icon name="info" size={11} color="var(--text-tertiary)" title={hint} />
+            </Tooltip>
+          ) : null}
         </label>
       ) : null}
       <div style={{ minWidth: 0, flex: '1 1 auto' }}>

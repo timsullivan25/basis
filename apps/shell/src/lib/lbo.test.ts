@@ -96,7 +96,7 @@ describe('seedLboCase', () => {
     const result = seed();
     expect(result.financing.base.leverageMultiple).toBeCloseTo(800 / 440);
     const names = allLines(result.schema).filter((l) => l.parentLineId).map((l) => l.name);
-    expect(names).toEqual(['Term Loan', 'Revolver']);
+    expect(names).toEqual(['Revolver', 'Term Loan']);
     // No originalFaceValue stored for the Term Loan — it's leverage-linked, derived live instead.
     const termLoan = allLines(result.schema).find((l) => l.name === 'Term Loan')!;
     expect(termLoan.debtProperties?.originalFaceValue).toBeUndefined();

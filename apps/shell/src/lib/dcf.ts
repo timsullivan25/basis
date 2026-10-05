@@ -31,7 +31,15 @@ export interface DcfUfcfRow {
   capex: number | null;
   deltaNwc: number | null;
   ufcf: number | null;
+  /** Which of D&A/CapEx/ΔNWC had no value this period and were counted as 0 instead — so the
+   *  panel can say so rather than showing a 0 that looks sourced. */
+  zeroFilled: DcfZeroFillable[];
 }
+
+/** The UFCF adjustments a missing value legitimately means "none" for (no capex spend, no D&A, no
+ *  working-capital movement). EBIT and the tax rate stay hard requirements: zero-filling either
+ *  would fabricate a valuation rather than default an absent adjustment. */
+export type DcfZeroFillable = 'da' | 'capex' | 'deltaNwc';
 
 /**
  * The unlevered FCF build-up, one row per PROJECTED period only (a valuation looks forward from
@@ -48,20 +56,25 @@ export function computeUfcf(result: LineValues, timeline: Timeline, conceptLines
   timeline.forEach((period, i) => {
     if (period.kind !== 'projected') return;
     const ebit = result.getValue(conceptLines.ebit, i);
-    const da = result.getValue(conceptLines.da, i);
-    const capex = result.getValue(conceptLines.capex, i);
+    const zeroFilled: DcfZeroFillable[] = [];
+    const orZero = (key: DcfZeroFillable, value: number | null): number => {
+      if (value !== null) return value;
+      zeroFilled.push(key);
+      return 0;
+    };
+    const da = orZero('da', result.getValue(conceptLines.da, i));
+    const capex = orZero('capex', result.getValue(conceptLines.capex, i));
     const nwc = result.getValue(conceptLines.nwc, i);
-    const priorNwc = result.getValue(conceptLines.nwc, i - 1);
-    const deltaNwc = nwc !== null && priorNwc !== null ? nwc - priorNwc : null;
+    const priorNwc = i > 0 ? result.getValue(conceptLines.nwc, i - 1) : null;
+    const deltaNwc = orZero('deltaNwc', nwc !== null && priorNwc !== null ? nwc - priorNwc : null);
     // Falls back to the resolved tax-rate line's own last-actual value when it has no value at
     // this projected period — the common case, since most schemas won't separately project
     // Income Tax Expense/Pretax Income — mirroring evaluate.ts's own "last-actual-implied-ratio"
     // convention for percent-of/days-of driver defaults, rather than inventing new fallback logic.
     const taxRate = result.getValue(conceptLines.taxRate, i) ?? taxRateAtLastActual;
     const nopat = ebit !== null && taxRate !== null ? ebit * (1 - taxRate) : null;
-    const ufcf =
-      nopat !== null && da !== null && capex !== null && deltaNwc !== null ? nopat + da - capex - deltaNwc : null;
-    rows.push({ periodIndex: i, ebit, taxRate, nopat, da, capex, deltaNwc, ufcf });
+    const ufcf = nopat !== null ? nopat + da - capex - deltaNwc : null;
+    rows.push({ periodIndex: i, ebit, taxRate, nopat, da, capex, deltaNwc, ufcf, zeroFilled });
   });
   return rows;
 }

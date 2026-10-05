@@ -93,6 +93,9 @@ export function regenerateDebtSchedule(
   // this running list IS the seniority waterfall: each tranche's own Repayment formula
   // subtracts every id already in it from the shared cash pool before taking its own share.
   const seniorRepaymentIds: string[] = [];
+  // Mandatory amortization comes out of the cash pool before any sweep, so the sweep can't spend
+  // cash the scheduled payments already need (which would push Cash below the minimum).
+  const amortizationIds = tranches.map((t) => roleId(t.id, 'amortization'));
 
   let minCashTargetDriver: DriverDefinition | undefined;
   if (canRunCashLogic) {
@@ -137,7 +140,7 @@ export function regenerateDebtSchedule(
     // the formula shape) is enough, since the builder naturally evaluates to 0 either way.
     generatedLines.push({
       ...blankLine(amortizationId, `${tranche.name} — Amortization`, { trancheLineId: tranche.id, role: 'amortization' }),
-      formula: buildDebtAmortizationFormula(tranche.id, props.originalFaceValue, isRevolver ? 0 : (props.amortizationRate ?? 0), periodsPerYear),
+      formula: buildDebtAmortizationFormula(tranche.id, props.originalFaceValue, isRevolver ? 0 : (props.amortizationRate ?? 0), periodsPerYear, beginningId),
     });
 
     // Repayment: a revolver is always the waterfall's first link (no more-senior tranche ahead
@@ -150,7 +153,7 @@ export function regenerateDebtSchedule(
     } else if (!isRevolver && props.repayable === false) {
       repaymentFormula = { kind: 'num', value: 0 };
     } else {
-      repaymentFormula = buildDebtRepaymentFormula(cashAvailableId, [...seniorRepaymentIds], beginningId, amortizationId);
+      repaymentFormula = buildDebtRepaymentFormula(cashAvailableId, [...amortizationIds, ...seniorRepaymentIds], beginningId, amortizationId);
     }
     generatedLines.push({
       ...blankLine(repaymentId, `${tranche.name} — Repayment`, { trancheLineId: tranche.id, role: 'repayment' }),
