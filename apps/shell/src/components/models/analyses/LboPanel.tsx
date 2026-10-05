@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Alert, Badge, Button, Card, DataTable, Field, Icon, IconButton, Input, MetricCard, Select, Switch } from '@basis/design-system';
-import { statementSchemaRepository, type LboCase, type LboFinancingInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
+import { Alert, Badge, Button, Card, DataTable, Field, IconButton, Input, MetricCard, Select, Switch } from '@basis/design-system';
+import { type LboCase, type LboFinancingInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
-import { canonicalAliasFor, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
+import { findSummaryLine } from '../../../lib/summaryLines';
+import { ConceptLinesCard } from './ConceptLinesCard';
 import { addChildLine, childrenOf, removeChildLine } from '../../../lib/statementLineChildren';
 import { periodsPerYearFor, regenerateDebtSchedule } from '../../../lib/debtSchedule';
 import { computeEntryLtmEbitda, computeLboOutput, computeLeverageLinkedFaceValue, DEFAULT_HORIZON_YEARS, effectiveLboFinancing, type SeedLboCaseParams } from '../../../lib/lbo';
@@ -26,14 +27,6 @@ interface LboPanelProps {
   onSchemaUpdated: (schema: StatementSchema) => void;
   onOpenStatementDefinitions: () => void;
 }
-
-const CONCEPT_LABELS: Record<SummaryConcept, string> = {
-  revenue: 'Revenue', ebitda: 'EBITDA', netDebt: 'Net Debt', netLeverage: 'Net Leverage',
-  interestCoverage: 'Interest Coverage', totalDebt: 'Total Debt', totalEquity: 'Total Equity',
-  ebit: 'EBIT', da: 'D&A', capex: 'CapEx', nwc: 'Net Working Capital', taxRate: 'Effective Tax Rate',
-  cash: 'Cash & Equivalents', fcf: 'Free Cash Flow',
-};
-const ADD_NEW_LINE = '__add_new_line__';
 
 function parseNumber(text: string): number | null {
   const trimmed = text.trim();
@@ -113,20 +106,6 @@ export function LboPanel({
   const catalogEntry = ANALYSIS_CATALOG.find((e) => e.id === 'lbo')!;
   const missing = missingConceptsFor(schema, catalogEntry);
 
-  async function assignConceptLine(concept: SummaryConcept, lineId: string) {
-    const alias = canonicalAliasFor(concept);
-    const sections = schema.sections.map((section) => ({
-      ...section,
-      lines: section.lines.map((line) => (line.id === lineId && !line.aliases.includes(alias) ? { ...line, aliases: [...line.aliases, alias] } : line)),
-    }));
-    const updated = await statementSchemaRepository.save({ ...schema, sections });
-    onSchemaUpdated(updated);
-  }
-
-  const lineGroups = schema.sections
-    .map((s) => ({ label: s.name, options: s.lines.map((l) => ({ value: l.id, label: l.name })) }))
-    .filter((g) => g.options.length > 0);
-
   // Rebuilt from the live base evaluation on every render (see computeLboOutput's own doc
   // comment — the same function ModelWorkspaceScreen's own AnalysisResult write-through cache
   // calls, so the panel and the cache never drift apart) — computed unconditionally, ahead of the
@@ -141,47 +120,12 @@ export function LboPanel({
   if (!lboCase) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-        {missing.length > 0 ? (
-          <Card title="Required lines" icon="list-checks" padding="none">
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {catalogEntry.requiredConcepts.map((concept) => {
-                const resolved = findSummaryLine(schema, concept);
-                return (
-                  <div
-                    key={concept}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-5)',
-                      padding: 'var(--space-4) var(--space-6)', borderBottom: '1px solid var(--border-default)',
-                    }}
-                  >
-                    <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{CONCEPT_LABELS[concept]}</span>
-                    {resolved ? (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-                        <Icon name="check" size={12} color="var(--status-positive-fg)" />
-                        {resolved.name}
-                      </span>
-                    ) : (
-                      <Select
-                        size="sm"
-                        fullWidth={false}
-                        style={{ width: 220 }}
-                        value=""
-                        options={[{ value: '', label: 'Select a line…' }, { value: ADD_NEW_LINE, label: 'Add a new line…' }]}
-                        groups={lineGroups}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          if (!value) return;
-                          if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
-                          else void assignConceptLine(concept, value);
-                        }}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-        ) : null}
+        <ConceptLinesCard
+          schema={schema}
+          concepts={catalogEntry.requiredConcepts}
+          onSchemaUpdated={onSchemaUpdated}
+          onOpenStatementDefinitions={onOpenStatementDefinitions}
+        />
 
         <Card title="LBO" icon="landmark" padding="md">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>

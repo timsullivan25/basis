@@ -285,6 +285,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
   const [hiddenCompareScenarios, setHiddenCompareScenarios] = useState<string[]>([]);
   const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings | null>(null);
   const [lboCase, setLboCase] = useState<LboCase | null>(null);
+  // Analyses tab's expanded sections — lives here (not in AnalysesPanel) so switching tabs doesn't
+  // reset it. null = untouched, i.e. every enabled analysis open.
+  const [openAnalysisKeys, setOpenAnalysisKeys] = useState<string[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -305,6 +308,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       setModelImport(existingModelImport ?? null);
       setAnalysisSettings(existingAnalysisSettings ?? null);
       setLboCase(existingLboCase ?? null);
+      setOpenAnalysisKeys(null);
       setActiveScenarioId('base');
       setComparePeriodIndex((existingModel?.timeline.length ?? 1) - 1);
       const allLines = existingSchema?.sections.flatMap((s) => s.lines) ?? [];
@@ -324,13 +328,13 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
 
   const currentProjectedCount = model ? model.timeline.filter((p) => p.kind === 'projected').length : 0;
 
-  // Resyncs the horizon field when a different model loads (initial load / company switch) —
-  // our own extend/shrink actions explicitly set this themselves right after, so this effect
-  // firing only on `model?.id` (not on every timeline edit) never fights with that.
+  // Resyncs the horizon field whenever the stored projection count changes — a different model
+  // loading, our own extend/shrink, or a mapping save rewriting the timeline — so the field never
+  // shows a number the timeline doesn't actually have. Typing doesn't change the count, so this
+  // never fights an in-progress edit.
   useEffect(() => {
     setHorizonInput(String(currentProjectedCount));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model?.id]);
+  }, [model?.id, currentProjectedCount]);
 
   const activeScenario = activeScenarioId === 'base' ? null : (scenarios.find((s) => s.id === activeScenarioId) ?? null);
 
@@ -662,6 +666,9 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       modelImportRepository.get(savedModel.modelImportId),
     ]);
     setModel(savedModel);
+    // Manual recalc mode would otherwise keep evaluating the pre-remap historicals against the
+    // new schema — a remap is an explicit save, so take it as a recalculate too.
+    if (recalcMode === 'manual') setManualSnapshot(savedModel);
     setSchema(existingSchema ?? null);
     setMapping(existingMapping ?? null);
     setModelImport(existingModelImport ?? null);
@@ -730,6 +737,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       ? [...settings.enabledAnalysisIds, analysisId]
       : settings.enabledAnalysisIds.filter((id) => id !== analysisId);
     setAnalysisSettings(await analysisSettingsRepository.update(model.id, { enabledAnalysisIds: nextIds }));
+    if (enabled) setOpenAnalysisKeys((prev) => (prev === null || prev.includes(analysisId) ? prev : [...prev, analysisId]));
   }
 
   async function updateDcfInputs(scenarioId: ScenarioKey, patch: Partial<DcfInputs>) {
@@ -1486,6 +1494,8 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
             onUpdateLboCase={updateLboCase}
             onUpdateLboFinancing={updateLboFinancing}
             onRemoveLboCase={removeLboCase}
+            openKeys={openAnalysisKeys}
+            onOpenKeysChange={setOpenAnalysisKeys}
           />
         ) : null
       ) : tab === 'compare' ? (

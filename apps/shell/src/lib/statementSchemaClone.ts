@@ -80,6 +80,13 @@ export function cloneStatementSchemaStructure(
     updatedAt: now,
     sections: clonedSections.map((s) => remapSectionFormulas(s, idMap)),
     drivers: remapDriverLineRefs(clonedDrivers, idMap),
+    ...(source.conceptLineIds
+      ? {
+          conceptLineIds: Object.fromEntries(
+            Object.entries(source.conceptLineIds).map(([concept, lineId]) => [concept, idMap.get(lineId) ?? lineId]),
+          ),
+        }
+      : {}),
   };
   return { schema, idMap };
 }

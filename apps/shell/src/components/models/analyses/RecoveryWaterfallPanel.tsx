@@ -17,7 +17,7 @@ import {
   orderedSeniorityTiers,
   type TrancheRecovery,
 } from '../../../lib/recoveryWaterfall';
-import { canonicalAliasFor, findSummaryLine } from '../../../lib/summaryLines';
+import { assignConceptLine, findSummaryLine } from '../../../lib/summaryLines';
 import { formatPeriodValue } from '../mapping/mappingFormatting';
 import { RecoverySensitivityChart, type RecoveryRangeRow } from './RecoverySensitivityChart';
 
@@ -115,17 +115,9 @@ export function RecoveryWaterfallPanel({
   const conceptLine = requiredConcept ? findSummaryLine(schema, requiredConcept) : undefined;
   const conceptMissing = requiredConcept !== null && conceptLine === undefined;
 
-  async function assignConceptLine(lineId: string) {
+  async function assignConcept(lineId: string) {
     if (!requiredConcept) return;
-    const alias = canonicalAliasFor(requiredConcept);
-    const sections = schema.sections.map((section) => ({
-      ...section,
-      lines: section.lines.map((line) =>
-        line.id === lineId && !line.aliases.includes(alias) ? { ...line, aliases: [...line.aliases, alias] } : line,
-      ),
-    }));
-    const updated = await statementSchemaRepository.save({ ...schema, sections });
-    onSchemaUpdated(updated);
+    onSchemaUpdated(await statementSchemaRepository.save(assignConceptLine(schema, requiredConcept, lineId)));
   }
 
   const lineGroups = schema.sections
@@ -262,7 +254,7 @@ export function RecoveryWaterfallPanel({
             ) : null}
           </div>
 
-          {conceptMissing ? (
+          {requiredConcept !== null ? (
             <div
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-5)',
@@ -270,20 +262,26 @@ export function RecoveryWaterfallPanel({
               }}
             >
               <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
-                {requiredConcept === 'ebitda' ? 'EBITDA' : 'Revenue'} isn't resolved on this schema yet
+                {conceptMissing
+                  ? `${requiredConcept === 'ebitda' ? 'EBITDA' : 'Revenue'} isn't resolved on this schema yet`
+                  : `${requiredConcept === 'ebitda' ? 'EBITDA' : 'Revenue'} line`}
               </span>
               <Select
                 size="sm"
                 fullWidth={false}
                 style={{ width: 220 }}
-                value=""
-                options={[{ value: '', label: 'Select a line…' }, { value: ADD_NEW_LINE, label: 'Add a new line…' }]}
+                value={conceptLine?.id ?? ''}
+                invalid={conceptMissing}
+                options={[
+                  ...(conceptLine ? [] : [{ value: '', label: 'Select a line…' }]),
+                  { value: ADD_NEW_LINE, label: 'Add a new line…' },
+                ]}
                 groups={lineGroups}
                 onChange={(e) => {
                   const value = e.target.value;
-                  if (!value) return;
+                  if (!value || value === conceptLine?.id) return;
                   if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
-                  else void assignConceptLine(value);
+                  else void assignConcept(value);
                 }}
               />
             </div>
