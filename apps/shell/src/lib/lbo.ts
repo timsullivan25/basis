@@ -152,11 +152,12 @@ export function seedLboCase(params: SeedLboCaseParams): CreateLboCaseInput {
   const entryTimelinePeriod: TimelinePeriod = { ...entryPeriod, kind: 'actual' };
   const timeline = extendTimeline([entryTimelinePeriod], Math.round(horizonYears * periodsPerYear));
 
-  const withTermLoan = addChildLine(builtSchema, { kind: 'line', parentLineId: lineIds.totalDebt }, 'Term Loan');
-  const withRevolver = addChildLine(withTermLoan.schema, { kind: 'line', parentLineId: lineIds.totalDebt }, 'Revolver');
+  // Revolver first: it's the senior, first-out facility, so it leads the tranche list.
+  const withRevolver = addChildLine(builtSchema, { kind: 'line', parentLineId: lineIds.totalDebt }, 'Revolver');
+  const withTermLoan = addChildLine(withRevolver.schema, { kind: 'line', parentLineId: lineIds.totalDebt }, 'Term Loan');
   let schema: StatementSchema = {
-    ...withRevolver.schema,
-    sections: withRevolver.schema.sections.map((s) => ({
+    ...withTermLoan.schema,
+    sections: withTermLoan.schema.sections.map((s) => ({
       ...s,
       lines: s.lines.map((l) => {
         // No originalFaceValue set here for the Term Loan — it's the leverage-linked tranche,
@@ -407,35 +408,44 @@ export function computeAbilityToPay(
   });
 }
 
-/**
- * The full computed LBO output for one (LboCase, scenario) pair — builds the live evaluation
- * inputs (buildLboEvaluationInputs), evaluates them, and reads off both the per-period projection
- * and the Ability to Pay grid. The one place both LboPanel (for display) and
- * ModelWorkspaceScreen's own write-through cache (for AnalysisResult — see its own doc comment)
- * compute an LboCase's output, so there is exactly one implementation of "what does this case's
- * output look like" rather than the panel and the cache drifting apart over time.
- */
-export function computeLboOutput(
+export interface EvaluatedLboCase {
+  /** The live-patched schema actually evaluated (see buildLboEvaluationInputs) — what the panel's
+   *  full-model view renders, line for line. */
+  schema: StatementSchema;
+  timeline: Timeline;
+  evaluation: LineValues;
+  financing: LboFinancingInputs;
+  priorEbitda: FlowPoint[];
+}
+
+/** Builds and evaluates one (LboCase, scenario) pair's whole statement — every line, not just the
+ *  summary rows. computeLboOutput reads its summary off this; LboPanel's full-model view renders
+ *  it directly, so the two always show the same numbers. */
+export function evaluateLboCase(
   lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing' | 'leverageLinkedTrancheId'>,
   scenarioId: ScenarioKey,
   baseSchema: StatementSchema,
   baseEvaluation: LineValues,
   baseTimeline: Timeline,
-): LboOutput {
+): EvaluatedLboCase {
   const built = buildLboEvaluationInputs(lboCase, scenarioId, baseSchema, baseEvaluation, baseTimeline);
   const entryIndex = Math.min(lboCase.entryPeriodIndex, baseTimeline.length - 1);
   const priorEbitda = baseEbitdaPoints(baseSchema, baseEvaluation, baseTimeline, entryIndex).slice(0, -1);
   const evaluation = evaluateModel(built.schema, { timeline: built.timeline, historicals: built.historicals, driverValues: built.driverValues });
-  const financing = effectiveLboFinancing(lboCase.financing, scenarioId);
+  return { schema: built.schema, timeline: built.timeline, evaluation, financing: effectiveLboFinancing(lboCase.financing, scenarioId), priorEbitda };
+}
 
-  const revenueId = findSummaryLine(built.schema, 'revenue')?.id;
-  const ebitdaId = findSummaryLine(built.schema, 'ebitda')?.id;
-  const fcfId = findSummaryLine(built.schema, 'fcf')?.id;
-  const totalDebtId = findSummaryLine(built.schema, 'totalDebt')?.id;
-  const netDebtId = findSummaryLine(built.schema, 'netDebt')?.id;
-  const cashId = findSummaryLine(built.schema, 'cash')?.id;
+/** The summary LBO output (projection rows + Ability to Pay grid) read off an evaluated case. */
+export function lboOutputFrom(evaluated: EvaluatedLboCase): LboOutput {
+  const { schema, timeline, evaluation, financing, priorEbitda } = evaluated;
+  const revenueId = findSummaryLine(schema, 'revenue')?.id;
+  const ebitdaId = findSummaryLine(schema, 'ebitda')?.id;
+  const fcfId = findSummaryLine(schema, 'fcf')?.id;
+  const totalDebtId = findSummaryLine(schema, 'totalDebt')?.id;
+  const netDebtId = findSummaryLine(schema, 'netDebt')?.id;
+  const cashId = findSummaryLine(schema, 'cash')?.id;
 
-  const projection = built.timeline.map((_, periodIndex) => ({
+  const projection = timeline.map((_, periodIndex) => ({
     periodIndex,
     revenue: revenueId ? evaluation.getValue(revenueId, periodIndex) : null,
     ebitda: ebitdaId ? evaluation.getValue(ebitdaId, periodIndex) : null,
@@ -446,8 +456,23 @@ export function computeLboOutput(
 
   const abilityToPay =
     ebitdaId && totalDebtId && cashId
-      ? computeAbilityToPay(financing, built.timeline, evaluation, { ebitda: ebitdaId, totalDebt: totalDebtId, cash: cashId }, priorEbitda)
+      ? computeAbilityToPay(financing, timeline, evaluation, { ebitda: ebitdaId, totalDebt: totalDebtId, cash: cashId }, priorEbitda)
       : [];
 
   return { projection, abilityToPay };
+}
+
+/**
+ * The full computed LBO output for one (LboCase, scenario) pair — the one place both LboPanel
+ * (for display) and ModelWorkspaceScreen's own write-through cache (for AnalysisResult — see its
+ * own doc comment) compute an LboCase's output, so the panel and the cache never drift apart.
+ */
+export function computeLboOutput(
+  lboCase: Pick<LboCase, 'schema' | 'timeline' | 'entryPeriodIndex' | 'financing' | 'leverageLinkedTrancheId'>,
+  scenarioId: ScenarioKey,
+  baseSchema: StatementSchema,
+  baseEvaluation: LineValues,
+  baseTimeline: Timeline,
+): LboOutput {
+  return lboOutputFrom(evaluateLboCase(lboCase, scenarioId, baseSchema, baseEvaluation, baseTimeline));
 }
