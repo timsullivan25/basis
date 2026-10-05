@@ -108,6 +108,25 @@ export function DcfPanel({
 
   const waccExceedsGrowth = inputs.wacc !== null && inputs.terminalGrowth !== null && inputs.wacc <= inputs.terminalGrowth;
 
+  // Why EV can't compute yet, in the order a user would fix them — shown in place of the outputs
+  // so a gap reads as "here's what's missing" instead of the valuation silently disappearing.
+  const blockers: string[] = [];
+  if (conceptLines && ufcfRows.length === 0) blockers.push('The model has no projected periods. Add some on the Model tab.');
+  if (inputs.wacc === null) blockers.push('Enter a WACC.');
+  if (inputs.terminalGrowth === null) blockers.push('Enter a terminal growth rate.');
+  const missingEbit = ufcfRows.filter((r) => r.ebit === null);
+  const missingTax = ufcfRows.filter((r) => r.ebit !== null && r.taxRate === null);
+  if (missingEbit.length > 0) {
+    blockers.push(`EBIT has no value in ${missingEbit.map((r) => model.timeline[r.periodIndex].label).join(', ')}.`);
+  }
+  if (missingTax.length > 0) {
+    blockers.push(`The tax rate has no value in ${missingTax.map((r) => model.timeline[r.periodIndex].label).join(', ')} or the last actual period.`);
+  }
+
+  const zeroFilledLabels = (['capex', 'da', 'deltaNwc'] as const)
+    .filter((key) => ufcfRows.some((r) => r.zeroFilled.includes(key)))
+    .map((key) => ({ capex: 'CapEx', da: 'D&A', deltaNwc: 'Δ NWC' })[key]);
+
   const sensitivity =
     dcfOutputs && inputs.wacc !== null && inputs.terminalGrowth !== null && !waccExceedsGrowth
       ? computeSensitivityGrid(ufcfRows, model.timeline, inputs.wacc, inputs.terminalGrowth)
@@ -186,6 +205,21 @@ export function DcfPanel({
             }
           />
         </Card>
+      ) : null}
+
+      {zeroFilledLabels.length > 0 ? (
+        <Alert tone="info" compact>
+          {zeroFilledLabels.join(', ')} {zeroFilledLabels.length === 1 ? 'has' : 'have'} no value in some projected periods and{' '}
+          {zeroFilledLabels.length === 1 ? 'is' : 'are'} counted as 0 there.
+        </Alert>
+      ) : null}
+
+      {conceptLines && !waccExceedsGrowth && blockers.length > 0 ? (
+        <Alert tone="caution" title="Valuation can't compute yet">
+          {blockers.map((b) => (
+            <div key={b}>{b}</div>
+          ))}
+        </Alert>
       ) : null}
 
       {waccExceedsGrowth ? (
