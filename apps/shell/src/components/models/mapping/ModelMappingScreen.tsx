@@ -21,7 +21,7 @@ import { DEFAULT_ADJUSTMENT_INSTANCE_SEEDS, DEFAULT_ADJUSTMENT_TARGET_LINE_NAME,
 import { parseBasisTemplate, TemplateParseError } from '../../../lib/parseBasisTemplate';
 import { matchStatementLines } from '../../../lib/matchStatementLines';
 import { recomputeAndCacheModel } from '../../../lib/modelRecompute';
-import { buildTimeline } from '../../../lib/periodTimeline';
+import { buildTimeline, extendTimeline } from '../../../lib/periodTimeline';
 import { resolveActuals } from '../../../lib/resolveActuals';
 import { buildNameIndex, formatFormula } from '../../../lib/engine/resolve';
 import { expectsMapping, isFormulaOnly } from '../../../lib/lineRole';
@@ -551,8 +551,14 @@ export function ModelMappingScreen({ company, schemas = [], editing, draft, init
       let savedModel: Model;
       if (editing) {
         await mappingRepository.save(editing.model.mappingId, Object.values(mapping));
+        // The workbook only knows the actuals — carry the model's projection horizon across
+        // (re-read fresh, in case it changed while this overlay was open), otherwise every remap
+        // silently drops every projected period and everything downstream that reads them (DCF's
+        // UFCF, LBO, the drivers grid) goes blank.
+        const latestModel = (await modelRepository.getForCompany(company.id)) ?? editing.model;
+        const projectedCount = latestModel.timeline.filter((p) => p.kind === 'projected').length;
         savedModel = await modelRepository.update(editing.model.id, {
-          timeline: resolvedTimeline,
+          timeline: extendTimeline(resolvedTimeline, projectedCount),
           historicals: resolvedHistoricals,
         });
       } else {
