@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Button, Card, Icon, Select } from '@basis/design-system';
+import { Button, Card, Icon, SegmentedControl, Select } from '@basis/design-system';
 import { statementSchemaRepository, type StatementSchema } from '../../../data';
-import { assignConceptLine, findSummaryLine, type SummaryConcept } from '../../../lib/summaryLines';
+import { assignConceptLine, conceptSource, findSummaryLine, INPUT_CONCEPT_DEFAULTS, setConceptInput, type SummaryConcept } from '../../../lib/summaryLines';
+import { formatPeriodValue } from '../mapping/mappingFormatting';
+import { PercentInput } from './PercentInput';
 
 const CONCEPT_LABELS: Record<SummaryConcept, string> = {
   revenue: 'Revenue', ebitda: 'EBITDA', netDebt: 'Net Debt', netLeverage: 'Net Leverage',
@@ -21,12 +23,13 @@ interface ConceptLinesCardProps {
 
 /** Which statement line each concept an analysis reads resolves to — editable at any time, not
  *  just while something is missing, so a line can be re-pointed after the fact (e.g. CapEx moved
- *  to a different line). Always expanded while anything is unresolved; otherwise collapsed behind
- *  an Edit toggle so it doesn't crowd the analysis itself. */
+ *  to a different line). A concept with an input default (the tax rate) also gets a Linked/Input
+ *  switch: Input is one number used flat across every period. Always expanded while anything is
+ *  unresolved; otherwise collapsed behind an Edit toggle so it doesn't crowd the analysis itself. */
 export function ConceptLinesCard({ schema, concepts, onSchemaUpdated, onOpenStatementDefinitions }: ConceptLinesCardProps) {
   const [editing, setEditing] = useState(false);
-  const resolved = concepts.map((concept) => ({ concept, line: findSummaryLine(schema, concept) }));
-  const anyMissing = resolved.some((r) => !r.line);
+  const resolved = concepts.map((concept) => ({ concept, line: findSummaryLine(schema, concept), source: conceptSource(schema, concept) }));
+  const anyMissing = resolved.some((r) => !r.source);
   const expanded = anyMissing || editing;
 
   const lineGroups = schema.sections
@@ -37,12 +40,19 @@ export function ConceptLinesCard({ schema, concepts, onSchemaUpdated, onOpenStat
     onSchemaUpdated(await statementSchemaRepository.save(assignConceptLine(schema, concept, lineId)));
   }
 
+  async function updateInput(concept: SummaryConcept, patch: Parameters<typeof setConceptInput>[2]) {
+    onSchemaUpdated(await statementSchemaRepository.save(setConceptInput(schema, concept, patch)));
+  }
+
+  const sourceLabel = (r: (typeof resolved)[number]) =>
+    r.source?.kind === 'input' ? `${CONCEPT_LABELS[r.concept]} ${formatPeriodValue(r.source.value, 'percentage')} (input)` : r.line!.name;
+
   return (
     <Card
       title={anyMissing ? 'Required lines' : 'Lines used'}
       icon="list-checks"
       padding="none"
-      subtitle={expanded ? undefined : resolved.map((r) => r.line!.name).join(' · ')}
+      subtitle={expanded ? undefined : resolved.map(sourceLabel).join(' · ')}
       actions={
         anyMissing ? undefined : (
           <Button size="sm" variant="ghost" onClick={() => setEditing((v) => !v)}>
@@ -53,7 +63,7 @@ export function ConceptLinesCard({ schema, concepts, onSchemaUpdated, onOpenStat
     >
       {expanded ? (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {resolved.map(({ concept, line }) => (
+          {resolved.map(({ concept, line, source }) => (
             <div
               key={concept}
               style={{
@@ -63,30 +73,53 @@ export function ConceptLinesCard({ schema, concepts, onSchemaUpdated, onOpenStat
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>
                 <Icon
-                  name={line ? 'check' : 'circle-alert'}
+                  name={source ? 'check' : 'circle-alert'}
                   size={12}
-                  color={line ? 'var(--status-positive-fg)' : 'var(--status-negative-fg)'}
+                  color={source ? 'var(--status-positive-fg)' : 'var(--status-negative-fg)'}
                 />
                 {CONCEPT_LABELS[concept]}
               </span>
-              <Select
-                size="sm"
-                fullWidth={false}
-                style={{ width: 240 }}
-                value={line?.id ?? ''}
-                invalid={!line}
-                options={[
-                  ...(line ? [] : [{ value: '', label: 'Select a line…' }]),
-                  { value: ADD_NEW_LINE, label: 'Add a new line…' },
-                ]}
-                groups={lineGroups}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (!value || value === line?.id) return;
-                  if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
-                  else void assign(concept, value);
-                }}
-              />
+              <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                {INPUT_CONCEPT_DEFAULTS[concept] !== undefined ? (
+                  <SegmentedControl
+                    size="sm"
+                    options={[{ value: 'linked', label: 'Linked' }, { value: 'input', label: 'Input' }]}
+                    value={source?.kind === 'input' ? 'input' : 'linked'}
+                    onChange={(mode) => void updateInput(concept, { mode: mode as 'linked' | 'input' })}
+                  />
+                ) : null}
+                {source?.kind === 'input' ? (
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--space-2)', width: 240 }}>
+                    <PercentInput
+                      key={source.value}
+                      value={source.value}
+                      onCommit={(value) => {
+                        if (value !== null && value !== source.value) void updateInput(concept, { value });
+                      }}
+                    />
+                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>% every period</span>
+                  </span>
+                ) : (
+                <Select
+                  size="sm"
+                  fullWidth={false}
+                  style={{ width: 240 }}
+                  value={line?.id ?? ''}
+                  invalid={!line}
+                  options={[
+                    ...(line ? [] : [{ value: '', label: 'Select a line…' }]),
+                    { value: ADD_NEW_LINE, label: 'Add a new line…' },
+                  ]}
+                  groups={lineGroups}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (!value || value === line?.id) return;
+                    if (value === ADD_NEW_LINE) onOpenStatementDefinitions();
+                    else void assign(concept, value);
+                  }}
+                />
+                )}
+              </span>
             </div>
           ))}
         </div>

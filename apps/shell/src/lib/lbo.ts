@@ -1,6 +1,6 @@
 import type { CreateLboCaseInput, LboCase, LboFinancingByScenario, LboFinancingInputs, LboOutput, PeriodType, ScenarioKey, StatementSchema, Timeline, TimelinePeriod } from '../data';
 import type { LineValues } from './computedCache';
-import { findSummaryLine, type SummaryConcept } from './summaryLines';
+import { findSummaryLine, readConceptValue, type SummaryConcept } from './summaryLines';
 import { createLboStatementSchema, findMinCashTargetDriverId } from './lboStatementSchema';
 import { extendTimeline } from './periodTimeline';
 import { periodsPerYearFor, regenerateDebtSchedule } from './debtSchedule';
@@ -22,8 +22,7 @@ const DEFAULT_REVOLVER_COMMITMENT_FEE = 0.005;
 const DEFAULT_REVOLVER_COMMITMENT_MULTIPLE = 0.5;
 
 function readConcept(schema: StatementSchema, evaluation: LineValues, concept: SummaryConcept, periodIndex: number): number | null {
-  const l = findSummaryLine(schema, concept);
-  return l ? evaluation.getValue(l.id, periodIndex) : null;
+  return readConceptValue(schema, evaluation, concept, periodIndex);
 }
 
 function findDriverIdForLine(schema: StatementSchema, targetLineId: string): string | undefined {

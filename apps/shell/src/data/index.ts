@@ -34,6 +34,7 @@ export type {
   ComputedResult,
   ComputedResultRepository,
   ComputedResultVersionStamp,
+  ConceptInput,
   CreateCompanyInput,
   CreateLboCaseInput,
   CreateMappingInput,

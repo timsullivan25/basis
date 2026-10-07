@@ -52,7 +52,7 @@ import { formatPeriodValue } from '../components/models/mapping/mappingFormattin
 import { SummaryPanel } from '../components/models/SummaryPanel';
 import { AnalysesPanel } from '../components/models/analyses/AnalysesPanel';
 import { SensitivityPanel } from '../components/models/sensitivity/SensitivityPanel';
-import { lboParamsFor, readableAnalysisIds, type AnalysisContext } from '../lib/sensitivityAnalyses';
+import { lboParamsFor, readableAnalysisIds, taxRateParamFor, type AnalysisContext } from '../lib/sensitivityAnalyses';
 import { ANALYSIS_CATALOG } from '../data/analysisCatalog';
 import { missingConceptsFor } from '../lib/analysisAvailability';
 import { computeAnalysisVersionStamp, buildAnalysisResult } from '../lib/analysisCache';
@@ -69,7 +69,7 @@ import {
 import { extendTimeline } from '../lib/periodTimeline';
 import { mergeScenarioDriverValues, promoteScenarioDriverLine } from '../lib/scenario';
 import { buildSnapshot, defaultSnapshotLabel } from '../lib/snapshot';
-import { findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
+import { conceptRef, findSummaryLine, type SummaryConcept } from '../lib/summaryLines';
 import { periodOverPeriodDelta, trend } from '../lib/summaryMetrics';
 import { impliedHistoricalDriverValue } from '../lib/driverDisplay';
 import { evaluateModel } from '../lib/engine/evaluate';
@@ -390,7 +390,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
       da: findSummaryLine(schema, 'da')!.id,
       capex: findSummaryLine(schema, 'capex')!.id,
       nwc: findSummaryLine(schema, 'nwc')!.id,
-      taxRate: findSummaryLine(schema, 'taxRate')!.id,
+      taxRate: conceptRef(schema, 'taxRate')!,
     };
     const ufcfRows = computeUfcf(evaluation, model.timeline, conceptLines);
     if (ufcfRows.length === 0) return;
@@ -436,6 +436,7 @@ export function ModelWorkspaceScreen({ company, onViewSnapshot, onOpenStatementD
         dcf: enabledIds.includes('dcf') ? effectiveDcfInputs(analysisSettings, activeScenarioId) : null,
         lbo: enabledIds.includes('lbo') ? lboParamsFor(lboCase, activeScenarioId) : null,
         recovery: enabledIds.includes('recoveryWaterfall') ? effectiveRecoveryInputs(analysisSettings, activeScenarioId) : null,
+        taxRate: taxRateParamFor(schema, enabledIds),
       },
     };
   }, [schema, evaluatedInput, analysisSettings, activeScenarioId, lboCase]);

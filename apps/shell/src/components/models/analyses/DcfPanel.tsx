@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { Alert, Card, DataTable, Field, Icon, Input, MetricCard } from '@basis/design-system';
+import { Alert, Card, DataTable, Field, Icon, MetricCard } from '@basis/design-system';
 import { type AnalysisSettings, type DcfInputs, type Model, type ScenarioKey, type StatementSchema } from '../../../data';
 import { ANALYSIS_CATALOG } from '../../../data/analysisCatalog';
 import { missingConceptsFor } from '../../../lib/analysisAvailability';
-import { findSummaryLine } from '../../../lib/summaryLines';
+import { conceptRef, findSummaryLine } from '../../../lib/summaryLines';
 import { ConceptLinesCard } from './ConceptLinesCard';
+import { PercentInput } from './PercentInput';
 import type { LineValues } from '../../../lib/computedCache';
 import {
   computeDcfOutputs,
@@ -44,35 +44,6 @@ const UFCF_ROW_DEFS: Array<{ key: string; label: string; formula: string; get: (
   { key: 'ufcf', label: 'Unlevered FCF', formula: 'NOPAT + D&A − CapEx − Δ NWC', get: (r) => r.ufcf },
 ];
 
-function parsePercent(text: string): number | null {
-  const trimmed = text.trim();
-  if (trimmed === '') return null;
-  const n = Number(trimmed);
-  return Number.isNaN(n) ? null : n / 100;
-}
-
-/** Local buffer + selectOnFocus + Enter/blur-commit, same pattern DriverValueInput already uses
- *  — simplified (no wasEditCancelled) since this lives in a plain Card, not a DataTable cell that
- *  can be force-unmounted mid-edit. */
-function PercentInput({ value, onCommit }: { value: number | null; onCommit: (next: number | null) => void }) {
-  const [text, setText] = useState(() => (value === null ? '' : String(value * 100)));
-  return (
-    <Input
-      size="sm"
-      mono
-      type="number"
-      selectOnFocus
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onCommit(parsePercent(text));
-      }}
-      onBlur={() => onCommit(parsePercent(text))}
-      style={{ width: 90 }}
-    />
-  );
-}
-
 export function DcfPanel({
   schema,
   model,
@@ -95,7 +66,7 @@ export function DcfPanel({
           da: findSummaryLine(schema, 'da')!.id,
           capex: findSummaryLine(schema, 'capex')!.id,
           nwc: findSummaryLine(schema, 'nwc')!.id,
-          taxRate: findSummaryLine(schema, 'taxRate')!.id,
+          taxRate: conceptRef(schema, 'taxRate')!,
         }
       : null;
 

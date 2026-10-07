@@ -253,6 +253,16 @@ export interface StatementSchema {
    *  SummaryConcept). Checked before name/alias matching in findSummaryLine, so a user can point
    *  a concept at a different line even when another line's own name already matches it. */
   conceptLineIds?: Record<string, string>;
+  /** Per-concept "linked or input" choice for a concept that can stand in as a single number
+   *  (see lib/summaryLines.ts's INPUT_CONCEPT_DEFAULTS — today just the tax rate). 'input' uses
+   *  `value` flat across every period instead of a line. Absent means linked when a line
+   *  resolves, otherwise the concept's default input. */
+  conceptInputs?: Record<string, ConceptInput>;
+}
+
+export interface ConceptInput {
+  mode: 'linked' | 'input';
+  value: number;
 }
 
 export interface StatementSchemaRepository {
