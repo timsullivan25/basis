@@ -1,0 +1,9 @@
+{
+  "prompts": {},
+  "passes": {
+    "fill": true,
+    "consolidate": true,
+    "checks": true,
+    "subLines": true
+  }
+}

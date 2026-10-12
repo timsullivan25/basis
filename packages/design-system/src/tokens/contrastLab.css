@@ -1,0 +1,51 @@
+/* TEMPORARY — readability experiment (branch: feature/readability-contrast). See dev/contrastLab.js
+ * for how `[data-contrast]` gets set. Each variant only redefines tokens already used by table
+ * heads / accordion section headers / dividers, so the rest of the app is untouched. Delete this
+ * file (and its @import in styles.css) once a variant is picked or the experiment is abandoned. */
+
+/* A — Deeper tint: same neutral gray family, just a bigger step so header/table chrome doesn't
+ * sit at nearly the same lightness as the white card/app background it's supposed to stand out
+ * from (today's --surface-table-head, ink-25, is #FAFBFD vs. white #FFFFFF — a ~1% difference). */
+:root[data-contrast="a"] {
+  --surface-table-head: var(--ink-100);
+  --border-subtle: var(--ink-150);
+  --border-default: var(--ink-200);
+  --text-tertiary: var(--ink-500);
+}
+
+/* B — Brand tint: chrome surfaces shift into the existing blue family instead of gray, so
+ * structural elements (table heads, group rows, their borders) read as a distinct "this is
+ * navigation, not data" layer via hue, not just value. */
+:root[data-contrast="b"] {
+  --surface-table-head: var(--blue-50);
+  --surface-strong: var(--blue-100);
+  --border-default: var(--blue-200);
+}
+
+/* C — No new color: tests whether darker/heavier text and borders alone (no background tint
+ * changes at all) already fix the "hard to glance at" complaint. */
+:root[data-contrast="c"] {
+  --border-default: var(--ink-300);
+  --text-secondary: var(--ink-700);
+  --text-tertiary: var(--ink-600);
+}
+
+/* Combo — A's row separation + C's label darkening, tuned per feedback: A's table-head fill
+ * (ink-100) happened to exactly match --surface-sunken (also ink-100, the "total" row background
+ * in statement tables) so a header row and a total row read as the same thing. Moving it to
+ * ink-50 "fixed" that but broke into a second collision — ink-50 is already --surface-app AND
+ * --surface-hover, so an open accordion section's header band, its own expanded content area
+ * (which uses --surface-app), and the page background behind it all became one indistinguishable
+ * shade. The neutral ramp had no free rung between white and ink-100 (25 was the original
+ * too-subtle value, 50 and 100 are both already spoken for), so --ink-75 (#F0F3F7, the midpoint
+ * between ink-50 and ink-100) is now a real palette step — see palette.css — rather than a bare
+ * hex living only here. C's text darkening also came in one notch lighter (ink-700/600 ->
+ * ink-600/500) per feedback that it read a bit heavy, while staying darker than the ink-500/400
+ * baseline. */
+:root[data-contrast="combo"] {
+  --surface-table-head: var(--ink-75);
+  --border-subtle: var(--ink-150);
+  --border-default: var(--ink-200);
+  --text-secondary: var(--ink-600);
+  --text-tertiary: var(--ink-500);
+}

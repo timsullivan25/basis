@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shell",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@basis/shell", "dev"],
+      "port": 5173
+    }
+  ]
+}
