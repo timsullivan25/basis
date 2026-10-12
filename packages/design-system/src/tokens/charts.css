@@ -1,0 +1,18 @@
+:root{
+/* Categorical — brand first, then professional accents. Use in order. */
+--chart-1:#0B4FD9;--chart-2:#1D9BC7;--chart-3:#0E8A5F;--chart-4:#D62B4E;--chart-5:#C0790C;--chart-6:#6C4FD9;
+--chart-7:#0A3A96;--chart-8:#4FB3A0;--chart-9:#A8582A;--chart-10:#7A8798;--chart-11:#B84592;--chart-12:#5C7F0E;
+/* Sequential — single-series intensity (light → dark) */
+--seq-blue-1:#EAF1FE;--seq-blue-2:#C8DBFC;--seq-blue-3:#9BBEF8;--seq-blue-4:#6699F1;
+--seq-blue-5:#3B7DF5;--seq-blue-6:#0B4FD9;--seq-blue-7:#0A3A96;--seq-blue-8:#062A6E;
+--seq-sky-1:#EDF9FD;--seq-sky-2:#CDEDF7;--seq-sky-3:#9BDAEE;--seq-sky-4:#5EC2E1;
+--seq-sky-5:#2FA8CE;--seq-sky-6:#0F7FAE;--seq-sky-7:#0A6288;--seq-sky-8:#08415A;
+/* Diverging — signed values, red (negative) → neutral → blue (positive) */
+--div-neg-4:#8E1631;--div-neg-3:#C22447;--div-neg-2:#E4526E;--div-neg-1:#F5C3CD;
+--div-mid:#EBEFF4;
+--div-pos-1:#C2D8FE;--div-pos-2:#6C9FF9;--div-pos-3:#2467E8;--div-pos-4:#0A3A96;
+/* Chart furniture */
+--chart-grid:var(--ink-150);--chart-axis:var(--ink-300);--chart-label:var(--ink-500);
+--chart-plot-bg:transparent;--chart-band:var(--ink-25);--chart-crosshair:var(--ink-400);
+--chart-pos:#0E8A5F;--chart-neg:#D62B4E;--chart-benchmark:var(--ink-400);
+}

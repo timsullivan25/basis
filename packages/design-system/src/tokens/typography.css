@@ -1,0 +1,19 @@
+:root{
+--font-sans:"Archivo","Helvetica Neue",Arial,sans-serif;
+--font-mono:"Roboto Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+--font-serif:"Newsreader",Georgia,"Times New Roman",serif;
+--font-display:var(--font-sans);
+/* Size ramp — compact by default; app chrome lives at 11–13px */
+--text-3xs:10px;--text-2xs:11px;--text-xs:12px;--text-sm:13px;--text-base:14px;--text-md:15px;
+--text-lg:16px;--text-xl:18px;--text-2xl:22px;--text-3xl:28px;--text-4xl:36px;--text-5xl:48px;--text-6xl:64px;
+/* Line heights */
+--leading-flat:1;--leading-tight:1.2;--leading-snug:1.35;--leading-normal:1.5;--leading-relaxed:1.65;
+/* Weights */
+--weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;
+/* Tracking */
+--tracking-display:-0.022em;--tracking-heading:-0.012em;--tracking-normal:0;
+--tracking-wide:0.02em;--tracking-caps:0.07em;
+/* Numerics — every figure in a table or KPI is tabular */
+--numeric-tabular:tabular-nums; /* @kind other */
+--font-feature-tabular:"tnum" 1,"cv01" 1; /* @kind other */
+}
